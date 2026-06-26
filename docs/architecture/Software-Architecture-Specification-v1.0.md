@@ -417,48 +417,34 @@ class Observation:
 
 # 9.2 Belief
 
-The `Belief` object represents the complete runtime belief state maintained by the MIND runtime.
+The `Belief` object represents the immutable runtime belief state.
 
-A `Belief` instance is **immutable**.
+A Belief object contains no inference logic.
 
-The runtime must never modify an existing `Belief` object.
+Belief instances are created and evolved exclusively by the Inference Engine.
 
-Instead, every belief evolution produces a new `Belief` instance while preserving previous states.
+The Belief object is therefore a passive data model.
 
 ```python
 class Belief:
 
-    def evolve(
-        self,
-        observation: Observation,
-    ) -> "Belief":
-        """
-        Produce a new Belief instance by incorporating
-        the given observation.
+    state: dict[str, BeliefRecord]
 
-        The current Belief object remains unchanged.
-        """
+    confidence: dict[str, float]
+
+    version: int
+
+    def to_dict(self) -> dict:
+        ...
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Belief":
+        ...
 ```
 
-#### Belief State
+The Inference Engine is responsible for constructing a new Belief instance whenever the belief state evolves.
 
-```python
-state: dict[str, BeliefRecord]
-
-confidence: dict[str, float]
-
-version: int
-```
-
-where:
-
-* `state` stores the current collection of belief records.
-* `confidence` stores confidence scores corresponding to belief records.
-* `version` records the evolution version of the belief state.
-
-Each invocation of `Belief.evolve()` shall return a **new Belief instance**.
-
-Previous Belief instances shall remain unchanged.
+Existing Belief instances shall never be modified.
 
 ---
 
