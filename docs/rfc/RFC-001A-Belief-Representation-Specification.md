@@ -382,5 +382,33 @@
  The remainder of the MIND project assumes this definition unless explicitly stated otherwise.
  
  ---
+
+ ## Runtime Mapping
+
+This specification defines the representation of an individual **Belief Record**.
+
+A Belief Record represents a single atomic belief together with its associated metadata, including probability, confidence, evidence and timestamp.
+
+The runtime `Belief` object defined by the Software Architecture Specification (SAS) represents the complete runtime belief state.
+
+A runtime Belief contains multiple Belief Records.
+
+Conceptually,
+
+```text
+Belief
+    ├── Belief Record
+    ├── Belief Record
+    ├── Belief Record
+    └── ...
+```
+
+Therefore,
+
+* this RFC specifies the representation of an individual Belief Record;
+* the SAS specifies the runtime container that manages multiple Belief Records.
+
+These two specifications describe different abstraction levels and are complementary rather than conflicting.
+
  
  End of RFC-001A
