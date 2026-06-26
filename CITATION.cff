@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+
+title: "MIND: Meta-Inference Network Dynamics"
+
+message: >
+  If you use this project in your research,
+  please cite the repository using the metadata below.
+
+type: software
+
+authors:
+  - family-names: Yan
+    given-names: Nachuan
+
+repository-code: "https://github.com/Nigel886/MIND"
+
+license: MIT
+
+version: "v0.1.1-spec"
+
+date-released: 2026-06-26
+
+abstract: >
+  MIND (Meta-Inference Network Dynamics) is a research project
+  exploring inference-centric runtime architectures for intelligent
+  agent systems through explicit belief representation,
+  modular inference operators and adaptive runtime design.
