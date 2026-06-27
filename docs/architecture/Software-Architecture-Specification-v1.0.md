@@ -203,7 +203,7 @@ The dependency graph is considered part of the architecture and shall remain sta
 
 | Module         | Allowed Dependencies                           |
 | -------------- | ---------------------------------------------- |
-| runtime.py     | observation, inference, belief, policy, action |
+| runtime.py     | observation, belief, inference, policy, action |
 | observation.py | None                                           |
 | belief.py      | None                                           |
 | inference.py   | belief, operators                              |
@@ -228,7 +228,9 @@ The following dependencies are prohibited.
 * Tool → Runtime
 * Operator → Runtime
 
-The Runtime module is the only component responsible for orchestration.
+The RuntimeController is the only component responsible for runtime orchestration.
+
+RuntimeState is a passive runtime data model and shall never perform orchestration.
 
 ---
 
@@ -339,22 +341,49 @@ The action executor must never modify beliefs directly.
 
 ---
 
-## 7.6 Runtime
+## 7.6 Runtime Subsystem
 
-### Responsibility
+### Architecture
 
-Coordinates every runtime component.
+The Runtime Subsystem consists of two components:
 
-Runtime is the only orchestration layer in Version 1.0.
+* RuntimeState
+* RuntimeController
 
-### Responsibilities
+RuntimeState is an immutable passive runtime data model.
 
-* Receive observations.
-* Invoke inference.
-* Update beliefs.
-* Generate policies.
-* Execute actions.
-* Repeat runtime loop.
+RuntimeController is responsible for runtime lifecycle orchestration.
+
+---
+
+### RuntimeState Responsibilities
+
+* Store the current Observation.
+* Store the current Belief.
+* Store runtime metadata.
+* Support serialization.
+* Support deserialization.
+
+RuntimeState SHALL NOT:
+
+* perform inference;
+* update beliefs;
+* generate policies;
+* execute actions;
+* manage runtime scheduling.
+
+---
+
+### RuntimeController Responsibilities
+
+RuntimeController is responsible for:
+
+* receiving observations;
+* invoking the InferenceEngine;
+* creating updated RuntimeState instances;
+* invoking the PolicyEngine;
+* invoking the ActionExecutor;
+* managing the runtime execution lifecycle.
 
 No other module may coordinate the execution lifecycle.
 
@@ -362,16 +391,20 @@ No other module may coordinate the execution lifecycle.
 
 # 8. Object Ownership
 
-Each Runtime instance owns exactly one instance of each core component.
+The Runtime Subsystem owns the RuntimeState and RuntimeController.
+
+RuntimeState owns the current Observation and Belief.
+
+RuntimeController manages runtime orchestration.
 
 ```text
-Runtime
+RuntimeSubsystem
 │
-├── Observation Manager
-├── Belief
-├── Inference Engine
-├── Policy Engine
-└── Action Executor
+├── RuntimeState
+│   ├── Observation
+│   └── Belief
+│
+└── RuntimeController (future)
 ```
 
 Ownership relationships are fixed.
@@ -515,34 +548,32 @@ class ActionExecutor:
 
 ---
 
-# 9.6 Runtime
+## 9.6 RuntimeState
 
-## Public Interface
+### Public Interface
 
 ```python
-class Runtime:
+class RuntimeState:
 
-    def initialize(self) -> None
+    observation: Observation
 
-    def step(self) -> None
+    belief: Belief
 
-    def run(self) -> None
+    metadata: dict[str, Any]
 
-    def stop(self) -> None
+    def to_dict(self) -> dict:
+        ...
 
-    def reset(self) -> None
+    @classmethod
+    def from_dict(cls, data: dict) -> "RuntimeState":
+        ...
 ```
 
-## Runtime Responsibilities
+RuntimeState is an immutable passive data model.
 
-The Runtime class is responsible for:
+It exposes only state representation and serialization interfaces.
 
-* lifecycle management;
-* component coordination;
-* execution sequencing;
-* runtime termination.
-
-Business logic must remain inside the individual runtime components.
+Runtime lifecycle management belongs to RuntimeController.
 
 ---
 
@@ -928,27 +959,35 @@ The long-term vision includes:
 
 ---
 
-# Appendix A — Architecture Summary
+# Appendix A — High-Level Architecture
 
 The MIND-Lite prototype consists of six core runtime components.
 
 ```text
-                Runtime
-                    │
-    ┌───────────────┼───────────────┐
-    │               │               │
-Observation   Inference Engine   Policy Engine
-    │               │               │
-    └────────────► Belief ◄─────────┘
-                    │
-                    ▼
-            Action Executor
-                    │
-                    ▼
-              External World
+                  Runtime Subsystem
+                          │
+          ┌───────────────┴───────────────┐
+          │                               │
+          ▼                               ▼
+    RuntimeState                 RuntimeController
+          │                               │
+          │                       ┌───────┼────────────┐
+          │                       │       │            │
+          ▼                       ▼       ▼            ▼
+    Observation          Inference Engine  Policy Engine
+          │                       │              │
+          └──────────────────► Belief ◄──────────┘
+                                  │
+                                  ▼
+                          Action Executor
+                                  │
+                                  ▼
+                            External World
 ```
 
-The Runtime is the only orchestration layer.
+RuntimeController is the orchestration layer.
+
+RuntimeState is the immutable runtime data model.
 
 All interactions between components are coordinated through the Runtime.
 

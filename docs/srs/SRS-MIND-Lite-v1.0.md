@@ -330,25 +330,43 @@ The action module executes the policy selected by the runtime.
 
 ---
 
-## FR-6 Runtime Controller
+## FR-6 Runtime Subsystem
 
 ### Description
 
-The runtime controller coordinates the complete execution cycle.
+The Runtime Subsystem consists of two architectural components:
 
-### Responsibilities
+* RuntimeState
+* RuntimeController
 
-* Receive observations
-* Invoke inference
-* Update beliefs
-* Generate policies
-* Execute actions
-* Repeat execution loop
+RuntimeState represents the immutable runtime data model.
+
+RuntimeController coordinates the complete execution cycle by operating on RuntimeState instances.
+
+### RuntimeState Responsibilities
+
+* Store the current Observation.
+* Store the current Belief.
+* Store runtime metadata.
+* Support serialization and deserialization.
+
+RuntimeState SHALL remain immutable.
+
+### RuntimeController Responsibilities
+
+* Receive observations.
+* Invoke inference.
+* Generate updated RuntimeState instances.
+* Generate policies.
+* Execute actions.
+* Repeat the runtime execution loop.
 
 ### Acceptance Criteria
 
-* Runtime completes one inference cycle successfully.
-* Runtime can execute continuously until a stop condition is reached.
+* RuntimeState objects can be created.
+* RuntimeState objects are immutable.
+* RuntimeController completes one inference cycle successfully.
+* RuntimeController can execute continuously until a stop condition is reached.
 
 ---
 
@@ -421,7 +439,7 @@ without modifying source code.
 | inference.py          | Execute inference operators and produce updated beliefs.  |
 | policy.py             | Generate executable policies from beliefs.                |
 | action.py             | Execute actions and interact with external environments.  |
-| runtime.py            | Coordinate the complete runtime lifecycle.                |
+| runtime.py            | Implement the Runtime subsystem, including RuntimeState and the future RuntimeController.                |
 | operators/base.py     | Define the abstract inference operator interface.         |
 | operators/bayesian.py | Reference Bayesian inference implementation.              |
 | operators/llm.py      | LLM-based inference implementation.                       |
@@ -693,7 +711,7 @@ The following capabilities are intentionally reserved for future versions of MIN
 | Inference Operator | A module that transforms observations into updated beliefs.       |
 | Policy             | A decision generated from the current belief state.               |
 | Action             | An executable interaction with the external environment.          |
-| Runtime            | The execution engine coordinating all components.                 |
+| Runtime Subsystem  | The subsystem containing RuntimeState and RuntimeController.      |
 
 ---
 
