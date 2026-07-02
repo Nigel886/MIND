@@ -210,12 +210,89 @@ class RuntimeControllerTest(unittest.TestCase):
         self.assertFalse(hasattr(controller, "belief"))
 
     def test_runtime_controller_has_minimal_public_api(self) -> None:
-        """Exposes only initialize() and no lifecycle methods."""
+        """Exposes only initialize() and update() and no lifecycle methods."""
 
         controller = RuntimeController()
 
         self.assertTrue(hasattr(controller, "initialize"))
+        self.assertTrue(hasattr(controller, "update"))
         self.assertFalse(hasattr(controller, "step"))
         self.assertFalse(hasattr(controller, "run"))
         self.assertFalse(hasattr(controller, "stop"))
         self.assertFalse(hasattr(controller, "reset"))
+
+    def test_update_preserves_original_state(self) -> None:
+        """Verifies original RuntimeState remains unchanged after update."""
+
+        controller = RuntimeController()
+        original = controller.initialize()
+
+        new_observation = Observation(source="test", content="new")
+        updated = controller.update(original, observation=new_observation)
+
+        self.assertIsNot(original, updated)
+        self.assertNotEqual(original.observation, updated.observation)
+        self.assertEqual(original.belief, updated.belief)
+        self.assertEqual(original.metadata, updated.metadata)
+
+    def test_update_replaces_only_specified_components(self) -> None:
+        """Updates only the components explicitly provided by the caller."""
+
+        controller = RuntimeController()
+        original = controller.initialize(
+            metadata={"phase": "initial"},
+        )
+
+        new_belief = Belief(state={}, confidence={}, version=999)
+        updated = controller.update(original, belief=new_belief)
+
+        self.assertEqual(updated.observation, original.observation)
+        self.assertEqual(updated.belief, new_belief)
+        self.assertEqual(updated.metadata, original.metadata)
+        self.assertIsNot(original, updated)
+
+    def test_update_replaces_multiple_components(self) -> None:
+        """Supports updating multiple components in a single call."""
+
+        controller = RuntimeController()
+        original = controller.initialize()
+
+        new_observation = Observation(source="test", content="multi")
+        new_belief = Belief(state={}, confidence={}, version=123)
+        new_metadata = {"phase": "updated"}
+
+        updated = controller.update(
+            original,
+            observation=new_observation,
+            belief=new_belief,
+            metadata=new_metadata,
+        )
+
+        self.assertEqual(updated.observation, new_observation)
+        self.assertEqual(updated.belief, new_belief)
+        self.assertEqual(updated.metadata, new_metadata)
+        self.assertIsNot(original, updated)
+
+    def test_update_returns_new_instance(self) -> None:
+        """Always returns a new RuntimeState instance even with no changes."""
+
+        controller = RuntimeController()
+        original = controller.initialize()
+
+        updated = controller.update(original)
+
+        self.assertIsNot(original, updated)
+        self.assertEqual(original.observation, updated.observation)
+        self.assertEqual(original.belief, updated.belief)
+        self.assertEqual(original.metadata, updated.metadata)
+
+    def test_update_preserves_metadata_immutability(self) -> None:
+        """Ensures metadata dictionary is copied when preserved."""
+
+        controller = RuntimeController()
+        original = controller.initialize(metadata={"key": "value"})
+
+        updated = controller.update(original)
+
+        self.assertEqual(original.metadata, updated.metadata)
+        self.assertIsNot(original.metadata, updated.metadata)

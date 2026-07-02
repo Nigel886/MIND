@@ -98,15 +98,16 @@ class RuntimeState:
 
 
 class RuntimeController:
-    """Initializes the MIND-Lite runtime state.
+    """Initializes and updates the MIND-Lite runtime state.
 
     RuntimeController is a stateless behavior component responsible
-    for creating initial RuntimeState instances. It intentionally
+    for creating and updating RuntimeState instances. It intentionally
     exposes no orchestration or lifecycle management APIs for the
     prototype.
 
     RuntimeController never stores internal state. Every call to
-    initialize() constructs and returns a new RuntimeState instance.
+    initialize() or update() constructs and returns a new RuntimeState
+    instance.
     """
 
     @staticmethod
@@ -145,6 +146,46 @@ class RuntimeController:
 
         if metadata is None:
             metadata = {}
+
+        return RuntimeState(
+            observation=observation,
+            belief=belief,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def update(
+        runtime_state: RuntimeState,
+        observation: Optional[Observation] = None,
+        belief: Optional[Belief] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> RuntimeState:
+        """Constructs a new RuntimeState by updating specified components.
+
+        The existing RuntimeState is treated as the source of truth. Only
+        the components explicitly provided by the caller are replaced. Any
+        None arguments preserve the corresponding value from the existing
+        RuntimeState.
+
+        Args:
+            runtime_state: The existing immutable runtime state to use as base.
+            observation: Optional new immutable observation to replace.
+            belief: Optional new immutable belief state to replace.
+            metadata: Optional new opaque runtime metadata to replace.
+
+        Returns:
+            A newly constructed immutable RuntimeState instance with updated
+            components where specified.
+        """
+
+        if observation is None:
+            observation = runtime_state.observation
+
+        if belief is None:
+            belief = runtime_state.belief
+
+        if metadata is None:
+            metadata = dict(runtime_state.metadata)
 
         return RuntimeState(
             observation=observation,
