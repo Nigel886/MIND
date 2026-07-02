@@ -1,423 +1,839 @@
-# MIND Roadmap
- 
- **Meta-Inference Network Dynamics**
- 
- Long-Term Development Roadmap
- 
- Status: **Active Development**
- 
- ---
- 
- # 1. Vision
- 
- MIND aims to become a general-purpose inference runtime for intelligent agent systems.
- 
- Instead of organizing agents around workflow execution, MIND explores an inference-centric runtime architecture built upon explicit belief representation, modular inference operators and adaptive decision-making.
- 
- The long-term goal is to establish a software framework that bridges modern AI systems with probabilistic inference principles and cognitive architectures.
- 
- ---
- 
- # 2. Current Status
- 
- The project is currently transitioning from the **Specification Phase** to the **Prototype Phase**.
- 
- Completed milestones include:
- 
- * Project vision
- * Research specifications (RFC-000 – RFC-003)
- * Software Requirements Specification (SRS)
- * Software Architecture Specification (SAS)
- * Prototype Development Plan
- * Development Protocol
- 
- Current objective:
- 
- > Build the first executable prototype (**MIND-Lite**) to validate the proposed runtime architecture.
- 
- ---
- 
- # 3. Guiding Principles
- 
- The roadmap is guided by the following principles.
- 
- ## Research First
- 
- Architectural decisions should be supported by research rather than implementation convenience.
- 
- ---
- 
- ## Incremental Development
- 
- The project evolves through small, verifiable milestones.
- 
- Each release should introduce one major capability while preserving architectural consistency.
- 
- ---
- 
- ## Open Research
- 
- The project is developed in public.
- 
- Specifications, implementation and experiments remain openly available whenever possible.
- 
- ---
- 
- ## Long-Term Maintainability
- 
- Software architecture is designed for long-term evolution rather than short-term feature accumulation.
- 
- Backward compatibility should be preserved whenever practical.
- 
- ---
- 
-# 4. Version Roadmap
+# MIND Development Roadmap
 
-The MIND project follows a staged development strategy.
-
-Each version introduces a well-defined architectural capability.
+**Meta-Inference Network Dynamics (MIND)**
 
 ---
 
-## v0.1 — Specification Phase ✅
+## Vision
 
-**Status:** Completed
+MIND is an open-source research prototype exploring an alternative software architecture for intelligent agents inspired by the **Free Energy Principle (FEP)** and **Active Inference**.
 
-### Objectives
+Unlike conventional LLM agents that directly react to observations, MIND separates **state representation** from **behavior execution** through a specification-driven cognitive architecture.
 
-* Establish the research vision.
-* Define the runtime architecture.
-* Complete project specifications.
-* Prepare the repository for implementation.
-
-### Deliverables
-
-* README
-* ROADMAP
-* RFC-000 – RFC-003
-* Software Requirements Specification (SRS)
-* Software Architecture Specification (SAS)
-* Prototype Development Plan
+The long-term objective is to provide a modular, extensible and reproducible framework for studying cognitive agents built upon immutable runtime state models, probabilistic belief representations and pluggable inference operators.
 
 ---
 
-## v0.2 — MIND-Lite Prototype 🚧
+# Development Philosophy
 
-**Status:** In Progress
+MIND is developed following four fundamental principles.
 
-### Objectives
+## 1. Specification-Driven Development
 
-Develop the first executable inference runtime.
+Every implementation begins with specifications rather than code.
 
-### Deliverables
-
-* Repository skeleton
-* Observation module
-* Belief representation
-* Inference engine
-* Policy engine
-* Action executor
-* Runtime controller
-* Initial demo
+No implementation should introduce behavior that is not explicitly defined by the project specifications.
 
 ---
 
-## v0.3 — Adaptive Runtime
+## 2. Immutable State Models
 
-**Status:** Planned
+Runtime state is represented by immutable data models.
 
-### Objectives
+State transitions are expressed by constructing new state objects instead of mutating existing instances.
 
-Introduce adaptive runtime behavior.
-
-### Planned Features
-
-* Runtime configuration
-* Dynamic inference operator selection
-* Persistent memory
-* Runtime scheduling
-* Improved tool integration
+This principle improves reproducibility, simplifies reasoning and enables deterministic runtime snapshots.
 
 ---
 
-## v0.4 — Multi-Agent Runtime
+## 3. Separation of State and Behavior
 
-**Status:** Planned
+State models describe the cognitive state.
 
-### Objectives
+Behavior components perform computation.
 
-Extend MIND from a single-agent runtime to a collaborative multi-agent system.
+Examples:
 
-### Planned Features
+- Observation → state
+- Belief → state
+- RuntimeState → state
 
-* Agent communication
-* Belief synchronization
-* Distributed inference
-* Shared runtime state
-* Collective decision making
+while
 
----
+- RuntimeController
+- Inference Engine
+- Policy Engine
+- Action Executor
 
-## v0.5 — Benchmark & Evaluation
-
-**Status:** Planned
-
-### Objectives
-
-Validate the proposed runtime through reproducible experiments.
-
-### Planned Deliverables
-
-* Benchmark suite
-* Performance evaluation
-* Baseline comparisons
-* Ablation studies
-* Experimental report
+represent behavior.
 
 ---
 
-## v1.0 — Stable Release
+## 4. Incremental Architecture Evolution
 
-**Status:** Planned
+The project evolves through small, independently reviewable milestones.
 
-### Objectives
-
-Release the first stable version of the MIND runtime.
-
-### Planned Deliverables
-
-* Stable runtime API
-* Complete documentation
-* Public SDK
-* Visualization tools
-* Research publication
-* Open-source release
+Every milestone introduces a single architectural capability before progressing to the next layer.
 
 ---
 
-# 5. Development Roadmap
+# Development Methodology
 
-The implementation roadmap follows a bottom-up strategy.
+The project follows a Specification-Driven Development (SDD) workflow.
 
-```text
-Specification
-      │
-      ▼
-Repository Skeleton
-      │
-      ▼
-Core Runtime Components
-      │
-      ▼
-Inference Operators
-      │
-      ▼
-Runtime Integration
-      │
-      ▼
-Prototype Validation
-      │
-      ▼
-Benchmark Evaluation
-      │
-      ▼
-Stable Release
+Each implementation task follows the same lifecycle:
+
 ```
 
-Each stage must satisfy its acceptance criteria before progressing to the next.
+GitHub Issue
+        │
+        ▼
+Specification Validation
+        │
+        ▼
+Implementation Plan
+        │
+        ▼
+Architecture Review
+        │
+        ▼
+Implementation
+        │
+        ▼
+Validation
+        │
+        ▼
+Development Report
+        │
+        ▼
+Code Review
+        │
+        ▼
+Commit
+        │
+        ▼
+Merge
 
-The architecture should remain stable throughout the implementation process.
+```
+
+No implementation is considered complete until the complete workflow has been finished.
 
 ---
 
-## Current Focus
+# Version Overview
 
-The current milestone is **v0.2 — MIND-Lite Prototype**.
+| Version | Status | Description |
+|---------|--------|-------------|
+| v0.1 | Completed | Repository foundation and project infrastructure |
+| v0.2 | In Progress | Core cognitive architecture prototype |
+| v0.3 | Planned | Integrated runtime and inference prototype |
+| v1.0 | Future | Stable research platform |
 
-Immediate priorities are:
+# Development Milestones
 
-* [ ] Repository Skeleton
-* [ ] Observation Module
-* [ ] Belief Module
-* [ ] Inference Engine
-* [ ] Policy Engine
-* [ ] Action Executor
-* [ ] Runtime Controller
-* [ ] Prototype Demonstration
+## Version v0.1 — Repository Foundation
+
+**Status:** ✅ Completed
+
+### Objective
+
+Establish a clean, maintainable and specification-driven project foundation.
+
+### Completed Deliverables
+
+#### M1 — Repository Foundation
+
+- Repository structure
+- Python project initialization
+- Development environment
+- Documentation framework
+- GitHub workflow
+- Contribution guidelines
+- Licensing
+- Initial project roadmap
+
+The repository foundation serves as the baseline for all future milestones.
 
 ---
 
-# 6. Research Roadmap
+# Version v0.2 — Core Cognitive Architecture
 
-The MIND project is developed as a long-term research initiative.
+**Status:** 🚧 In Progress
 
-Each research stage builds upon the previous one and gradually expands the scope of the proposed inference runtime.
+### Objective
+
+Build the core architectural components of the MIND-Lite prototype.
+
+This version focuses on defining immutable runtime state models and introducing the first executable runtime behaviors while maintaining strict separation between state and behavior.
+
+The prototype is intentionally developed incrementally.
+
+Each milestone introduces one architectural capability before progressing to the next layer.
 
 ---
 
-## Stage 1 — Inference Runtime Foundation ✅
+## M2 — Core State Models
 
-**Status:** Completed
+**Status:** ✅ Completed
 
-### Objectives
+### Goal
 
-* Define the core runtime abstraction.
-* Establish explicit belief representation.
-* Formalize the inference lifecycle.
-* Freeze the initial software architecture.
+Implement the immutable cognitive state models used throughout the MIND-Lite architecture.
 
 ### Deliverables
 
-* RFC-000 – RFC-003
-* SRS
-* SAS
-* Development Specifications
+#### Observation
+
+Completed
+
+Features:
+
+- Immutable Observation model
+- UUID-based identity
+- UTC timestamp generation
+- Serialization (`to_dict`)
+- Deserialization (`from_dict`)
+- Comprehensive unit tests
 
 ---
 
-## Stage 2 — Prototype Validation 🚧
+#### Belief
 
-**Status:** In Progress
+Completed
 
-### Objectives
+Features:
 
-Validate the proposed runtime architecture through an executable prototype.
-
-### Research Questions
-
-* Can an explicit belief state improve runtime organization?
-* Can modular inference operators remain architecture-independent?
-* Can the runtime lifecycle be generalized across different inference methods?
-
----
-
-## Stage 3 — Active Inference Integration
-
-**Status:** Planned
-
-### Objectives
-
-Introduce probabilistic inference inspired by Active Inference.
-
-### Planned Topics
-
-* Belief updating
-* Information gain
-* Uncertainty estimation
-* Adaptive policy selection
+- Immutable Belief model
+- BeliefRecord representation
+- Confidence tracking
+- Version preservation
+- Recursive serialization
+- Recursive deserialization
+- Comprehensive unit tests
 
 ---
 
-## Stage 4 — Meta-Belief Learning
+### Architecture Outcome
 
-**Status:** Planned
+The cognitive state layer has been fully established.
 
-### Objectives
-
-Enable the runtime to reason about its own belief dynamics.
-
-### Planned Topics
-
-* Meta-belief representation
-* Confidence calibration
-* Belief revision
-* Runtime self-evaluation
+Observation and Belief now serve as the canonical immutable state models for subsequent runtime development.
 
 ---
 
-## Stage 5 — Distributed Inference Runtime
+## M3 — Runtime Core
 
-**Status:** Planned
+**Status:** 🚧 In Progress
 
-### Objectives
+### Goal
 
-Extend the architecture to collaborative multi-agent systems.
+Introduce the runtime subsystem responsible for managing runtime state and coordinating future cognitive execution.
 
-### Planned Topics
-
-* Belief communication
-* Distributed inference
-* Shared world models
-* Collective decision making
+Unlike previous milestones, M3 intentionally separates immutable runtime state from runtime behavior.
 
 ---
 
-## Stage 6 — General Inference Runtime
+### Completed Deliverables
 
-**Status:** Long-Term Vision
+#### RuntimeState
 
-### Objectives
+Status: ✅ Completed
 
-Develop a unified runtime capable of supporting multiple inference paradigms through a common architectural framework.
+Features:
 
----
-
-# 7. Long-Term Vision
-
-The long-term vision of MIND is to establish an inference-centric runtime architecture that is independent of any specific language model or reasoning algorithm.
-
-Future releases aim to support:
-
-* Multiple inference paradigms
-* Adaptive runtime management
-* Structured belief systems
-* Multi-agent collaboration
-* Reproducible benchmark suites
-* Research-oriented software development
-
-MIND is intended to evolve as both an open-source software framework and an active research platform.
+- Immutable RuntimeState model
+- Observation integration
+- Belief integration
+- Runtime metadata
+- Serialization
+- Deserialization
+- RuntimeState unit tests
 
 ---
 
-# 8. Success Metrics
+#### Runtime Initialization
 
-Progress will be evaluated using both engineering and research milestones.
+Status: ✅ Completed
 
-## Engineering Milestones
+Features:
 
-* Stable runtime architecture
-* Modular implementation
-* Comprehensive automated testing
-* Complete documentation
-* Public releases
-
----
-
-## Research Milestones
-
-* Prototype validation
-* Benchmark evaluation
-* Ablation studies
-* Open-source reproducibility
-* Peer-reviewed publications
+- Stateless RuntimeController
+- RuntimeState initialization
+- Default Observation creation
+- Default Belief creation
+- Default metadata initialization
+- RuntimeController unit tests
 
 ---
 
-## Community Milestones
+### Planned Deliverables
 
-As the project matures, success will also include:
+#### Runtime Serialization
 
-* External contributors
-* Community discussions
-* Research collaborations
-* Adoption by other projects
+Status: ⬜ Planned
 
----
+Responsible for:
 
-# Looking Ahead
-
-The immediate focus of the project is the implementation of **MIND-Lite**, the first executable prototype.
-
-Future versions will progressively introduce adaptive inference, richer belief representations and collaborative multi-agent capabilities while preserving the architectural principles established during the specification phase.
-
-The roadmap will be updated as the project evolves.
+- Runtime persistence
+- Runtime restoration
+- Serialization validation
 
 ---
 
-# End of Document
+#### Runtime Snapshot
 
-**ROADMAP.md**
+Status: ⬜ Planned
 
-Version: **v1.0**
+Responsible for:
 
-Status: **Active Development**
+- Immutable runtime snapshots
+- Snapshot export
+- Snapshot restoration
+
+---
+
+#### Runtime Validation
+
+Status: ⬜ Planned
+
+Responsible for:
+
+- Runtime consistency checking
+- Runtime integrity validation
+- Runtime metadata validation
+
+---
+
+#### Runtime Core Finalization
+
+Status: ⬜ Planned
+
+Responsible for:
+
+- Runtime subsystem integration
+- Final API cleanup
+- Runtime documentation
+- Comprehensive testing
+
+---
+
+### Architecture Outcome
+
+Upon completion, the Runtime Core milestone will establish the execution foundation for all subsequent inference and decision-making components.
+
+# Future Development
+
+The following milestones extend the MIND-Lite architecture beyond the Runtime Core.
+
+Unlike previous versions of the roadmap, future development is organized according to architectural layers rather than implementation modules.
+
+---
+
+# M4 — Inference Layer
+
+**Status:** ⬜ Planned
+
+### Goal
+
+Introduce the inference layer responsible for transforming observations into updated belief states.
+
+Inference operators are behavior components.
+
+They never mutate existing beliefs.
+
+Instead, they always construct new immutable Belief instances.
+
+---
+
+### Planned Deliverables
+
+#### Inference Interface
+
+Provide a common abstraction for all inference implementations.
+
+Deliverables:
+
+- Base inference interface
+- Operator contract
+- Type definitions
+
+---
+
+#### Bayesian Inference Operator
+
+Reference implementation based on probabilistic belief updating.
+
+Deliverables:
+
+- Bayesian operator
+- Confidence update
+- Belief evolution
+
+---
+
+#### LLM Inference Operator
+
+Large Language Model based inference implementation.
+
+Deliverables:
+
+- LLM operator
+- Prompt interface
+- Structured belief generation
+
+---
+
+#### Inference Validation
+
+Deliverables:
+
+- Unit tests
+- Operator consistency tests
+- Deterministic validation
+
+---
+
+### Architecture Outcome
+
+Inference becomes a fully independent behavior layer.
+
+RuntimeState remains immutable while belief evolution is delegated entirely to inference operators.
+
+---
+
+# M5 — Decision Layer
+
+**Status:** ⬜ Planned
+
+### Goal
+
+Transform belief states into executable decisions.
+
+Decision making is explicitly separated from inference.
+
+---
+
+### Planned Deliverables
+
+#### Policy Engine
+
+Responsible for selecting candidate actions.
+
+Deliverables:
+
+- Policy interface
+- Policy generation
+- Decision representation
+
+---
+
+#### Action Executor
+
+Responsible for executing selected actions.
+
+Deliverables:
+
+- Action interface
+- Action execution
+- Execution result representation
+
+---
+
+#### Decision Validation
+
+Deliverables:
+
+- Policy testing
+- Action testing
+- Decision consistency validation
+
+---
+
+### Architecture Outcome
+
+The decision layer becomes fully modular.
+
+Inference determines beliefs.
+
+Policy determines decisions.
+
+Action performs execution.
+
+---
+
+# M6 — Runtime Integration
+
+**Status:** ⬜ Planned
+
+### Goal
+
+Integrate all architectural components into a complete runtime workflow.
+
+RuntimeController becomes the orchestration layer responsible for coordinating the execution lifecycle.
+
+---
+
+### Planned Deliverables
+
+#### Runtime Lifecycle
+
+Responsible for coordinating:
+
+- Observation
+- Inference
+- Belief
+- Policy
+- Action
+
+---
+
+#### Runtime Loop
+
+Implement the prototype runtime execution loop.
+
+---
+
+#### Component Integration
+
+Integrate:
+
+- RuntimeState
+- RuntimeController
+- Inference
+- Policy
+- Action
+
+---
+
+#### End-to-End Demonstration
+
+Provide the first executable MIND-Lite prototype.
+
+---
+
+### Architecture Outcome
+
+The complete cognitive runtime architecture becomes operational.
+
+---
+
+# M7 — Prototype Validation
+
+**Status:** ⬜ Planned
+
+### Goal
+
+Validate the architecture through experiments, testing and reproducible demonstrations.
+
+---
+
+### Planned Deliverables
+
+#### Integration Testing
+
+- End-to-end testing
+- Runtime regression testing
+- Interface validation
+
+---
+
+#### Benchmark Framework
+
+Provide reusable benchmarking utilities.
+
+---
+
+#### Experimental Evaluation
+
+Support reproducible architecture experiments.
+
+---
+
+#### Documentation
+
+Complete prototype documentation.
+
+---
+
+### Architecture Outcome
+
+The MIND-Lite prototype becomes reproducible, testable and suitable for public release.
+
+---
+
+# Current Development Focus
+
+**Current Version**
+
+> v0.2 — Core Cognitive Architecture
+
+---
+
+**Current Milestone**
+
+> M3 — Runtime Core
+
+---
+
+**Completed**
+
+- ✅ Repository Foundation
+- ✅ Observation
+- ✅ Belief
+- ✅ RuntimeState
+- ✅ Runtime Initialization
+
+---
+
+**In Progress**
+
+- 🚧 Runtime Serialization
+
+---
+
+**Upcoming**
+
+- Runtime Snapshot
+- Runtime Validation
+- Runtime Core Finalization
+
+---
+
+**Next Milestone**
+
+> M4 — Inference Layer
+
+# Architecture Evolution
+
+The long-term architecture of MIND evolves incrementally through clearly separated architectural layers.
+
+Each milestone introduces one layer before integrating it with the rest of the system.
+
+```
+
+Specification
+        │
+        ▼
+Repository Foundation
+        │
+        ▼
+Core State Models
+        │
+        ▼
+Runtime Core
+        │
+        ▼
+Inference Layer
+        │
+        ▼
+Decision Layer
+        │
+        ▼
+Runtime Integration
+        │
+        ▼
+Prototype Validation
+        │
+        ▼
+Research Platform
+        │
+        ▼
+Stable Release
+
+```
+
+This evolution strategy ensures that every architectural layer is independently validated before becoming part of the complete cognitive runtime.
+
+---
+
+# Planned Releases
+
+## v0.1
+
+**Repository Foundation**
+
+Status:
+
+✅ Released
+
+Highlights:
+
+- Repository initialized
+- Development workflow established
+- Project documentation
+- Initial architecture specification
+
+---
+
+## v0.2
+
+**Core Cognitive Architecture**
+
+Status:
+
+🚧 In Development
+
+Highlights:
+
+- Observation
+- Belief
+- RuntimeState
+- RuntimeController
+- Runtime Core
+
+This version establishes the immutable runtime state architecture.
+
+---
+
+## v0.3
+
+**Integrated Runtime Prototype**
+
+Status:
+
+Planned
+
+Highlights:
+
+- Inference Layer
+- Decision Layer
+- Runtime lifecycle
+- End-to-end execution
+- First executable prototype
+
+---
+
+## v0.4
+
+**Experimental Platform**
+
+Status:
+
+Planned
+
+Highlights:
+
+- Benchmark framework
+- Runtime evaluation
+- Experimental infrastructure
+- Performance analysis
+
+---
+
+## v1.0
+
+**Stable Research Platform**
+
+Status:
+
+Future
+
+Highlights:
+
+- Stable public APIs
+- Complete documentation
+- Reproducible experiments
+- Long-term maintenance
+- Research-ready architecture
+
+---
+
+# Long-Term Vision
+
+The long-term objective of MIND is not merely to build another AI agent.
+
+Instead, the project aims to explore a reusable cognitive software architecture inspired by Active Inference and the Free Energy Principle.
+
+Future research directions may include:
+
+- probabilistic cognitive architectures;
+- adaptive runtime systems;
+- multi-agent cognitive coordination;
+- continual belief evolution;
+- uncertainty-aware decision making;
+- cognitive memory systems;
+- autonomous tool utilization;
+- embodied intelligent agents.
+
+The architecture is intentionally designed to remain modular so that new cognitive components can be integrated without redesigning the existing runtime.
+
+---
+
+# Project Principles
+
+Every contribution to MIND should preserve the following architectural principles.
+
+## Specification First
+
+Specifications always precede implementation.
+
+No implementation should redefine the architecture.
+
+---
+
+## Immutable State
+
+Observation.
+
+Belief.
+
+RuntimeState.
+
+Future cognitive state models.
+
+All runtime state shall remain immutable.
+
+---
+
+## Behavior Separation
+
+Behavior belongs to dedicated execution components.
+
+State models shall never perform cognitive computation.
+
+---
+
+## Incremental Evolution
+
+Every milestone introduces exactly one architectural capability.
+
+Large architectural changes should be decomposed into independently reviewable milestones.
+
+---
+
+## Reproducibility
+
+Every milestone should produce:
+
+- complete specifications;
+- implementation;
+- unit tests;
+- development report;
+- architecture review;
+- code review.
+
+The complete Specification-Driven Development workflow is considered part of the deliverable.
+
+---
+
+# Document Status
+
+Version:
+
+**v1.1**
+
+Status:
+
+**Active Development**
+
+Current Version:
+
+**v0.2**
+
+Current Milestone:
+
+**M3 — Runtime Core**
+
+Maintained by:
+
+**MIND Architecture Team**
+
+Last Updated:
+
+**2026-07**
+
+---
+
+> "Build the architecture before building the intelligence."
+
+— MIND Development Philosophy
