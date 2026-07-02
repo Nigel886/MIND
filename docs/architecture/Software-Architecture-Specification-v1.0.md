@@ -378,12 +378,13 @@ RuntimeState SHALL NOT:
 
 RuntimeController is responsible for:
 
-* receiving observations;
-* invoking the InferenceEngine;
-* creating updated RuntimeState instances;
-* invoking the PolicyEngine;
-* invoking the ActionExecutor;
-* managing the runtime execution lifecycle.
+- initializing RuntimeState;
+- updating RuntimeState;
+- receiving observations;
+- invoking the InferenceEngine;
+- invoking the PolicyEngine;
+- invoking the ActionExecutor;
+- managing the runtime execution lifecycle.
 
 No other module may coordinate the execution lifecycle.
 
@@ -574,6 +575,54 @@ RuntimeState is an immutable passive data model.
 It exposes only state representation and serialization interfaces.
 
 Runtime lifecycle management belongs to RuntimeController.
+
+---
+
+## 9.7 RuntimeController
+
+### Public Interface
+
+```python
+class RuntimeController:
+
+    @staticmethod
+    def initialize(
+        observation: Observation | None = None,
+        belief: Belief | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> RuntimeState:
+        ...
+
+    @staticmethod
+    def update(
+        runtime_state: RuntimeState,
+        observation: Observation | None = None,
+        belief: Belief | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> RuntimeState:
+        ...
+```
+
+RuntimeController is a stateless behavior component.
+
+It coordinates runtime state transitions while preserving the immutability of RuntimeState.
+
+`initialize()` constructs an initial RuntimeState.
+
+`update()` constructs a new RuntimeState using the provided runtime information.
+
+Neither method shall modify an existing RuntimeState instance.
+
+---
+
+### Design Rules
+
+- RuntimeController shall remain stateless.
+- RuntimeController shall never own RuntimeState internally.
+- RuntimeController shall never perform inference.
+- RuntimeController shall never generate policies.
+- RuntimeController shall never execute actions.
+- RuntimeController shall always return a newly constructed RuntimeState.
 
 ---
 
