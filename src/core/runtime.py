@@ -1,10 +1,10 @@
-"""RuntimeState model for the MIND-Lite runtime subsystem."""
+"""RuntimeState model and RuntimeController for the MIND-Lite runtime subsystem."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from src.core.belief import Belief
 from src.core.observation import Observation
@@ -94,4 +94,60 @@ class RuntimeState:
             observation=Observation.from_dict(data["observation"]),
             belief=Belief.from_dict(data["belief"]),
             metadata=dict(data["metadata"]),
+        )
+
+
+class RuntimeController:
+    """Initializes the MIND-Lite runtime state.
+
+    RuntimeController is a stateless behavior component responsible
+    for creating initial RuntimeState instances. It intentionally
+    exposes no orchestration or lifecycle management APIs for the
+    prototype.
+
+    RuntimeController never stores internal state. Every call to
+    initialize() constructs and returns a new RuntimeState instance.
+    """
+
+    @staticmethod
+    def initialize(
+        observation: Optional[Observation] = None,
+        belief: Optional[Belief] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> RuntimeState:
+        """Creates an initial RuntimeState instance.
+
+        If no Observation or Belief is provided, default instances are
+        created using their respective constructors. Metadata defaults
+        to an empty dictionary when not provided.
+
+        Args:
+            observation: Optional initial immutable observation.
+            belief: Optional initial immutable belief state.
+            metadata: Optional opaque runtime metadata.
+
+        Returns:
+            A newly constructed immutable RuntimeState instance.
+        """
+
+        if observation is None:
+            observation = Observation(
+                source="",
+                content=None,
+            )
+
+        if belief is None:
+            belief = Belief(
+                state={},
+                confidence={},
+                version=0,
+            )
+
+        if metadata is None:
+            metadata = {}
+
+        return RuntimeState(
+            observation=observation,
+            belief=belief,
+            metadata=metadata,
         )

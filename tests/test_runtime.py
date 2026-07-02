@@ -1,4 +1,4 @@
-"""Unit tests for the runtime state module."""
+"""Unit tests for the runtime state module and runtime controller."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from src.core.belief import Belief, BeliefRecord
 from src.core.observation import Observation
-from src.core.runtime import RuntimeState
+from src.core.runtime import RuntimeState, RuntimeController
 
 
 class RuntimeStateTest(unittest.TestCase):
@@ -147,3 +147,75 @@ class RuntimeStateTest(unittest.TestCase):
         restored = RuntimeState.from_dict(runtime_state.to_dict())
 
         self.assertEqual(restored, runtime_state)
+
+
+class RuntimeControllerTest(unittest.TestCase):
+    """Tests for the RuntimeController component."""
+
+    def test_initialize_creates_default_runtime_state(self) -> None:
+        """Creates a default runtime state when no arguments are provided."""
+
+        controller = RuntimeController()
+        runtime_state = controller.initialize()
+
+        self.assertIsInstance(runtime_state, RuntimeState)
+        self.assertIsInstance(runtime_state.observation, Observation)
+        self.assertIsInstance(runtime_state.belief, Belief)
+        self.assertEqual(runtime_state.metadata, {})
+
+    def test_initialize_uses_provided_observation(self) -> None:
+        """Uses the provided observation when given."""
+
+        controller = RuntimeController()
+        observation = Observation(source="user", content="test")
+        runtime_state = controller.initialize(observation=observation)
+
+        self.assertEqual(runtime_state.observation, observation)
+
+    def test_initialize_uses_provided_belief(self) -> None:
+        """Uses the provided belief when given."""
+
+        controller = RuntimeController()
+        belief = Belief(state={}, confidence={}, version=1)
+        runtime_state = controller.initialize(belief=belief)
+
+        self.assertEqual(runtime_state.belief, belief)
+
+    def test_initialize_uses_provided_metadata(self) -> None:
+        """Uses the provided metadata when given."""
+
+        controller = RuntimeController()
+        metadata = {"test": "value"}
+        runtime_state = controller.initialize(metadata=metadata)
+
+        self.assertEqual(runtime_state.metadata, metadata)
+
+    def test_initialize_creates_new_instance_each_time(self) -> None:
+        """Returns a new RuntimeState instance on each call."""
+
+        controller = RuntimeController()
+        first = controller.initialize()
+        second = controller.initialize()
+
+        self.assertIsNot(first, second)
+
+    def test_runtime_controller_is_stateless(self) -> None:
+        """Verifies RuntimeController stores no internal state."""
+
+        controller = RuntimeController()
+        controller.initialize()
+
+        self.assertFalse(hasattr(controller, "runtime_state"))
+        self.assertFalse(hasattr(controller, "observation"))
+        self.assertFalse(hasattr(controller, "belief"))
+
+    def test_runtime_controller_has_minimal_public_api(self) -> None:
+        """Exposes only initialize() and no lifecycle methods."""
+
+        controller = RuntimeController()
+
+        self.assertTrue(hasattr(controller, "initialize"))
+        self.assertFalse(hasattr(controller, "step"))
+        self.assertFalse(hasattr(controller, "run"))
+        self.assertFalse(hasattr(controller, "stop"))
+        self.assertFalse(hasattr(controller, "reset"))
