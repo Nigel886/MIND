@@ -354,19 +354,27 @@ RuntimeState SHALL remain immutable.
 
 ### RuntimeController Responsibilities
 
-* Receive observations.
-* Invoke inference.
-* Generate updated RuntimeState instances.
-* Generate policies.
-* Execute actions.
-* Repeat the runtime execution loop.
+RuntimeController is responsible for:
+
+- initializing RuntimeState;
+- updating RuntimeState;
+- coordinating interactions between RuntimeState and future runtime components.
+
+RuntimeController SHALL remain stateless.
+
+RuntimeController SHALL NOT own RuntimeState internally.
+
+RuntimeController SHALL construct new RuntimeState instances instead of modifying existing ones.
+
+Runtime execution, inference orchestration, policy execution and action execution are introduced in future milestones.
 
 ### Acceptance Criteria
 
 * RuntimeState objects can be created.
 * RuntimeState objects are immutable.
-* RuntimeController completes one inference cycle successfully.
-* RuntimeController can execute continuously until a stop condition is reached.
+* RuntimeController initializes RuntimeState correctly.
+* RuntimeController constructs new RuntimeState instances through update().
+* RuntimeController remains stateless.
 
 ---
 
@@ -613,9 +621,11 @@ The MIND-Lite prototype will be considered complete when all of the following co
 
 ## Runtime
 
-* [ ] Runtime starts successfully.
-* [ ] Runtime completes one inference cycle.
-* [ ] Runtime supports continuous execution.
+* [x] RuntimeState can be created.
+* [x] RuntimeState supports serialization.
+* [x] RuntimeController initializes RuntimeState.
+* [x] RuntimeController updates RuntimeState immutably.
+* [ ] Runtime Core integration is validated.
 
 ---
 

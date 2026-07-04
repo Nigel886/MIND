@@ -256,60 +256,28 @@ Features:
 
 ---
 
-### Planned Deliverables
+### Remaining Deliverables
 
-#### Runtime Serialization
+#### Runtime Core Integration
 
-Status: ⬜ Planned
-
-Responsible for:
-
-- Runtime persistence
-- Runtime restoration
-- Serialization validation
-
----
-
-#### Runtime Snapshot
-
-Status: ⬜ Planned
+Status: 🚧 In Progress
 
 Responsible for:
 
-- Immutable runtime snapshots
-- Snapshot export
-- Snapshot restoration
-
----
-
-#### Runtime Validation
-
-Status: ⬜ Planned
-
-Responsible for:
-
-- Runtime consistency checking
-- Runtime integrity validation
-- Runtime metadata validation
-
----
-
-#### Runtime Core Finalization
-
-Status: ⬜ Planned
-
-Responsible for:
-
-- Runtime subsystem integration
-- Final API cleanup
-- Runtime documentation
-- Comprehensive testing
+- RuntimeState integration
+- RuntimeController integration
+- Initialization workflow validation
+- Runtime update workflow validation
+- End-to-end Runtime Core testing
+- Runtime documentation refinement
 
 ---
 
 ### Architecture Outcome
 
-Upon completion, the Runtime Core milestone will establish the execution foundation for all subsequent inference and decision-making components.
+Upon completion, the Runtime Core milestone will establish a fully integrated runtime subsystem, providing the execution foundation for all subsequent inference and decision-making components.
+
+---
 
 # Future Development
 
@@ -572,20 +540,19 @@ The MIND-Lite prototype becomes reproducible, testable and suitable for public r
 - ✅ Belief
 - ✅ RuntimeState
 - ✅ Runtime Initialization
+- ✅ Runtime Update
 
 ---
 
 **In Progress**
 
-- 🚧 Runtime Serialization
+- 🚧 Runtime Core Integration
 
 ---
 
 **Upcoming**
 
-- Runtime Snapshot
-- Runtime Validation
-- Runtime Core Finalization
+- M4 — Inference Layer
 
 ---
 
@@ -669,7 +636,8 @@ Highlights:
 - Belief
 - RuntimeState
 - RuntimeController
-- Runtime Core
+- Runtime Update
+- Runtime Core Integration
 
 This version establishes the immutable runtime state architecture.
 

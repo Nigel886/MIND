@@ -380,13 +380,11 @@ RuntimeController is responsible for:
 
 - initializing RuntimeState;
 - updating RuntimeState;
-- receiving observations;
-- invoking the InferenceEngine;
-- invoking the PolicyEngine;
-- invoking the ActionExecutor;
-- managing the runtime execution lifecycle.
+- coordinating interactions between RuntimeState and future runtime components.
 
-No other module may coordinate the execution lifecycle.
+RuntimeController SHALL remain stateless.
+
+Execution orchestration will be introduced by future milestones.
 
 ---
 
@@ -601,28 +599,17 @@ class RuntimeController:
         metadata: dict[str, Any] | None = None,
     ) -> RuntimeState:
         ...
+
 ```
-
-RuntimeController is a stateless behavior component.
-
-It coordinates runtime state transitions while preserving the immutability of RuntimeState.
-
-`initialize()` constructs an initial RuntimeState.
-
-`update()` constructs a new RuntimeState using the provided runtime information.
-
-Neither method shall modify an existing RuntimeState instance.
-
----
 
 ### Design Rules
 
 - RuntimeController shall remain stateless.
 - RuntimeController shall never own RuntimeState internally.
-- RuntimeController shall never perform inference.
-- RuntimeController shall never generate policies.
-- RuntimeController shall never execute actions.
-- RuntimeController shall always return a newly constructed RuntimeState.
+- RuntimeController shall never mutate RuntimeState.
+- RuntimeController shall never perform inference directly.
+- RuntimeController shall never execute policies directly.
+- RuntimeController shall never execute actions directly.
 
 ---
 
