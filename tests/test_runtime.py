@@ -296,3 +296,142 @@ class RuntimeControllerTest(unittest.TestCase):
 
         self.assertEqual(original.metadata, updated.metadata)
         self.assertIsNot(original.metadata, updated.metadata)
+
+
+class RuntimeCoreIntegrationTest(unittest.TestCase):
+    """Integration tests for the complete Runtime Core."""
+
+    def test_complete_runtime_workflow(self) -> None:
+        """Verifies a complete Runtime Core workflow from initialization through multiple updates."""
+
+        controller = RuntimeController()
+
+        # Step 1: Initialize the runtime
+        initial_state = controller.initialize()
+        self.assertIsInstance(initial_state, RuntimeState)
+        self.assertIsInstance(initial_state.observation, Observation)
+        self.assertIsInstance(initial_state.belief, Belief)
+
+        # Step 2: Update observation
+        obs1 = Observation(source="user", content="first input")
+        state1 = controller.update(initial_state, observation=obs1)
+        self.assertIsNot(initial_state, state1)
+        self.assertEqual(state1.observation, obs1)
+        self.assertEqual(state1.belief, initial_state.belief)
+        self.assertEqual(state1.metadata, initial_state.metadata)
+
+        # Verify initial state is unmodified
+        self.assertIsNot(initial_state.observation, obs1)
+
+        # Step 3: Update belief
+        belief1 = Belief(
+            state={},
+            confidence={},
+            version=1,
+        )
+        state2 = controller.update(state1, belief=belief1)
+        self.assertIsNot(state1, state2)
+        self.assertEqual(state2.observation, obs1)
+        self.assertEqual(state2.belief, belief1)
+
+        # Step 4: Update metadata
+        metadata1 = {"phase": "running", "iteration": 1}
+        state3 = controller.update(state2, metadata=metadata1)
+        self.assertIsNot(state2, state3)
+        self.assertEqual(state3.metadata, metadata1)
+
+        # Step 5: Update all components together
+        obs2 = Observation(source="system", content="response")
+        belief2 = Belief(
+            state={},
+            confidence={},
+            version=2,
+        )
+        metadata2 = {"phase": "complete", "iteration": 2}
+
+        state4 = controller.update(
+            state3,
+            observation=obs2,
+            belief=belief2,
+            metadata=metadata2,
+        )
+        self.assertIsNot(state3, state4)
+        self.assertEqual(state4.observation, obs2)
+        self.assertEqual(state4.belief, belief2)
+        self.assertEqual(state4.metadata, metadata2)
+
+    def test_runtime_state_immutability_through_workflow(self) -> None:
+        """Ensures RuntimeState remains immutable throughout the entire workflow."""
+
+        from dataclasses import FrozenInstanceError
+
+        controller = RuntimeController()
+        state = controller.initialize()
+
+        # Attempt to modify the state directly (should fail)
+        with self.assertRaises(FrozenInstanceError):
+            state.metadata = {"modified": True}
+
+        with self.assertRaises(FrozenInstanceError):
+            state.observation = Observation(source="hacked", content="bad")
+
+        with self.assertRaises(FrozenInstanceError):
+            state.belief = Belief(state={}, confidence={}, version=999)
+
+        # Update through controller creates new instance
+        new_state = controller.update(
+            state,
+            metadata={"updated": True},
+        )
+
+        self.assertIsNot(state, new_state)
+        self.assertEqual(state.metadata, {})  # Original unchanged
+        self.assertEqual(new_state.metadata, {"updated": True})  # New has change
+
+    def test_runtime_controller_statelessness(self) -> None:
+        """Ensures RuntimeController never stores internal state."""
+
+        controller = RuntimeController()
+
+        # Check that no instance attributes are stored
+        self.assertEqual(len(dir(controller)), len(dir(RuntimeController)))
+        self.assertFalse(hasattr(controller, "runtime_state"))
+        self.assertFalse(hasattr(controller, "observation"))
+        self.assertFalse(hasattr(controller, "belief"))
+        self.assertFalse(hasattr(controller, "metadata"))
+        self.assertFalse(hasattr(controller, "state"))
+        self.assertFalse(hasattr(controller, "current_state"))
+
+        # Multiple operations don't leave any state behind
+        state1 = controller.initialize()
+        state2 = controller.update(state1)
+        state3 = controller.update(state2)
+
+        # No state stored in controller
+        self.assertFalse(hasattr(controller, "state1"))
+        self.assertFalse(hasattr(controller, "state2"))
+        self.assertFalse(hasattr(controller, "state3"))
+
+    def test_runtime_round_trip_serialization(self) -> None:
+        """Verifies complete RuntimeState round-trip serialization."""
+
+        controller = RuntimeController()
+        original = controller.initialize(
+            metadata={"test": "value", "number": 42},
+        )
+
+        # Serialize
+        data = original.to_dict()
+        self.assertIsInstance(data, dict)
+        self.assertIn("observation", data)
+        self.assertIn("belief", data)
+        self.assertIn("metadata", data)
+
+        # Deserialize
+        restored = RuntimeState.from_dict(data)
+
+        # Verify they are equivalent but different instances
+        self.assertEqual(restored.observation, original.observation)
+        self.assertEqual(restored.belief, original.belief)
+        self.assertEqual(restored.metadata, original.metadata)
+        self.assertIsNot(restored, original)

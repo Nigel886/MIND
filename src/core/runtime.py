@@ -98,12 +98,12 @@ class RuntimeState:
 
 
 class RuntimeController:
-    """Initializes and updates the MIND-Lite runtime state.
+    """Manages the MIND-Lite runtime state lifecycle.
 
     RuntimeController is a stateless behavior component responsible
-    for creating and updating RuntimeState instances. It intentionally
-    exposes no orchestration or lifecycle management APIs for the
-    prototype.
+    for creating and updating RuntimeState instances. It coordinates
+    RuntimeState and future runtime components while maintaining
+    strict separation of state and behavior.
 
     RuntimeController never stores internal state. Every call to
     initialize() or update() constructs and returns a new RuntimeState
