@@ -165,22 +165,26 @@
  Every runtime iteration executes the following sequence.
  
  ```text
- Receive Observation
-         │
-         ▼
- Select Inference Operator
-         │
-         ▼
- Update Belief
-         │
-         ▼
- Generate Policy
-         │
-         ▼
- Execute Action
-         │
-         ▼
- Receive New Observation
+Receive Observation
+        │
+        ▼
+Inference Engine
+        │
+        ▼
+Generate New Belief
+        │
+        ▼
+Runtime Controller
+(Update RuntimeState)
+        │
+        ▼
+Policy Engine
+        │
+        ▼
+Action
+        │
+        ▼
+Receive New Observation
  ```
  
  The runtime repeats until termination conditions are satisfied.
@@ -259,7 +263,16 @@ The runtime shall maintain an explicit belief state.
 
 ### Description
 
-The inference engine transforms observations into updated beliefs.
+The Inference Engine derives a new immutable Belief from the current Observation and the current Belief.
+
+The Inference Engine is a pure transformation component responsible solely for belief inference.
+
+It SHALL NOT:
+
+- modify RuntimeState;
+- perform runtime orchestration;
+- execute actions;
+- access external tools directly.
 
 ### Inputs
 
@@ -272,14 +285,17 @@ The inference engine transforms observations into updated beliefs.
 
 ### Constraints
 
-* The inference engine must not perform actions.
-* The inference engine must not access external tools directly.
-* Different inference operators must share the same interface.
+- The Inference Engine shall expose a single public inference operation.
+- The Inference Engine shall remain stateless.
+- The Inference Engine shall not perform runtime orchestration.
+- The Inference Engine shall not execute actions.
+- Different inference operators shall share the same interface.
 
 ### Acceptance Criteria
 
-* Multiple inference operators can be swapped without changing the runtime.
-* Runtime behavior remains unchanged when replacing one inference operator with another.
+- A new immutable Belief is produced.
+- Previous Belief remains unchanged.
+- Multiple inference operators can be swapped without changing runtime behavior.
 
 ---
 
@@ -581,34 +597,31 @@ Observation
 The runtime executes a continuous state transition process.
 
 ```text
-┌────────────┐
-│ Observation│
-└─────┬──────┘
-      │
-      ▼
-┌────────────┐
-│ Inference  │
-└─────┬──────┘
-      │
-      ▼
-┌────────────┐
-│   Belief   │
-└─────┬──────┘
-      │
-      ▼
-┌────────────┐
-│   Policy   │
-└─────┬──────┘
-      │
-      ▼
-┌────────────┐
-│   Action   │
-└─────┬──────┘
-      │
-      ▼
-┌────────────┐
-│Observation │
-└────────────┘
+Observation
+
+↓
+
+Inference Engine
+
+↓
+
+Belief
+
+↓
+
+Runtime Controller
+
+↓
+
+RuntimeState
+
+↓
+
+Policy
+
+↓
+
+Action
 ```
 
 The runtime continues executing until a termination condition is reached.
@@ -646,9 +659,10 @@ The MIND-Lite prototype will be considered complete when all of the following co
 
 ## Inference
 
-* [ ] Bayesian inference operator works.
-* [ ] LLM inference operator works.
-* [ ] Operators are interchangeable.
+- [ ] InferenceEngine can derive a new immutable Belief.
+- [ ] Previous Belief remains unchanged.
+- [ ] Reference inference operator works.
+- [ ] Operators are interchangeable.
 
 ---
 

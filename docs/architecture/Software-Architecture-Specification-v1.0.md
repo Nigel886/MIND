@@ -142,23 +142,29 @@ The MIND-Lite runtime is organized around a continuous inference loop.
 
 ```text
                 Environment
-                      │
-                      ▼
-              Observation Layer
-                      │
-                      ▼
-             Inference Engine
-                      │
-                      ▼
-               Belief State
-                      │
-                      ▼
-               Policy Engine
-                      │
-                      ▼
-             Action Executor
-                      │
-                      ▼
+                    │
+                    ▼
+                Observation
+                    │
+                    ▼
+                InferenceEngine
+                    │
+                    ▼
+                Belief
+                    │
+                    ▼
+                RuntimeController
+                    │
+                    ▼
+                RuntimeState
+                    │
+                    ▼
+                PolicyEngine
+                    │
+                    ▼
+                ActionExecutor
+                    │
+                    ▼
                 Environment
 ```
 
@@ -181,20 +187,22 @@ The dependency graph is considered part of the architecture and shall remain sta
 ## 6.1 Dependency Graph
 
 ```text
-                  Runtime
-                 /   |    \
-                /    |     \
-               ▼     ▼      ▼
-      Observation  Inference  Policy
-             │          │         │
-             │          ▼         │
-             │       Belief ◄─────┘
-             │
-             ▼
-           Action
-             │
-             ▼
-       External Tools
+RuntimeController
+        │
+        ├────────► RuntimeState
+        │
+        ├────────► InferenceEngine
+        │
+        ├────────► PolicyEngine
+        │
+        └────────► ActionExecutor
+
+InferenceEngine ─────► Belief
+
+RuntimeState ───────► Observation
+RuntimeState ───────► Belief
+
+ActionExecutor ─────► External Tools
 ```
 
 ---
@@ -292,20 +300,23 @@ Represents the runtime's explicit internal belief state.
 
 ### Responsibility
 
-Transforms observations into updated beliefs.
+Derive a new immutable Belief from the current Observation and the previous Belief.
 
-### Internal Components
-
-* Inference Operator
-* Belief Updater
+InferenceEngine is a stateless transformation component.
 
 ### Responsibilities
 
-* Select inference operator.
-* Execute inference.
-* Produce updated beliefs.
+- Construct a new immutable Belief.
+- Preserve the previous Belief.
+- Execute the inference process.
+- Encapsulate belief revision internally.
 
-The inference engine must never execute actions.
+InferenceEngine SHALL NOT:
+
+- modify RuntimeState;
+- perform runtime orchestration;
+- generate policies;
+- execute actions.
 
 ---
 
@@ -493,17 +504,14 @@ class InferenceEngine:
         belief: Belief
     ) -> Belief
 
-    def set_operator(
-        self,
-        operator: BaseInferenceOperator
-    ) -> None
 ```
 
-## Design Rules
+### Design Rules
 
-* `infer()` must never modify the original belief object directly.
-* A new belief state shall always be returned.
-* Operators are interchangeable.
+- InferenceEngine exposes only one public operation.
+- infer() never modifies the original Belief.
+- infer() always returns a new immutable Belief.
+- Belief revision is an internal implementation detail.
 
 ---
 
@@ -617,47 +625,37 @@ class RuntimeController:
 The runtime follows a fixed execution sequence.
 
 ```text
-Runtime.start()
-
-        │
-
-        ▼
-
 Receive Observation
 
-        │
-
-        ▼
+      ↓
 
 InferenceEngine.infer()
 
-        │
+      ↓
 
-        ▼
+New Belief
 
-Update Belief
+      ↓
 
-        │
+RuntimeController.update()
 
-        ▼
+      ↓
+
+RuntimeState
+
+      ↓
 
 PolicyEngine.generate()
 
-        │
-
-        ▼
+      ↓
 
 ActionExecutor.execute()
 
-        │
-
-        ▼
+      ↓
 
 Generate Observation
 
-        │
-
-        ▼
+      ↓
 
 Repeat
 ```
@@ -999,25 +997,22 @@ The long-term vision includes:
 The MIND-Lite prototype consists of six core runtime components.
 
 ```text
-                  Runtime Subsystem
-                          │
-          ┌───────────────┴───────────────┐
-          │                               │
-          ▼                               ▼
-    RuntimeState                 RuntimeController
-          │                               │
-          │                       ┌───────┼────────────┐
-          │                       │       │            │
-          ▼                       ▼       ▼            ▼
-    Observation          Inference Engine  Policy Engine
-          │                       │              │
-          └──────────────────► Belief ◄──────────┘
-                                  │
-                                  ▼
-                          Action Executor
-                                  │
-                                  ▼
-                            External World
+                  RuntimeController
+                        │
+                        ▼
+                    InferenceEngine
+                        │
+                        ▼
+                      Belief
+                        │
+                        ▼
+                    RuntimeState
+                        │
+                        ▼
+                    PolicyEngine
+                        │
+                        ▼
+                    ActionExecutor
 ```
 
 RuntimeController coordinates RuntimeState and future runtime components.
