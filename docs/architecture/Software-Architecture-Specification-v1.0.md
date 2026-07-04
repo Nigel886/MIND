@@ -352,7 +352,7 @@ The Runtime Subsystem consists of two components:
 
 RuntimeState is an immutable passive runtime data model.
 
-RuntimeController is responsible for runtime lifecycle orchestration.
+RuntimeController is responsible for coordinating RuntimeState and future runtime components.
 
 ---
 
@@ -394,7 +394,7 @@ The Runtime Subsystem owns the RuntimeState and RuntimeController.
 
 RuntimeState owns the current Observation and Belief.
 
-RuntimeController manages runtime orchestration.
+RuntimeController coordinates runtime operations.
 
 ```text
 RuntimeSubsystem
@@ -599,7 +599,6 @@ class RuntimeController:
         metadata: dict[str, Any] | None = None,
     ) -> RuntimeState:
         ...
-
 ```
 
 ### Design Rules
@@ -1021,7 +1020,7 @@ The MIND-Lite prototype consists of six core runtime components.
                             External World
 ```
 
-RuntimeController is the orchestration layer.
+RuntimeController coordinates RuntimeState and future runtime components.
 
 RuntimeState is the immutable runtime data model.
 
