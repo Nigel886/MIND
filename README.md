@@ -10,15 +10,23 @@
 
 ---
 
-## 🚧 Project Status
+## Project Status
 
-| Item | Status |
-|------|--------|
-| Stage | Active Research |
-| Version | v0.1 |
-| Phase | Specification |
-| Current Milestone | MIND-Lite Prototype |
-| License | MIT |
+Current Version: **v0.3.0 (Runtime Core)**
+
+Current Milestone:
+
+- ✅ M1 — Repository Foundation
+- ✅ M2 — Cognitive State Models
+- ✅ M3 — Runtime Core
+- ⏳ M4 — Inference Layer
+- ⏳ M5 — Policy Layer
+- ⏳ M6 — Action Layer
+- ⏳ M7 — System Integration
+
+Current Development Focus:
+
+> M4 — Inference Layer
 
 ---
 
@@ -154,7 +162,9 @@ Every execution cycle follows the same runtime loop.
 
 The runtime continuously updates beliefs from observations and derives actions from the current belief state.
 
-Future releases will provide a complete architecture diagram and runtime specification.
+Detailed architecture documentation is available in `ARCHITECTURE.md`.
+
+Future releases will extend the runtime with inference, policy and action components.
 
 ---
 
@@ -182,6 +192,8 @@ The project documentation is organized as a collection of RFCs.
 | RFC-001B | Concept Hierarchy Specification | ✅ |
 | RFC-002 | Research Blueprint | ✅ |
 | RFC-003 | MIND Formalism | ✅ |
+| ARCHITECTURE.md | Runtime Architecture Overview | ✅ |
+| ROADMAP.md | Development Roadmap | ✅ |
 
 More documents will be added as the project evolves.
 
@@ -223,8 +235,8 @@ The project is divided into five major milestones.
 | Phase | Objective | Status |
 |------|-----------|--------|
 | Phase 1 | Research Specification | ✅ Completed |
-| Phase 2 | MIND-Lite Prototype | 🚧 In Progress |
-| Phase 3 | Adaptive Runtime | ⏳ Planned |
+| Phase 2 | Runtime Foundation (MIND-Lite)  | 🚧 In Progress |
+| Phase 3 | Cognitive Inference | ⏳ Planned |
 | Phase 4 | Multi-Agent Runtime | ⏳ Planned |
 | Phase 5 | Benchmark & Publication | ⏳ Planned |
 
@@ -240,17 +252,18 @@ The primary objective of this milestone is to validate the core runtime abstract
 
 Current development priorities:
 
-- [ ] Observation Module
-- [ ] Belief Representation
-- [ ] Inference Runtime
-- [ ] Policy Engine
-- [ ] Action Interface
-- [ ] Runtime Loop
+- [x] Observation Module
+- [x] Belief Representation
+- [x] Runtime Core
+- [ ] Inference Layer
+- [ ] Policy Layer
+- [ ] Action Layer
+- [ ] Runtime Integration
 - [ ] Initial Evaluation
 
 Expected outcome:
 
-- A minimal but fully functional inference runtime capable of validating the core concepts proposed in RFC-003.
+- - A complete inference pipeline built upon the validated Runtime Core.
 
 ---
 
@@ -260,8 +273,8 @@ Expected outcome:
 |------|----------|
 | Vision | ✅ Complete |
 | Research Specification | ✅ Complete |
-| Runtime Design | ✅ Complete |
-| Software Architecture | ✅ Complete |
+| Runtime Core | ✅ Complete |
+| Runtime Architecture | ✅ Complete |
 | Prototype Development | 🚧 In Progress |
 | Benchmark Design | ⏳ Planned |
 | Experimental Evaluation | ⏳ Planned |
@@ -381,25 +394,20 @@ Any future claims of novelty will be supported by prototype implementation, expe
 ```text
 Research Idea
       │
-      ▼
 Research Specification
       │
-      ▼
-MIND-Lite Prototype   ← Current Stage
+Runtime Core      ← Current Stage
       │
-      ▼
+Inference Layer
+      │
 Adaptive Runtime
       │
-      ▼
 Multi-Agent Runtime
       │
-      ▼
 Benchmark Evaluation
       │
-      ▼
 First Research Paper
       │
-      ▼
 MIND v1.0
 ```
 
