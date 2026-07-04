@@ -498,11 +498,11 @@ Existing Belief instances shall never be modified.
 ```python
 class InferenceEngine:
 
+    @staticmethod
     def infer(
-        self,
         observation: Observation,
-        belief: Belief
-    ) -> Belief
+        belief: Belief,
+    ) -> Belief:
 
 ```
 
