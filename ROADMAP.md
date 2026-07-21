@@ -213,7 +213,7 @@ Observation and Belief now serve as the canonical immutable state models for sub
 
 ## M3 — Runtime Core
 
-**Status:** 🚧 In Progress
+**Status:** ✅ Completed
 
 ### Goal
 
@@ -256,11 +256,9 @@ Features:
 
 ---
 
-### Remaining Deliverables
-
 #### Runtime Core Integration
 
-Status: 🚧 In Progress
+Status: ✅ Completed
 
 Responsible for:
 
@@ -275,7 +273,7 @@ Responsible for:
 
 ### Architecture Outcome
 
-Upon completion, the Runtime Core milestone will establish a fully integrated runtime subsystem, providing the execution foundation for all subsequent inference and decision-making components.
+The Runtime Core milestone establishes a fully integrated runtime subsystem, providing the execution foundation for all subsequent inference and decision-making components.
 
 ---
 
@@ -289,7 +287,7 @@ Unlike previous versions of the roadmap, future development is organized accordi
 
 # M4 — Inference Layer
 
-**Status:** ⬜ Planned
+**Status:** 🚧 In Progress
 
 ### Goal
 
@@ -303,7 +301,23 @@ Instead, they always construct new immutable Belief instances.
 
 ---
 
-### Planned Deliverables
+### Completed Deliverables
+
+#### Prototype Inference Engine (Issue #9)
+
+Status: ✅ Completed
+
+Features:
+
+- Stateless `InferenceEngine`
+- Frozen `infer(observation, belief) -> Belief` public interface
+- Deterministic prototype belief transformation
+- New immutable Belief instances with preserved input immutability
+- Unit tests, Architecture Review, and Code Review
+
+---
+
+### Remaining Deliverables
 
 #### Inference Interface
 
@@ -529,7 +543,7 @@ The MIND-Lite prototype becomes reproducible, testable and suitable for public r
 
 **Current Milestone**
 
-> M3 — Runtime Core
+> M4 — Inference Layer
 
 ---
 
@@ -541,24 +555,26 @@ The MIND-Lite prototype becomes reproducible, testable and suitable for public r
 - ✅ RuntimeState
 - ✅ Runtime Initialization
 - ✅ Runtime Update
+- ✅ Runtime Core Integration
+- ✅ M4 Issue #9 — Prototype Inference Engine
 
 ---
 
 **In Progress**
 
-- 🚧 Runtime Core Integration
+- 🚧 M4 — Remaining Inference Layer deliverables
 
 ---
 
 **Upcoming**
 
-- M4 — Inference Layer
+- M5 — Decision Layer
 
 ---
 
 **Next Milestone**
 
-> M4 — Inference Layer
+> M5 — Decision Layer
 
 # Architecture Evolution
 
@@ -790,7 +806,7 @@ Current Version:
 
 Current Milestone:
 
-**M3 — Runtime Core**
+**M4 — Inference Layer**
 
 Maintained by:
 

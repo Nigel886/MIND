@@ -659,8 +659,8 @@ The MIND-Lite prototype will be considered complete when all of the following co
 
 ## Inference
 
-- [ ] InferenceEngine can derive a new immutable Belief.
-- [ ] Previous Belief remains unchanged.
+- [x] InferenceEngine can derive a new immutable Belief.
+- [x] Previous Belief remains unchanged.
 - [ ] Reference inference operator works.
 - [ ] Operators are interchangeable.
 
