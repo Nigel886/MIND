@@ -115,8 +115,39 @@ class InferenceEngineTest(unittest.TestCase):
         self.assertEqual(updated_belief.confidence[identifier], 1.0)
         self.assertEqual(
             updated_belief.state[identifier].evidence,
-            observation.to_dict(),
+            [observation.to_dict()],
         )
+
+    def test_infer_revises_existing_belief_record(self) -> None:
+        """Merges evidence and updates confidence for an existing record."""
+
+        observation = self._create_observation()
+        previous_evidence = {"source": "earlier observation"}
+        previous_record = BeliefRecord(
+            identifier="observation:user",
+            probability=0.75,
+            confidence=0.6,
+            evidence=previous_evidence,
+        )
+        belief = Belief(
+            state={"observation:user": previous_record},
+            confidence={"observation:user": 0.6},
+            version=4,
+        )
+
+        updated_belief = InferenceEngine.infer(observation, belief)
+        updated_record = updated_belief.state["observation:user"]
+
+        self.assertEqual(updated_belief.version, 5)
+        self.assertEqual(updated_record.probability, 0.75)
+        self.assertEqual(updated_record.confidence, 0.8)
+        self.assertEqual(updated_belief.confidence["observation:user"], 0.8)
+        self.assertEqual(
+            updated_record.evidence,
+            [previous_evidence, observation.to_dict()],
+        )
+        self.assertEqual(previous_record.confidence, 0.6)
+        self.assertEqual(previous_record.evidence, previous_evidence)
 
     def test_inference_engine_has_only_frozen_public_api(self) -> None:
         """Exposes only infer() as the public operation."""
