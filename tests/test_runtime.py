@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import unittest
+from copy import deepcopy
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 
 from src.core.belief import Belief, BeliefRecord
+from src.core.inference import InferenceEngine
 from src.core.observation import Observation
 from src.core.runtime import RuntimeState, RuntimeController
 
@@ -209,13 +211,14 @@ class RuntimeControllerTest(unittest.TestCase):
         self.assertFalse(hasattr(controller, "observation"))
         self.assertFalse(hasattr(controller, "belief"))
 
-    def test_runtime_controller_has_minimal_public_api(self) -> None:
-        """Exposes only initialize() and update() and no lifecycle methods."""
+    def test_runtime_controller_has_approved_public_api(self) -> None:
+        """Exposes the approved runtime state orchestration operations."""
 
         controller = RuntimeController()
 
         self.assertTrue(hasattr(controller, "initialize"))
         self.assertTrue(hasattr(controller, "update"))
+        self.assertTrue(hasattr(controller, "apply_inference"))
         self.assertFalse(hasattr(controller, "step"))
         self.assertFalse(hasattr(controller, "run"))
         self.assertFalse(hasattr(controller, "stop"))
@@ -296,6 +299,103 @@ class RuntimeControllerTest(unittest.TestCase):
 
         self.assertEqual(original.metadata, updated.metadata)
         self.assertIsNot(original.metadata, updated.metadata)
+
+
+class RuntimeInferenceIntegrationTest(unittest.TestCase):
+    """Tests for RuntimeController and InferenceEngine integration."""
+
+    def test_apply_inference_returns_updated_runtime_state(self) -> None:
+        """Delegates belief transformation and updates runtime state."""
+
+        controller = RuntimeController()
+        original = controller.initialize(
+            metadata={"phase": "initial"},
+        )
+        observation = Observation(
+            source="user",
+            content={"message": "infer this"},
+        )
+        expected_belief = InferenceEngine.infer(
+            observation,
+            original.belief,
+        )
+
+        updated = controller.apply_inference(original, observation)
+
+        self.assertIsInstance(updated, RuntimeState)
+        self.assertIsNot(updated, original)
+        self.assertIs(updated.observation, observation)
+        self.assertEqual(updated.belief, expected_belief)
+        self.assertIsNot(updated.belief, original.belief)
+        self.assertEqual(updated.metadata, original.metadata)
+        self.assertIsNot(updated.metadata, original.metadata)
+
+    def test_apply_inference_preserves_state_across_repeated_calls(self) -> None:
+        """Preserves prior states while the controller remains stateless."""
+
+        controller = RuntimeController()
+        original = controller.initialize(
+            belief=Belief(
+                state={
+                    "observation:user": BeliefRecord(
+                        identifier="observation:user",
+                        probability=0.75,
+                        confidence=0.6,
+                        evidence={"source": "earlier"},
+                    ),
+                },
+                confidence={"observation:user": 0.6},
+                version=4,
+            ),
+            metadata={"phase": "revision"},
+        )
+        first_observation = Observation(
+            source="user",
+            content={"message": "new evidence"},
+        )
+        second_observation = Observation(
+            source="system",
+            content={"message": "follow-up evidence"},
+        )
+        runtime_snapshot = deepcopy(original.to_dict())
+        belief_snapshot = deepcopy(original.belief.to_dict())
+        first_observation_snapshot = deepcopy(first_observation.to_dict())
+        second_observation_snapshot = deepcopy(second_observation.to_dict())
+
+        first_updated = controller.apply_inference(original, first_observation)
+        first_runtime_snapshot = deepcopy(first_updated.to_dict())
+        first_belief_snapshot = deepcopy(first_updated.belief.to_dict())
+        expected_second_belief = InferenceEngine.infer(
+            second_observation,
+            first_updated.belief,
+        )
+
+        second_updated = controller.apply_inference(
+            first_updated,
+            second_observation,
+        )
+
+        self.assertEqual(original.to_dict(), runtime_snapshot)
+        self.assertEqual(original.belief.to_dict(), belief_snapshot)
+        self.assertEqual(first_observation.to_dict(), first_observation_snapshot)
+        self.assertEqual(second_observation.to_dict(), second_observation_snapshot)
+        self.assertIsNot(first_updated, original)
+        self.assertIsNot(second_updated, first_updated)
+        self.assertEqual(first_updated.to_dict(), first_runtime_snapshot)
+        self.assertEqual(first_updated.belief.to_dict(), first_belief_snapshot)
+        self.assertEqual(second_updated.belief, expected_second_belief)
+        self.assertEqual(
+            first_updated.belief.version,
+            original.belief.version + 1,
+        )
+        self.assertEqual(
+            second_updated.belief.version,
+            first_updated.belief.version + 1,
+        )
+        self.assertEqual(len(dir(controller)), len(dir(RuntimeController)))
+        self.assertFalse(hasattr(controller, "runtime_state"))
+        self.assertFalse(hasattr(controller, "observation"))
+        self.assertFalse(hasattr(controller, "belief"))
 
 
 class RuntimeCoreIntegrationTest(unittest.TestCase):

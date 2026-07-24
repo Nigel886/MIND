@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from src.core.belief import Belief
+from src.core.inference import InferenceEngine
 from src.core.observation import Observation
 
 
@@ -191,4 +192,34 @@ class RuntimeController:
             observation=observation,
             belief=belief,
             metadata=metadata,
+        )
+
+    @staticmethod
+    def apply_inference(
+        runtime_state: RuntimeState,
+        observation: Observation,
+    ) -> RuntimeState:
+        """Apply inference and return the resulting immutable runtime state.
+
+        The controller coordinates the transition only: belief transformation is
+        delegated to ``InferenceEngine``, and state construction is delegated to
+        the existing ``update()`` mechanism.
+
+        Args:
+            runtime_state: The current immutable runtime state.
+            observation: The immutable observation to incorporate.
+
+        Returns:
+            A newly constructed runtime state containing the observation and the
+            belief produced by ``InferenceEngine.infer()``.
+        """
+
+        updated_belief = InferenceEngine.infer(
+            observation,
+            runtime_state.belief,
+        )
+        return RuntimeController.update(
+            runtime_state,
+            observation=observation,
+            belief=updated_belief,
         )

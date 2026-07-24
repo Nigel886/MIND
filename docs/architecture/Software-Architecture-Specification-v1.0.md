@@ -607,6 +607,13 @@ class RuntimeController:
         metadata: dict[str, Any] | None = None,
     ) -> RuntimeState:
         ...
+
+    @staticmethod
+    def apply_inference(
+        runtime_state: RuntimeState,
+        observation: Observation,
+    ) -> RuntimeState:
+        ...
 ```
 
 ### Design Rules
@@ -614,7 +621,9 @@ class RuntimeController:
 - RuntimeController shall remain stateless.
 - RuntimeController shall never own RuntimeState internally.
 - RuntimeController shall never mutate RuntimeState.
-- RuntimeController shall never perform inference directly.
+- RuntimeController shall not implement inference algorithms or belief-revision
+  rules. It may coordinate inference by delegating belief transformation to
+  InferenceEngine and incorporating the returned Belief into a new RuntimeState.
 - RuntimeController shall never execute policies directly.
 - RuntimeController shall never execute actions directly.
 
