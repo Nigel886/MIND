@@ -202,7 +202,8 @@ InferenceEngine ─────► Belief
 RuntimeState ───────► Observation
 RuntimeState ───────► Belief
 
-ActionExecutor ─────► External Tools
+ActionExecutor ─────► Policy
+ActionExecutor ─────► Observation
 ```
 
 ---
@@ -216,7 +217,7 @@ ActionExecutor ─────► External Tools
 | belief.py      | None                                           |
 | inference.py   | belief, operators                              |
 | policy.py      | belief                                         |
-| action.py      | tools                                          |
+| action.py      | policy, observation                            |
 | operators      | None                                           |
 | tools          | None                                           |
 | memory         | None (reserved for future versions)            |
@@ -233,6 +234,19 @@ Observation, inference, or memory.
 depends on ActionExecutor and never performs execution.
 
 RuntimeController integration of PolicyEngine is deferred to M6.
+
+---
+
+### ActionExecutor Prototype Boundary
+
+`action.py` may depend only on `policy.py` and `observation.py` for this
+prototype. ActionExecutor consumes Policy and produces a new Observation; it
+does not depend on Belief, RuntimeController, inference, tools, memory, or
+external services.
+
+The two approved actions are self-contained result-generation identifiers, so no
+separate public Tool interface or example tool is required. Tool abstractions,
+registries, discovery, and external integrations remain future extension points.
 
 ---
 
@@ -379,15 +393,49 @@ invocation, Observation creation, or action execution.
 
 ### Responsibility
 
-Executes policies within the external environment.
+Executes one Policy and represents the result as a new immutable Observation.
+ActionExecutor is a stateless execution component and is separate from Policy
+generation.
 
 ### Responsibilities
 
-* Invoke tools.
-* Produce runtime outputs.
-* Generate new observations.
+* Consume one Policy.
+* Produce one new Observation with `source="action_executor"`.
+* Implement only deterministic `await_observation` and `maintain_belief`
+  prototype semantics.
 
-The action executor must never modify beliefs directly.
+### Observation Result Structure
+
+Successful execution returns an Observation whose content contains at least:
+
+```python
+{
+    "action": policy.action,
+    "status": "completed",
+    "parameters": policy.parameters,
+}
+```
+
+The Observation model assigns its own identifier and timestamp.
+
+### Unsupported Actions
+
+Unsupported Policy action identifiers raise `ValueError` explicitly in the
+prototype. No ActionResult model is introduced.
+
+### Design Rules
+
+- ActionExecutor consumes Policy only and never generates Policy.
+- ActionExecutor never accesses or modifies Belief, performs inference, or
+  orchestrates RuntimeController.
+- ActionExecutor never modifies its Policy input.
+- ActionExecutor remains stateless across repeated calls.
+- ActionExecutor performs no tool invocation, network access, shell execution,
+  arbitrary Python execution, production API access, authentication, retries,
+  scheduling, memory access, or multi-agent behavior.
+- No Tool interface is required for these two self-contained prototype actions.
+
+ActionExecutor must never modify beliefs directly.
 
 ---
 
@@ -607,18 +655,26 @@ class PolicyEngine:
 ```python
 class ActionExecutor:
 
+    @staticmethod
     def execute(
-        self,
         policy: Policy
-    ) -> Observation
+    ) -> Observation:
+        ...
 ```
 
 ## Design Rules
 
 * Every action execution returns a new Observation.
-* The Action Executor never updates beliefs.
-* Action execution is responsible for consuming Policy; Policy itself never
-  performs execution.
+* Successful Observations use `source="action_executor"` and structured content
+  containing `action`, `status`, and `parameters`.
+* ActionExecutor exposes only `execute()` as its public operation.
+* ActionExecutor remains stateless, consumes only Policy, and never updates
+  Belief or RuntimeState.
+* `await_observation` and `maintain_belief` are the only supported prototype
+  action identifiers; unsupported identifiers raise `ValueError`.
+* Policy describes execution; ActionExecutor performs execution. Policy itself
+  never performs execution.
+* Tool interfaces and external integrations are outside this issue's scope.
 
 ---
 

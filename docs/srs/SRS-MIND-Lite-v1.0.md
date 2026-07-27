@@ -350,19 +350,70 @@ the current Belief. A Policy describes the next action but does not execute it.
 
 ### Description
 
-The action module executes the policy selected by the runtime.
+ActionExecutor shall execute one selected Policy and return a new immutable
+Observation that represents the execution result. Action execution is separate
+from Policy generation and does not modify Belief.
+
+### Inputs
+
+* One Policy object
+
+### Outputs
+
+* One new Observation object
+
+### Supported Prototype Actions
+
+* `await_observation` produces an Observation indicating that the system is
+  waiting for new external evidence.
+* `maintain_belief` produces an Observation indicating that no external action
+  is currently required and the existing belief state remains unchanged.
+
+Both identifiers are deterministic prototype execution semantics only. They do
+not update Belief or invoke external systems.
+
+### Result Contract
+
+Every successful execution shall create an Observation through the existing
+Observation creation mechanism with:
+
+* `source` equal to `"action_executor"`;
+* structured `content` containing `action`, `status` equal to `"completed"`,
+  and `parameters` from the input Policy.
+
+### Unsupported Actions
+
+Unsupported Policy action identifiers shall fail explicitly. The prototype shall
+raise `ValueError` until a dedicated ActionError type is introduced by an
+approved specification.
 
 ### Supported Actions
 
-* Respond to user
-* Invoke tools
-* Retrieve documents
-* Execute Python code (future extension)
+* `await_observation`
+* `maintain_belief`
+
+### Constraints
+
+- ActionExecutor shall consume only Policy and shall never generate Policy.
+- ActionExecutor shall remain stateless and shall never modify Policy, Belief,
+  or RuntimeState.
+- ActionExecutor shall not access Belief, perform inference, or orchestrate the
+  runtime lifecycle.
+- ActionExecutor shall not access the network, shell, arbitrary Python,
+  production APIs, authentication, retries, scheduling, memory, or multi-agent
+  behavior.
+- No RuntimeController integration is included in this issue.
+- No Tool interface, registry, discovery mechanism, dynamic loading, or real
+  external integration is required for these two self-contained prototype
+  actions.
 
 ### Acceptance Criteria
 
 * Every executed action generates a new observation.
-* Action execution must not modify beliefs directly.
+* Successful execution returns a new immutable Observation with a unique identity
+  and timestamp assigned by the existing Observation model.
+* Action execution must not modify Policy or Belief directly.
+* Unsupported action identifiers fail explicitly.
 
 ---
 
