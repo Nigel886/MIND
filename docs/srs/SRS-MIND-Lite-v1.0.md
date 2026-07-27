@@ -303,7 +303,8 @@ It SHALL NOT:
 
 ### Description
 
-The policy engine generates the next action according to the current belief state.
+The Policy Engine shall derive exactly one immutable Policy decision object from
+the current Belief. A Policy describes the next action but does not execute it.
 
 ### Inputs
 
@@ -311,18 +312,37 @@ The policy engine generates the next action according to the current belief stat
 
 ### Outputs
 
-* Policy Object
+* One immutable Policy object
 
 ### Responsibilities
 
-* Evaluate candidate actions.
-* Select the next action.
-* Return exactly one executable policy.
+* Produce a deterministic prototype decision from the current Belief.
+* Identify the selected action type.
+* Preserve action parameters and non-execution decision metadata.
+
+### Constraints
+
+- Policy shall be immutable and serializable.
+- Policy shall contain only `action`, `parameters`, and `metadata`.
+- Policy shall not execute actions, invoke tools, create Observations, or own
+  hidden state.
+- PolicyEngine shall consume only Belief, remain stateless, and produce no
+  external side effects.
+- PolicyEngine shall not modify the input Belief, perform runtime orchestration,
+  or execute actions.
+- Equivalent Belief inputs shall produce equivalent Policy outputs.
+- This prototype shall not implement Expected Free Energy optimization, Active
+  Inference policy selection, reinforcement learning, utility or cost
+  optimization, candidate-action registries, or action search.
 
 ### Acceptance Criteria
 
-* Policy generation depends only on the current belief.
-* Policy objects remain independent of execution.
+* Policy generation depends only on the current Belief and returns exactly one
+  Policy.
+* Policy objects can be serialized and restored without loss of nested
+  parameters or metadata.
+* Policy objects remain independent of action execution.
+* The input Belief remains unchanged after Policy generation.
 
 ---
 

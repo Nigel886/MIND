@@ -223,6 +223,19 @@ ActionExecutor ─────► External Tools
 
 ---
 
+### Policy and Action Dependency Boundary
+
+`policy.py` may depend only on `belief.py`. PolicyEngine consumes Belief and
+produces Policy; it does not depend on RuntimeController, ActionExecutor, tools,
+Observation, inference, or memory.
+
+`action.py` consumes Policy when action execution is introduced. Policy never
+depends on ActionExecutor and never performs execution.
+
+RuntimeController integration of PolicyEngine is deferred to M6.
+
+---
+
 ## 6.3 Forbidden Dependencies
 
 The following dependencies are prohibited.
@@ -320,19 +333,45 @@ InferenceEngine SHALL NOT:
 
 ---
 
-## 7.4 PolicyEngine
+## 7.4 Policy and PolicyEngine
 
-### Responsibility
+### Policy Responsibility
 
-Transforms beliefs into executable policies.
+Policy is an immutable decision object produced from the current Belief. It
+describes the next action for a future ActionExecutor and never performs action
+execution itself.
+
+### Policy Attributes
+
+| Attribute | Type | Description |
+| --- | --- | --- |
+| action | str | Selected action type. |
+| parameters | dict[str, Any] | Data required by a future ActionExecutor. |
+| metadata | dict[str, Any] | Non-execution decision information, such as source Belief version or an explanation. |
+
+Policy SHALL NOT include UUIDs, timestamps, utilities, costs, information gain,
+expected free energy, tool objects, hidden state, or execution methods.
+
+### PolicyEngine Responsibility
+
+PolicyEngine transforms a Belief into exactly one Policy through deterministic
+prototype policy generation.
+
+PolicyEngine is a stateless selection component. It consumes only Belief and
+does not modify it.
 
 ### Responsibilities
 
-* Evaluate candidate actions.
-* Select the next action.
-* Produce a policy object.
+* Select one prototype decision from the current Belief.
+* Construct one immutable Policy.
+* Preserve separation between decision generation and action execution.
 
 Policy generation must remain deterministic given identical inputs.
+
+PolicyEngine SHALL NOT perform Expected Free Energy optimization, Active
+Inference policy selection, reinforcement learning, utility or cost optimization,
+candidate-action registry lookup, action search, runtime orchestration, tool
+invocation, Observation creation, or action execution.
 
 ---
 
@@ -515,23 +554,49 @@ class InferenceEngine:
 
 ---
 
-# 9.4 PolicyEngine
+# 9.4 Policy and PolicyEngine
 
 ## Public Interface
 
 ```python
+@dataclass(frozen=True)
+class Policy:
+    action: str
+    parameters: dict[str, Any]
+    metadata: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        ...
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+    ) -> "Policy":
+        ...
+
+
 class PolicyEngine:
 
+    @staticmethod
     def generate(
-        self,
         belief: Belief
     ) -> Policy
 ```
 
 ## Design Rules
 
-* Policy generation depends only on the current belief.
-* No external side effects are allowed.
+- Policy is immutable and contains decisions only.
+- Policy exposes no `execute()` method.
+- `Policy.to_dict()` and `Policy.from_dict()` preserve nested parameters and
+  metadata.
+- PolicyEngine exposes only `generate()` as its public operation.
+- PolicyEngine consumes only Belief and returns exactly one Policy.
+- PolicyEngine remains stateless and produces no external side effects.
+- PolicyEngine never modifies Belief, invokes tools, creates Observations,
+  executes actions, or performs runtime orchestration.
+- RuntimeController does not integrate PolicyEngine in this milestone; that
+  integration belongs to M6.
 
 ---
 
@@ -552,6 +617,8 @@ class ActionExecutor:
 
 * Every action execution returns a new Observation.
 * The Action Executor never updates beliefs.
+* Action execution is responsible for consuming Policy; Policy itself never
+  performs execution.
 
 ---
 
