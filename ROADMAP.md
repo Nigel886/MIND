@@ -375,7 +375,7 @@ RuntimeState remains immutable while belief evolution is delegated entirely to i
 
 # M5 — Decision Layer
 
-**Status:** ⬜ Planned
+**Status:** 🚧 In Progress
 
 ### Goal
 
@@ -385,11 +385,13 @@ Decision making is explicitly separated from inference.
 
 ---
 
-### Planned Deliverables
+### Deliverables
 
 #### Policy Engine
 
-Responsible for selecting candidate actions.
+Status: ✅ Completed (Issue #12)
+
+Responsible for deterministic prototype decision generation from Belief.
 
 Deliverables:
 
@@ -401,7 +403,10 @@ Deliverables:
 
 #### Action Executor
 
-Responsible for executing selected actions.
+Status: ✅ Completed (Issue #13)
+
+Responsible for executing the approved prototype Policy actions as Observation
+results.
 
 Deliverables:
 
@@ -412,6 +417,8 @@ Deliverables:
 ---
 
 #### Decision Validation
+
+Status: 🚧 In Progress (Issue #14)
 
 Deliverables:
 
