@@ -445,7 +445,8 @@ RuntimeController is responsible for:
 
 - initializing RuntimeState;
 - updating RuntimeState;
-- coordinating interactions between RuntimeState and future runtime components.
+- coordinating interactions between RuntimeState and the completed inference and
+  decision components.
 
 RuntimeController SHALL remain stateless.
 
@@ -453,7 +454,16 @@ RuntimeController SHALL NOT own RuntimeState internally.
 
 RuntimeController SHALL construct new RuntimeState instances instead of modifying existing ones.
 
-Runtime execution, inference orchestration, policy execution and action execution are introduced in future milestones.
+For M6 Issue #16, RuntimeController shall provide
+`apply_decision(runtime_state: RuntimeState) -> RuntimeState`. Given one
+RuntimeState, it shall read the current Belief, delegate Policy generation to
+PolicyEngine, delegate the resulting Policy to ActionExecutor, and incorporate
+the returned Observation through update(). This operation performs one state
+transition only; it does not perform inference or run a runtime loop.
+
+Policy is transient during this operation and shall not be persisted in
+RuntimeState. RuntimeState shall continue to contain only observation, belief,
+and metadata.
 
 ### Acceptance Criteria
 
@@ -462,6 +472,18 @@ Runtime execution, inference orchestration, policy execution and action executio
 * RuntimeController initializes RuntimeState correctly.
 * RuntimeController constructs new RuntimeState instances through update().
 * RuntimeController remains stateless.
+* Decision integration returns a new immutable RuntimeState and leaves its input
+  RuntimeState unchanged.
+* The returned RuntimeState contains the Observation returned by ActionExecutor
+  and preserves the current Belief.
+* Metadata is preserved according to the existing RuntimeController.update()
+  contract.
+* Policy is not persisted in RuntimeState and RuntimeState fields are not
+  expanded.
+* PolicyEngine and ActionExecutor retain their existing responsibilities; the
+  RuntimeController implements neither policy generation nor action execution.
+* Unsupported-action ValueError is not silently swallowed.
+* Decision integration performs no inference and no runtime loop.
 
 ---
 
@@ -534,7 +556,7 @@ without modifying source code.
 | inference.py          | Execute inference operators and produce updated beliefs.  |
 | policy.py             | Generate executable policies from beliefs.                |
 | action.py             | Execute actions and interact with external environments.  |
-| runtime.py            | Implement the Runtime subsystem, including RuntimeState and the future RuntimeController.                |
+| runtime.py            | Implement the Runtime subsystem, including RuntimeState and RuntimeController orchestration.              |
 | operators/base.py     | Define the abstract inference operator interface.         |
 | operators/bayesian.py | Reference Bayesian inference implementation.              |
 | operators/llm.py      | LLM-based inference implementation.                       |

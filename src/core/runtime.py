@@ -9,6 +9,8 @@ from typing import Any, Optional
 from src.core.belief import Belief
 from src.core.inference import InferenceEngine
 from src.core.observation import Observation
+from src.core.action import ActionExecutor
+from src.core.policy import PolicyEngine
 
 
 def _serialize_metadata_value(value: Any) -> Any:
@@ -222,4 +224,33 @@ class RuntimeController:
             runtime_state,
             observation=observation,
             belief=updated_belief,
+        )
+
+    @staticmethod
+    def apply_decision(
+        runtime_state: RuntimeState,
+    ) -> RuntimeState:
+        """Apply one decision transition and return a new runtime state.
+
+        Policy generation and action execution remain delegated to their
+        dedicated stateless components. The generated Policy is transient, and
+        state construction is delegated to the existing ``update()`` mechanism.
+
+        Args:
+            runtime_state: The current immutable runtime state.
+
+        Returns:
+            A newly constructed runtime state containing the Observation
+            returned by ``ActionExecutor.execute()``.
+
+        Raises:
+            ValueError: Propagated when ActionExecutor rejects the generated
+                Policy action.
+        """
+
+        policy = PolicyEngine.generate(runtime_state.belief)
+        action_observation = ActionExecutor.execute(policy)
+        return RuntimeController.update(
+            runtime_state,
+            observation=action_observation,
         )

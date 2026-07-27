@@ -287,7 +287,7 @@ Unlike previous versions of the roadmap, future development is organized accordi
 
 # M4 — Inference Layer
 
-**Status:** 🚧 In Progress
+**Status:** ✅ Completed
 
 ### Goal
 
@@ -317,7 +317,10 @@ Features:
 
 ---
 
-### Remaining Deliverables
+### Future Inference Extensions
+
+The following extensions are intentionally deferred beyond the completed M4
+prototype inference layer.
 
 #### Inference Interface
 
@@ -355,16 +358,6 @@ Deliverables:
 
 ---
 
-#### Inference Validation
-
-Deliverables:
-
-- Unit tests
-- Operator consistency tests
-- Deterministic validation
-
----
-
 ### Architecture Outcome
 
 Inference becomes a fully independent behavior layer.
@@ -375,7 +368,7 @@ RuntimeState remains immutable while belief evolution is delegated entirely to i
 
 # M5 — Decision Layer
 
-**Status:** 🚧 In Progress
+**Status:** ✅ Completed
 
 ### Goal
 
@@ -418,7 +411,7 @@ Deliverables:
 
 #### Decision Validation
 
-Status: 🚧 In Progress (Issue #14)
+Status: ✅ Completed (Issue #14)
 
 Deliverables:
 
@@ -442,7 +435,7 @@ Action performs execution.
 
 # M6 — Runtime Integration
 
-**Status:** ⬜ Planned
+**Status:** 🚧 In Progress
 
 ### Goal
 
@@ -550,7 +543,7 @@ The MIND-Lite prototype becomes reproducible, testable and suitable for public r
 
 **Current Milestone**
 
-> M4 — Inference Layer
+> M6 — Runtime Integration
 
 ---
 
@@ -564,24 +557,26 @@ The MIND-Lite prototype becomes reproducible, testable and suitable for public r
 - ✅ Runtime Update
 - ✅ Runtime Core Integration
 - ✅ M4 Issue #9 — Prototype Inference Engine
+- ✅ M4 — Inference Layer
+- ✅ M5 — Decision Layer
 
 ---
 
 **In Progress**
 
-- 🚧 M4 — Remaining Inference Layer deliverables
+- 🚧 M6 — Runtime Integration
 
 ---
 
 **Upcoming**
 
-- M5 — Decision Layer
+- M7 — Prototype Validation
 
 ---
 
 **Next Milestone**
 
-> M5 — Decision Layer
+> M7 — Prototype Validation
 
 # Architecture Evolution
 
@@ -813,7 +808,7 @@ Current Version:
 
 Current Milestone:
 
-**M4 — Inference Layer**
+**M6 — Runtime Integration**
 
 Maintained by:
 

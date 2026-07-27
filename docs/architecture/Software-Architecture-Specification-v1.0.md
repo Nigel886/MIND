@@ -138,7 +138,10 @@ No business logic shall be implemented outside the `src/` directory.
 
 # 5. Runtime Architecture
 
-The MIND-Lite runtime is organized around a continuous inference loop.
+The MIND-Lite runtime is organized around composable, stateless coordination
+operations. The complete conceptual lifecycle is shown below; M6 Issue #16
+implements one decision-integration transition and does not introduce a
+continuous runtime loop.
 
 ```text
                 Environment
@@ -168,11 +171,10 @@ The MIND-Lite runtime is organized around a continuous inference loop.
                 Environment
 ```
 
-The runtime repeatedly observes the environment, updates its internal beliefs, derives a policy and executes an action.
-
-Every runtime iteration must pass through this sequence.
-
-No module is allowed to bypass the runtime loop.
+The complete lifecycle observes the environment, updates internal beliefs,
+derives a policy, and executes an action. In the current prototype,
+RuntimeController is the sole orchestration owner: it coordinates individual
+operations without owning a loop, scheduler, or persistent state.
 
 ---
 
@@ -643,8 +645,9 @@ class PolicyEngine:
 - PolicyEngine remains stateless and produces no external side effects.
 - PolicyEngine never modifies Belief, invokes tools, creates Observations,
   executes actions, or performs runtime orchestration.
-- RuntimeController does not integrate PolicyEngine in this milestone; that
-  integration belongs to M6.
+- RuntimeController coordinates PolicyEngine only through the M6
+  `apply_decision()` orchestration operation; PolicyEngine itself remains
+  independent of RuntimeController.
 
 ---
 
@@ -737,6 +740,12 @@ class RuntimeController:
         observation: Observation,
     ) -> RuntimeState:
         ...
+
+    @staticmethod
+    def apply_decision(
+        runtime_state: RuntimeState,
+    ) -> RuntimeState:
+        ...
 ```
 
 ### Design Rules
@@ -747,14 +756,25 @@ class RuntimeController:
 - RuntimeController shall not implement inference algorithms or belief-revision
   rules. It may coordinate inference by delegating belief transformation to
   InferenceEngine and incorporating the returned Belief into a new RuntimeState.
-- RuntimeController shall never execute policies directly.
-- RuntimeController shall never execute actions directly.
+- RuntimeController shall not implement policy-generation logic or
+  action-execution logic. It may orchestrate decision integration by delegating
+  to PolicyEngine and ActionExecutor.
+- `apply_decision()` shall obtain `runtime_state.belief`, call
+  `PolicyEngine.generate()`, call `ActionExecutor.execute()`, and pass the
+  returned Observation to `RuntimeController.update()`.
+- `apply_decision()` shall preserve the current Belief and the existing
+  `update()` metadata semantics, shall not persist Policy, and shall not add
+  fields to RuntimeState.
+- `apply_decision()` shall perform no inference, loop, tool execution, or error
+  suppression. Unsupported-action `ValueError` propagates to the caller.
 
 ---
 
 # 10. Runtime Sequence
 
-The runtime follows a fixed execution sequence.
+The following is the conceptual full lifecycle. M6 Issue #16 freezes only the
+single decision-integration sequence from RuntimeState through a new
+RuntimeState; repetition belongs to a future approved issue.
 
 ```text
 Receive Observation
@@ -789,70 +809,32 @@ Generate Observation
 
       ↓
 
-Repeat
+New RuntimeState
 ```
 
-This sequence is fixed for Version 1.0.
-
-No runtime component may bypass the sequence.
+The `apply_decision()` operation uses the RuntimeState, PolicyEngine,
+ActionExecutor, and RuntimeController.update() portion exactly once. It does
+not introduce scheduling or a runtime loop.
 
 ---
 
 # 11. Configuration Management
 
-Configuration shall be centralized.
-
-The Runtime must not contain hard-coded configuration values.
-
----
-
-## Configuration Sources
-
-The prototype supports:
-
-* Default configuration
-* Local configuration file
-* Environment variables (future extension)
+Configuration management is outside the current prototype scope. M6 Issue #16
+introduces neither RuntimeConfig nor configuration ownership; future
+configuration design requires an approved architecture decision.
 
 ---
 
-## Configuration Object
+# 12. Component Wiring and Dependency Injection
 
-The Runtime owns a single configuration object.
+The current prototype has no separate Runtime class and does not use
+constructor-based dependency injection. RuntimeController is the orchestration
+owner and delegates statelessly through the established static public APIs of
+InferenceEngine, PolicyEngine, and ActionExecutor.
 
-```python
-class RuntimeConfig:
-```
-
-Future versions may extend this object.
-
----
-
-## Configuration Rules
-
-* Configuration is read during initialization.
-* Runtime components receive configuration through dependency injection.
-* Global configuration variables are prohibited.
-
----
-
-# 12. Dependency Injection
-
-Version 1.0 adopts constructor-based dependency injection.
-
-Example:
-
-```python
-Runtime(
-    inference_engine,
-    policy_engine,
-    action_executor,
-)
-```
-
-The Runtime is responsible for wiring components together.
-
-Individual modules shall not instantiate other runtime modules internally.
+Pluggable component instances and constructor-based dependency injection are
+deferred to a future architecture revision approved by a separate ADR.
 
 ---
 
@@ -947,20 +929,21 @@ Each runtime component shall include tests for:
 
 Integration tests shall verify:
 
-* Complete runtime lifecycle
+* M6 Issue #16 decision integration from RuntimeState through a new RuntimeState
 * Observation → Belief
 * Belief → Policy
 * Policy → Action
-* Continuous runtime execution
+* A future continuous runtime lifecycle only after a separately approved loop
+  issue
 
 ---
 
 ## 14.4 Acceptance Tests
 
-The prototype is considered successful when:
+The M6 Issue #16 decision-integration increment is considered successful when:
 
-* Runtime starts successfully.
-* Runtime completes multiple execution cycles.
+* RuntimeController completes one decision-integration transition successfully.
+* No runtime loop is introduced by this increment.
 * Every module satisfies the SRS.
 * All unit tests pass.
 
@@ -1147,11 +1130,13 @@ The MIND-Lite prototype consists of six core runtime components.
                     ActionExecutor
 ```
 
-RuntimeController coordinates RuntimeState and future runtime components.
+RuntimeController coordinates RuntimeState and the current prototype behavior
+components.
 
 RuntimeState is the immutable runtime data model.
 
-All interactions between components are coordinated through the Runtime.
+All current prototype orchestration interactions are coordinated through
+RuntimeController; no separate Runtime class exists.
 
 ---
 

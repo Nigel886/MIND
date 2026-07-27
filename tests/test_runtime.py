@@ -6,10 +6,12 @@ import unittest
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from src.core.belief import Belief, BeliefRecord
 from src.core.inference import InferenceEngine
 from src.core.observation import Observation
+from src.core.policy import Policy
 from src.core.runtime import RuntimeState, RuntimeController
 
 
@@ -75,8 +77,11 @@ class RuntimeStateTest(unittest.TestCase):
         """Exposes only data and serialization interfaces."""
 
         self.assertFalse(hasattr(RuntimeState, "initialize"))
+        self.assertFalse(hasattr(RuntimeState, "apply_decision"))
         self.assertFalse(hasattr(RuntimeState, "step"))
         self.assertFalse(hasattr(RuntimeState, "run"))
+        self.assertFalse(hasattr(RuntimeState, "run_cycle"))
+        self.assertFalse(hasattr(RuntimeState, "loop"))
         self.assertFalse(hasattr(RuntimeState, "stop"))
         self.assertFalse(hasattr(RuntimeState, "reset"))
         self.assertTrue(hasattr(RuntimeState, "to_dict"))
@@ -219,8 +224,11 @@ class RuntimeControllerTest(unittest.TestCase):
         self.assertTrue(hasattr(controller, "initialize"))
         self.assertTrue(hasattr(controller, "update"))
         self.assertTrue(hasattr(controller, "apply_inference"))
+        self.assertTrue(hasattr(controller, "apply_decision"))
         self.assertFalse(hasattr(controller, "step"))
         self.assertFalse(hasattr(controller, "run"))
+        self.assertFalse(hasattr(controller, "run_cycle"))
+        self.assertFalse(hasattr(controller, "loop"))
         self.assertFalse(hasattr(controller, "stop"))
         self.assertFalse(hasattr(controller, "reset"))
 
@@ -396,6 +404,196 @@ class RuntimeInferenceIntegrationTest(unittest.TestCase):
         self.assertFalse(hasattr(controller, "runtime_state"))
         self.assertFalse(hasattr(controller, "observation"))
         self.assertFalse(hasattr(controller, "belief"))
+
+
+class RuntimeDecisionIntegrationTest(unittest.TestCase):
+    """Tests for RuntimeController decision orchestration."""
+
+    def _create_state(self, belief: Belief) -> RuntimeState:
+        """Create a RuntimeState fixture with nested immutable inputs."""
+
+        return RuntimeController.initialize(
+            observation=Observation(
+                source="user",
+                content={"message": "initial"},
+            ),
+            belief=belief,
+            metadata={"phase": "decision", "nested": {"value": 1}},
+        )
+
+    def _create_non_empty_belief(self) -> Belief:
+        """Create a Belief fixture with nested BeliefRecord evidence."""
+
+        record = BeliefRecord(
+            identifier="decision:ready",
+            probability=0.8,
+            confidence=0.9,
+            evidence={"nested": {"source": "runtime-test"}},
+        )
+        return Belief(
+            state={"decision:ready": record},
+            confidence={"decision:ready": 0.9},
+            version=3,
+        )
+
+    def test_apply_decision_integrates_empty_belief_without_mutation(self) -> None:
+        """Stores the await-observation result in a new RuntimeState."""
+
+        belief = Belief(state={}, confidence={}, version=2)
+        original = self._create_state(belief)
+        runtime_snapshot = deepcopy(original.to_dict())
+        observation_snapshot = deepcopy(original.observation.to_dict())
+        belief_snapshot = deepcopy(belief.to_dict())
+        metadata_snapshot = deepcopy(original.metadata)
+
+        updated = RuntimeController.apply_decision(original)
+
+        self.assertIsInstance(updated, RuntimeState)
+        self.assertIsNot(updated, original)
+        self.assertEqual(updated.observation.source, "action_executor")
+        self.assertEqual(
+            updated.observation.content["action"],
+            "await_observation",
+        )
+        self.assertEqual(updated.observation.content["status"], "completed")
+        self.assertEqual(updated.observation.content["parameters"], {})
+        self.assertIs(updated.belief, belief)
+        self.assertEqual(updated.metadata, metadata_snapshot)
+        self.assertIsNot(updated.metadata, original.metadata)
+        self.assertEqual(original.to_dict(), runtime_snapshot)
+        self.assertEqual(original.observation.to_dict(), observation_snapshot)
+        self.assertEqual(belief.to_dict(), belief_snapshot)
+        self.assertNotIn("policy", updated.to_dict())
+        self.assertNotIn("action_result", updated.to_dict())
+
+    def test_apply_decision_integrates_non_empty_belief_without_mutation(self) -> None:
+        """Stores the maintain-belief result and preserves all input values."""
+
+        belief = self._create_non_empty_belief()
+        original = self._create_state(belief)
+        runtime_snapshot = deepcopy(original.to_dict())
+        belief_snapshot = deepcopy(belief.to_dict())
+        record_snapshot = deepcopy(belief.state["decision:ready"].to_dict())
+
+        updated = RuntimeController.apply_decision(original)
+
+        self.assertIsNot(updated, original)
+        self.assertEqual(updated.observation.source, "action_executor")
+        self.assertEqual(
+            updated.observation.content["action"],
+            "maintain_belief",
+        )
+        self.assertEqual(updated.observation.content["status"], "completed")
+        self.assertEqual(updated.observation.content["parameters"], {})
+        self.assertIs(updated.belief, belief)
+        self.assertEqual(original.to_dict(), runtime_snapshot)
+        self.assertEqual(belief.to_dict(), belief_snapshot)
+        self.assertEqual(
+            belief.state["decision:ready"].to_dict(),
+            record_snapshot,
+        )
+
+    def test_apply_decision_is_stateless_and_creates_fresh_observations(self) -> None:
+        """Keeps calls independent while returning fresh state transitions."""
+
+        controller = RuntimeController()
+        first_state = self._create_state(self._create_non_empty_belief())
+        second_state = RuntimeState.from_dict(first_state.to_dict())
+        first_snapshot = deepcopy(first_state.to_dict())
+
+        first_result = controller.apply_decision(first_state)
+        second_result = controller.apply_decision(second_state)
+
+        self.assertIsNot(first_result, first_state)
+        self.assertIsNot(second_result, second_state)
+        self.assertIsNot(first_result.observation, second_result.observation)
+        self.assertNotEqual(
+            first_result.observation.id,
+            second_result.observation.id,
+        )
+        self.assertEqual(
+            first_result.observation.content,
+            second_result.observation.content,
+        )
+        self.assertIs(first_result.observation.timestamp.tzinfo, timezone.utc)
+        self.assertIs(second_result.observation.timestamp.tzinfo, timezone.utc)
+        self.assertEqual(first_state.to_dict(), first_snapshot)
+        self.assertEqual(len(dir(controller)), len(dir(RuntimeController)))
+        self.assertFalse(hasattr(controller, "runtime_state"))
+        self.assertFalse(hasattr(controller, "policy"))
+        self.assertFalse(hasattr(controller, "observation"))
+        self.assertFalse(hasattr(controller, "belief"))
+
+    def test_apply_decision_delegates_to_components_and_update(self) -> None:
+        """Delegates the exact values through the approved component APIs."""
+
+        original = self._create_state(
+            Belief(state={}, confidence={}, version=0),
+        )
+        policy = Policy(
+            action="await_observation",
+            parameters={"nested": {"value": 1}},
+            metadata={"source": "delegation-test"},
+        )
+        action_observation = Observation(
+            source="action_executor",
+            content={
+                "action": "await_observation",
+                "status": "completed",
+                "parameters": policy.parameters,
+            },
+        )
+
+        with patch(
+            "src.core.runtime.PolicyEngine.generate",
+            return_value=policy,
+        ) as generate, patch(
+            "src.core.runtime.ActionExecutor.execute",
+            return_value=action_observation,
+        ) as execute, patch.object(
+            RuntimeController,
+            "update",
+            wraps=RuntimeController.update,
+        ) as update, patch(
+            "src.core.runtime.InferenceEngine.infer",
+            side_effect=AssertionError("apply_decision must not infer"),
+        ):
+            updated = RuntimeController.apply_decision(original)
+
+        generate.assert_called_once_with(original.belief)
+        execute.assert_called_once_with(policy)
+        update.assert_called_once_with(
+            original,
+            observation=action_observation,
+        )
+        self.assertIs(updated.observation, action_observation)
+        self.assertIs(updated.belief, original.belief)
+
+    def test_apply_decision_propagates_execution_errors(self) -> None:
+        """Propagates execution failure without creating a fallback state."""
+
+        controller = RuntimeController()
+        original = self._create_state(
+            Belief(state={}, confidence={}, version=0),
+        )
+        original_snapshot = deepcopy(original.to_dict())
+
+        with patch(
+            "src.core.runtime.ActionExecutor.execute",
+            side_effect=ValueError("unsupported action"),
+        ), patch.object(RuntimeController, "update") as update:
+            with self.assertRaisesRegex(ValueError, "unsupported action"):
+                controller.apply_decision(original)
+
+        update.assert_not_called()
+        self.assertEqual(original.to_dict(), original_snapshot)
+        self.assertFalse(hasattr(controller, "runtime_state"))
+        self.assertFalse(hasattr(controller, "policy"))
+
+        later_result = controller.apply_decision(original)
+
+        self.assertIsInstance(later_result, RuntimeState)
+        self.assertEqual(later_result.observation.source, "action_executor")
 
 
 class RuntimeCoreIntegrationTest(unittest.TestCase):
