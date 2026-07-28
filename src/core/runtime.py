@@ -254,3 +254,24 @@ class RuntimeController:
             runtime_state,
             observation=action_observation,
         )
+
+    @staticmethod
+    def run_cycle(
+        runtime_state: RuntimeState,
+        observation: Observation,
+    ) -> RuntimeState:
+        """Run one inference-and-decision runtime cycle.
+
+        Args:
+            runtime_state: The current immutable runtime state.
+            observation: The incoming immutable observation for inference.
+
+        Returns:
+            The final runtime state returned by decision integration.
+        """
+
+        inferred_state = RuntimeController.apply_inference(
+            runtime_state,
+            observation,
+        )
+        return RuntimeController.apply_decision(inferred_state)

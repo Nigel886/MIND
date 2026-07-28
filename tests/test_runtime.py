@@ -225,9 +225,9 @@ class RuntimeControllerTest(unittest.TestCase):
         self.assertTrue(hasattr(controller, "update"))
         self.assertTrue(hasattr(controller, "apply_inference"))
         self.assertTrue(hasattr(controller, "apply_decision"))
+        self.assertTrue(hasattr(controller, "run_cycle"))
         self.assertFalse(hasattr(controller, "step"))
         self.assertFalse(hasattr(controller, "run"))
-        self.assertFalse(hasattr(controller, "run_cycle"))
         self.assertFalse(hasattr(controller, "loop"))
         self.assertFalse(hasattr(controller, "stop"))
         self.assertFalse(hasattr(controller, "reset"))
@@ -594,6 +594,160 @@ class RuntimeDecisionIntegrationTest(unittest.TestCase):
 
         self.assertIsInstance(later_result, RuntimeState)
         self.assertEqual(later_result.observation.source, "action_executor")
+
+
+class RuntimeCycleTest(unittest.TestCase):
+    """Tests for one complete RuntimeController orchestration cycle."""
+
+    def _state(self, belief: Belief) -> RuntimeState:
+        return RuntimeController.initialize(
+            observation=Observation(source="initial", content={"value": 0}),
+            belief=belief,
+            metadata={"phase": "cycle", "nested": {"value": 1}},
+        )
+
+    def _non_empty_belief(self) -> Belief:
+        record = BeliefRecord(
+            identifier="existing",
+            probability=0.7,
+            confidence=0.8,
+            evidence={"nested": {"source": "fixture"}},
+        )
+        return Belief(
+            state={"existing": record},
+            confidence={"existing": 0.8},
+            version=4,
+        )
+
+    def test_run_cycle_empty_belief_infers_before_decision(self) -> None:
+        """Uses the inferred non-empty Belief for the final decision."""
+
+        original = self._state(Belief(state={}, confidence={}, version=0))
+        incoming = Observation(source="user", content={"message": "evidence"})
+        expected_inferred = RuntimeController.apply_inference(original, incoming)
+        original_snapshot = deepcopy(original.to_dict())
+        incoming_snapshot = deepcopy(incoming.to_dict())
+
+        final = RuntimeController.run_cycle(original, incoming)
+
+        self.assertIsNot(final, original)
+        self.assertIsNot(final, expected_inferred)
+        self.assertEqual(final.belief, expected_inferred.belief)
+        self.assertNotEqual(final.belief.state, {})
+        self.assertEqual(final.belief.version, original.belief.version + 1)
+        self.assertEqual(final.observation.source, "action_executor")
+        self.assertEqual(final.observation.content["action"], "maintain_belief")
+        self.assertEqual(final.observation.content["status"], "completed")
+        self.assertNotEqual(final.observation, incoming)
+        self.assertEqual(original.to_dict(), original_snapshot)
+        self.assertEqual(incoming.to_dict(), incoming_snapshot)
+        self.assertEqual(final.metadata, original.metadata)
+        self.assertIsNot(final.metadata, original.metadata)
+
+    def test_run_cycle_preserves_non_empty_inputs_and_final_contract(self) -> None:
+        """Preserves input state while retaining the inferred Belief at the end."""
+
+        belief = self._non_empty_belief()
+        original = self._state(belief)
+        incoming = Observation(source="user", content={"message": "new"})
+        original_snapshot = deepcopy(original.to_dict())
+        belief_snapshot = deepcopy(belief.to_dict())
+        record_snapshot = deepcopy(belief.state["existing"].to_dict())
+        incoming_snapshot = deepcopy(incoming.to_dict())
+
+        final = RuntimeController.run_cycle(original, incoming)
+
+        self.assertIsNot(final, original)
+        self.assertEqual(final.belief.version, belief.version + 1)
+        self.assertEqual(final.observation.source, "action_executor")
+        self.assertEqual(final.observation.content["action"], "maintain_belief")
+        self.assertEqual(original.to_dict(), original_snapshot)
+        self.assertEqual(belief.to_dict(), belief_snapshot)
+        self.assertEqual(belief.state["existing"].to_dict(), record_snapshot)
+        self.assertEqual(incoming.to_dict(), incoming_snapshot)
+        self.assertEqual(set(final.to_dict()), {"observation", "belief", "metadata"})
+
+    def test_run_cycle_composes_exact_orchestration_results(self) -> None:
+        """Passes exact state values between the approved public operations."""
+
+        original = self._state(Belief(state={}, confidence={}, version=0))
+        incoming = Observation(source="user", content="incoming")
+        inferred = RuntimeController.initialize(metadata={"intermediate": True})
+        final = RuntimeController.initialize(metadata={"final": True})
+
+        with patch.object(
+            RuntimeController,
+            "apply_inference",
+            return_value=inferred,
+        ) as apply_inference, patch.object(
+            RuntimeController,
+            "apply_decision",
+            return_value=final,
+        ) as apply_decision:
+            result = RuntimeController.run_cycle(original, incoming)
+
+        apply_inference.assert_called_once_with(original, incoming)
+        apply_decision.assert_called_once_with(inferred)
+        self.assertIs(result, final)
+
+    def test_run_cycle_is_stateless_and_returns_fresh_action_observations(self) -> None:
+        """Keeps equivalent cycles independent and leaves prior inputs intact."""
+
+        controller = RuntimeController()
+        first_state = self._state(Belief(state={}, confidence={}, version=0))
+        second_state = RuntimeState.from_dict(first_state.to_dict())
+        first_incoming = Observation(source="user", content={"message": "same"})
+        second_incoming = Observation.from_dict(first_incoming.to_dict())
+        first_snapshot = deepcopy(first_state.to_dict())
+
+        first_final = controller.run_cycle(first_state, first_incoming)
+        second_final = controller.run_cycle(second_state, second_incoming)
+
+        self.assertEqual(first_final.belief, second_final.belief)
+        self.assertEqual(first_final.observation.content, second_final.observation.content)
+        self.assertIsNot(first_final.observation, second_final.observation)
+        self.assertNotEqual(first_final.observation.id, second_final.observation.id)
+        self.assertIs(first_final.observation.timestamp.tzinfo, timezone.utc)
+        self.assertIs(second_final.observation.timestamp.tzinfo, timezone.utc)
+        self.assertEqual(first_state.to_dict(), first_snapshot)
+        self.assertFalse(hasattr(controller, "runtime_state"))
+        self.assertFalse(hasattr(controller, "observation"))
+        self.assertFalse(hasattr(controller, "belief"))
+        self.assertFalse(hasattr(controller, "policy"))
+        self.assertFalse(hasattr(controller, "intermediate_state"))
+
+    def test_run_cycle_propagates_failures_without_fallback(self) -> None:
+        """Propagates failures and leaves later valid cycles independent."""
+
+        controller = RuntimeController()
+        original = self._state(Belief(state={}, confidence={}, version=0))
+        incoming = Observation(source="user", content="incoming")
+        original_snapshot = deepcopy(original.to_dict())
+        incoming_snapshot = deepcopy(incoming.to_dict())
+
+        with patch.object(
+            RuntimeController,
+            "apply_inference",
+            side_effect=RuntimeError("inference failure"),
+        ), patch.object(RuntimeController, "apply_decision") as apply_decision:
+            with self.assertRaisesRegex(RuntimeError, "inference failure"):
+                controller.run_cycle(original, incoming)
+
+        apply_decision.assert_not_called()
+        self.assertEqual(original.to_dict(), original_snapshot)
+        self.assertEqual(incoming.to_dict(), incoming_snapshot)
+
+        with patch.object(
+            RuntimeController,
+            "apply_decision",
+            side_effect=ValueError("decision failure"),
+        ):
+            with self.assertRaisesRegex(ValueError, "decision failure"):
+                controller.run_cycle(original, incoming)
+
+        self.assertEqual(original.to_dict(), original_snapshot)
+        self.assertEqual(incoming.to_dict(), incoming_snapshot)
+        self.assertIsInstance(controller.run_cycle(original, incoming), RuntimeState)
 
 
 class RuntimeCoreIntegrationTest(unittest.TestCase):

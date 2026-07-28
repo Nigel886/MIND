@@ -447,6 +447,23 @@ RuntimeController becomes the orchestration layer responsible for coordinating t
 
 ### Planned Deliverables
 
+#### Runtime Decision Integration
+
+Status: ✅ Completed (Issue #16)
+
+Coordinates PolicyEngine and ActionExecutor through one immutable RuntimeState
+transition.
+
+---
+
+#### Single Runtime Cycle
+
+Status: 🚧 In Progress (Issue #17)
+
+Composes one inference transition and one decision transition without a loop.
+
+---
+
 #### Runtime Lifecycle
 
 Responsible for coordinating:

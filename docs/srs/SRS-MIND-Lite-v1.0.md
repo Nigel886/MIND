@@ -465,6 +465,16 @@ Policy is transient during this operation and shall not be persisted in
 RuntimeState. RuntimeState shall continue to contain only observation, belief,
 and metadata.
 
+For M6 Issue #17, RuntimeController shall provide
+`run_cycle(runtime_state: RuntimeState, observation: Observation) -> RuntimeState`.
+It shall call `apply_inference(runtime_state, observation)` exactly once, then
+call `apply_decision(inferred_state)` exactly once, and return the final state.
+The incoming Observation is evidence for inference; the final state's
+Observation is the action-result Observation returned by ActionExecutor.
+
+One runtime cycle is not a bounded runtime loop. Cycle limits, termination
+evaluation, and multiple-cycle execution belong to Issue #18.
+
 ### Acceptance Criteria
 
 * RuntimeState objects can be created.
@@ -484,6 +494,15 @@ and metadata.
   RuntimeController implements neither policy generation nor action execution.
 * Unsupported-action ValueError is not silently swallowed.
 * Decision integration performs no inference and no runtime loop.
+* One runtime cycle performs exactly one inference, generates exactly one
+  Policy, and executes exactly one action.
+* The final RuntimeState is new, contains the Belief produced from the incoming
+  Observation, and contains the Observation returned by ActionExecutor.
+* The original RuntimeState and incoming Observation remain unchanged; metadata
+  is preserved according to the existing update() contract.
+* RuntimeController reuses apply_inference() and apply_decision(), remains
+  stateless, duplicates no component logic, and propagates errors without a
+  fallback state.
 
 ---
 

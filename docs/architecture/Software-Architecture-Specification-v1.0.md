@@ -746,6 +746,13 @@ class RuntimeController:
         runtime_state: RuntimeState,
     ) -> RuntimeState:
         ...
+
+    @staticmethod
+    def run_cycle(
+        runtime_state: RuntimeState,
+        observation: Observation,
+    ) -> RuntimeState:
+        ...
 ```
 
 ### Design Rules
@@ -767,14 +774,23 @@ class RuntimeController:
   fields to RuntimeState.
 - `apply_decision()` shall perform no inference, loop, tool execution, or error
   suppression. Unsupported-action `ValueError` propagates to the caller.
+- `run_cycle()` shall compose exactly one call to `apply_inference()` followed
+  by exactly one call to `apply_decision()`. It shall return the final state
+  from `apply_decision()` without constructing RuntimeState itself.
+- The inferred RuntimeState is an intermediate immutable value. The final state
+  retains its inferred Belief and stores the action-result Observation, not the
+  incoming inference Observation.
+- `run_cycle()` shall not loop, accept cycle limits, evaluate termination,
+  persist Policy, alter metadata semantics, invoke tools directly, introduce a
+  Runtime class or dependency injection, or suppress component exceptions.
 
 ---
 
 # 10. Runtime Sequence
 
-The following is the conceptual full lifecycle. M6 Issue #16 freezes only the
-single decision-integration sequence from RuntimeState through a new
-RuntimeState; repetition belongs to a future approved issue.
+The following is the conceptual full lifecycle. M6 Issue #17 freezes one cycle
+by composing inference coordination and decision integration; repetition
+remains a future Issue #18 concern.
 
 ```text
 Receive Observation
@@ -812,9 +828,9 @@ Generate Observation
 New RuntimeState
 ```
 
-The `apply_decision()` operation uses the RuntimeState, PolicyEngine,
-ActionExecutor, and RuntimeController.update() portion exactly once. It does
-not introduce scheduling or a runtime loop.
+`run_cycle()` first creates an inferred intermediate RuntimeState through
+`apply_inference()`, then calls `apply_decision()` once. It returns the decision
+result RuntimeState and does not introduce scheduling or a runtime loop.
 
 ---
 
