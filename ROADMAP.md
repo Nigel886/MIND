@@ -515,47 +515,147 @@ The complete cognitive runtime architecture becomes operational.
 
 ---
 
-# M7 — Prototype Validation
+# M7 — Cognitive Runtime Foundation Validation
 
-**Status:** ⬜ Planned
+**Status:** 🚧 In Progress
 
 ### Goal
 
-Validate the architecture through experiments, testing and reproducible demonstrations.
+Validate the correctness, stability, reproducibility, and architectural
+boundaries of the completed MIND-Lite cognitive runtime foundation.
+
+This milestone validates the runtime infrastructure implemented through M6. It
+does not validate goal-directed task solving, external Tool use, Meta-Inference,
+multi-agent dynamics, or superiority over existing Agent architectures.
 
 ---
 
-### Planned Deliverables
+### Deliverables
 
-#### Integration Testing
+#### Issue #19 — Validate End-to-End Cognitive Runtime Foundation
 
-- End-to-end testing
-- Runtime regression testing
-- Interface validation
+Status: 🚧 In Progress
 
----
-
-#### Benchmark Framework
-
-Provide reusable benchmarking utilities.
+- End-to-end runtime and regression testing
+- Public-interface, immutable transition, statelessness, and deterministic behavior validation
+- Observation chaining, error propagation, architecture boundary, and demonstration validation
+- Current capabilities and limitations record
 
 ---
 
-#### Experimental Evaluation
+#### Issue #20 — Implement Cognitive Runtime Benchmark Framework
 
-Support reproducible architecture experiments.
+Status: ⬜ Planned
+
+- Fixed-input bounded-runtime benchmarks, repeated runs, and duration/cycle measurements
+- Belief-version, RuntimeState serialization, and deterministic content-equivalence measurements
+- Structured benchmark configuration, results, documentation, and limitations
+
+This issue measures software-runtime behavior only; it does not evaluate task-solving quality, reasoning intelligence, Meta-Inference effectiveness, or superiority over Agent architectures.
 
 ---
 
-#### Documentation
+#### Issue #21 — Document Cognitive Runtime Foundation
 
-Complete prototype documentation.
+Status: ⬜ Planned
+
+- RuntimeState, lifecycle, public APIs, demonstration, test, and benchmark documentation
+- Architecture boundaries, capabilities, limitations, and M7 documentation consistency review
+- Clear distinction between Runtime Foundation, Goal-Directed Agent, Meta-Inference, and Comparative Evaluation
 
 ---
 
 ### Architecture Outcome
 
-The MIND-Lite prototype becomes reproducible, testable and suitable for public release.
+The MIND-Lite cognitive runtime foundation becomes stable, reproducible, measurable, and ready to support goal-directed Agent capabilities in the next milestone. Completion of M7 does not mean that the complete Meta-Inference Network Dynamics architecture has been implemented or experimentally validated.
+
+---
+
+# M8 — Goal-Directed Agent
+
+**Status:** ⬜ Planned
+
+### Goal
+
+Transform the cognitive runtime foundation into an Agent capable of receiving a formal task or goal, interacting with an environment, determining task completion, and returning a user-facing result.
+
+### Planned Deliverables
+
+- Task or Goal representation and goal-directed Agent execution contract
+- Agent result representation and final-answer generation
+- Semantic task-completion and termination behavior
+- Real Tool abstraction and controlled Tool execution
+- Goal-aware Policy behavior, end-to-end task-solving workflow, and tests
+
+### Architecture Outcome
+
+The runtime foundation becomes a functional goal-directed Agent rather than only an internal state-transition system.
+
+---
+
+# M9 — Meta-Inference Layer
+
+**Status:** ⬜ Planned
+
+### Goal
+
+Implement the central Meta-Inference capabilities of the MIND architecture.
+
+### Planned Deliverables
+
+- Multiple inference operators and a common inference-operator contract
+- Controlled discovery, selection, evaluation, adaptation, and switching
+- Confidence, uncertainty, and conflicting inference-result handling
+- Meta-Inference decision logic, traceable operator-selection records, and tests
+- Multi-agent network dynamics as a future extension
+
+### Architecture Outcome
+
+The Agent can reason about and adapt its own inference process instead of using one fixed inference strategy.
+
+---
+
+# M10 — Comparative Evaluation
+
+**Status:** ⬜ Planned
+
+### Goal
+
+Evaluate MIND under a common task interface against representative existing Agent architectures.
+
+### Planned Deliverables
+
+- Shared Task and AgentResult contracts, MIND adapter, and baseline adapters
+- Representative ReAct, Plan-and-Execute, and fixed pipeline Agent baselines
+- Common scenarios, reproducible protocol, success, answer-quality, tool-efficiency, latency, and resource metrics
+- Uncertainty, calibration, robustness, explainability, and traceability analysis
+- Comparative evaluation report
+
+Comparison claims are limited to collected evidence and the approved experimental protocol.
+
+### Architecture Outcome
+
+The research value and limitations of the MIND architecture are evaluated against representative Agent baselines.
+
+---
+
+# M11 — Documentation and Release
+
+**Status:** ⬜ Planned
+
+### Goal
+
+Complete project-wide documentation, reproducibility materials, and release readiness after the goal-directed Agent, Meta-Inference layer, and comparative evaluation are complete.
+
+### Planned Deliverables
+
+- Complete README, architecture, public API, Task/Agent, Tool, and Meta-Inference documentation
+- Benchmark and experiment reproduction instructions and known limitations
+- Release-readiness checklist, final validation report, and public prototype release preparation
+
+### Architecture Outcome
+
+The full implemented research prototype becomes understandable, reproducible, and ready for a documented public release.
 
 ---
 
@@ -569,7 +669,7 @@ The MIND-Lite prototype becomes reproducible, testable and suitable for public r
 
 **Current Milestone**
 
-> M7 — Prototype Validation
+> M7 — Cognitive Runtime Foundation Validation
 
 ---
 
@@ -591,19 +691,25 @@ The MIND-Lite prototype becomes reproducible, testable and suitable for public r
 
 **In Progress**
 
-- 🚧 M7 — Prototype Validation
+- 🚧 M7 — Cognitive Runtime Foundation Validation
+- 🚧 Issue #19 — Validate End-to-End Cognitive Runtime Foundation
 
 ---
 
 **Upcoming**
 
-- No milestone is currently planned after M7.
+- Issue #20 — Implement Cognitive Runtime Benchmark Framework
+- Issue #21 — Document Cognitive Runtime Foundation
+- M8 — Goal-Directed Agent
+- M9 — Meta-Inference Layer
+- M10 — Comparative Evaluation
+- M11 — Documentation and Release
 
 ---
 
 **Next Milestone**
 
-> Not yet defined after M7.
+> M8 — Goal-Directed Agent
 
 # Architecture Evolution
 
@@ -634,13 +740,22 @@ Decision Layer
 Runtime Integration
         │
         ▼
-Prototype Validation
+Cognitive Runtime Foundation Validation
+        │
+        ▼
+Goal-Directed Agent
+        │
+        ▼
+Meta-Inference Layer
+        │
+        ▼
+Comparative Evaluation
+        │
+        ▼
+Documentation and Release
         │
         ▼
 Research Platform
-        │
-        ▼
-Stable Release
 
 ```
 
@@ -835,7 +950,7 @@ Current Version:
 
 Current Milestone:
 
-**M7 — Prototype Validation**
+**M7 — Cognitive Runtime Foundation Validation**
 
 Maintained by:
 
