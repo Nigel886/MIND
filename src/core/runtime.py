@@ -275,3 +275,39 @@ class RuntimeController:
             observation,
         )
         return RuntimeController.apply_decision(inferred_state)
+
+    @staticmethod
+    def run(
+        runtime_state: RuntimeState,
+        observation: Observation,
+        max_cycles: int,
+    ) -> RuntimeState:
+        """Run a finite number of runtime cycles.
+
+        Args:
+            runtime_state: The initial immutable runtime state.
+            observation: The initial immutable observation.
+            max_cycles: The explicit number of cycles to execute.
+
+        Returns:
+            The original state for zero cycles, otherwise the final cycle state.
+
+        Raises:
+            TypeError: If max_cycles is not an int or is a bool.
+            ValueError: If max_cycles is negative.
+        """
+
+        if isinstance(max_cycles, bool) or not isinstance(max_cycles, int):
+            raise TypeError("max_cycles must be an int, not bool")
+        if max_cycles < 0:
+            raise ValueError("max_cycles must not be negative")
+
+        current_state = runtime_state
+        current_observation = observation
+        for _ in range(max_cycles):
+            current_state = RuntimeController.run_cycle(
+                current_state,
+                current_observation,
+            )
+            current_observation = current_state.observation
+        return current_state

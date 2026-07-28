@@ -753,6 +753,14 @@ class RuntimeController:
         observation: Observation,
     ) -> RuntimeState:
         ...
+
+    @staticmethod
+    def run(
+        runtime_state: RuntimeState,
+        observation: Observation,
+        max_cycles: int,
+    ) -> RuntimeState:
+        ...
 ```
 
 ### Design Rules
@@ -783,6 +791,15 @@ class RuntimeController:
 - `run_cycle()` shall not loop, accept cycle limits, evaluate termination,
   persist Policy, alter metadata semantics, invoke tools directly, introduce a
   Runtime class or dependency injection, or suppress component exceptions.
+- `run()` shall validate that max_cycles is an int but not bool; invalid types
+  raise TypeError and negative integers raise ValueError. Zero returns the exact
+  input RuntimeState.
+- `run()` shall use a finite iteration driven only by max_cycles and delegate
+  only to `run_cycle()`. It shall pass the explicit Observation first, then pass
+  each returned state's Observation to the following cycle.
+- `run()` shall return only the final RuntimeState, retain no trajectory or
+  local state after return, and shall not alter metadata semantics, retry,
+  suppress exceptions, or evaluate semantic termination.
 
 ---
 
@@ -829,8 +846,10 @@ New RuntimeState
 ```
 
 `run_cycle()` first creates an inferred intermediate RuntimeState through
-`apply_inference()`, then calls `apply_decision()` once. It returns the decision
-result RuntimeState and does not introduce scheduling or a runtime loop.
+`apply_inference()`, then calls `apply_decision()` once. `run()` may compose a
+finite explicit number of such cycles, chaining the preceding action-result
+Observation as the next input; it does not introduce scheduling or an
+unbounded loop.
 
 ---
 

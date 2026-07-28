@@ -475,6 +475,18 @@ Observation is the action-result Observation returned by ActionExecutor.
 One runtime cycle is not a bounded runtime loop. Cycle limits, termination
 evaluation, and multiple-cycle execution belong to Issue #18.
 
+For M6 Issue #18, RuntimeController shall provide
+`run(runtime_state: RuntimeState, observation: Observation, max_cycles: int) -> RuntimeState`.
+It shall execute exactly `max_cycles` calls to `run_cycle()`, using the initial
+Observation for the first call and each returned RuntimeState Observation for
+the next call. It shall return only the final RuntimeState.
+
+`max_cycles` shall be an `int` but not `bool`. Non-integer values and bool
+values raise TypeError; negative integers raise ValueError; zero returns the
+original RuntimeState unchanged. The only termination condition is reaching the
+explicit limit. This is deterministic prototype execution, not adaptive runtime
+scheduling.
+
 ### Acceptance Criteria
 
 * RuntimeState objects can be created.
@@ -503,6 +515,12 @@ evaluation, and multiple-cycle execution belong to Issue #18.
 * RuntimeController reuses apply_inference() and apply_decision(), remains
   stateless, duplicates no component logic, and propagates errors without a
   fallback state.
+* A bounded run performs exactly the requested positive number of cycles; each
+  cycle after the first receives the preceding action-result Observation.
+* The initial RuntimeState and Observation remain unchanged; every successful
+  cycle returns a new immutable state and only the final state is returned.
+* No trajectory, metadata counter, retry, fallback, semantic termination, or
+  unbounded loop is introduced. Component exceptions propagate immediately.
 
 ---
 

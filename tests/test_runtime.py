@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+import inspect
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
@@ -226,8 +227,8 @@ class RuntimeControllerTest(unittest.TestCase):
         self.assertTrue(hasattr(controller, "apply_inference"))
         self.assertTrue(hasattr(controller, "apply_decision"))
         self.assertTrue(hasattr(controller, "run_cycle"))
+        self.assertTrue(hasattr(controller, "run"))
         self.assertFalse(hasattr(controller, "step"))
-        self.assertFalse(hasattr(controller, "run"))
         self.assertFalse(hasattr(controller, "loop"))
         self.assertFalse(hasattr(controller, "stop"))
         self.assertFalse(hasattr(controller, "reset"))
@@ -748,6 +749,146 @@ class RuntimeCycleTest(unittest.TestCase):
         self.assertEqual(original.to_dict(), original_snapshot)
         self.assertEqual(incoming.to_dict(), incoming_snapshot)
         self.assertIsInstance(controller.run_cycle(original, incoming), RuntimeState)
+
+
+class BoundedRuntimeLoopTest(unittest.TestCase):
+    """Tests for bounded RuntimeController.run orchestration."""
+
+    def _state(self) -> RuntimeState:
+        return RuntimeController.initialize(metadata={"phase": "bounded"})
+
+    def _observation(self) -> Observation:
+        return Observation(source="test", content={"message": "start"})
+
+    def test_run_public_api_and_cycle_validation(self) -> None:
+        """Exposes only the frozen run API and rejects invalid counts."""
+
+        self.assertTrue(hasattr(RuntimeController, "run"))
+        self.assertEqual(
+            list(inspect.signature(RuntimeController.run).parameters),
+            ["runtime_state", "observation", "max_cycles"],
+        )
+        state = self._state()
+        observation = self._observation()
+        snapshot = deepcopy(state.to_dict())
+
+        for value in (True, False, 1.0, "1", None):
+            with self.assertRaises(TypeError):
+                RuntimeController.run(state, observation, value)
+        with self.assertRaises(ValueError):
+            RuntimeController.run(state, observation, -1)
+
+        self.assertEqual(state.to_dict(), snapshot)
+
+    def test_run_zero_cycles_returns_exact_original_without_delegation(self) -> None:
+        """Treats zero as a no-op identity transition."""
+
+        controller = RuntimeController()
+        state = self._state()
+        observation = self._observation()
+        metadata = state.metadata
+
+        with patch.object(RuntimeController, "run_cycle") as run_cycle:
+            result = controller.run(state, observation, 0)
+
+        self.assertIs(result, state)
+        self.assertIs(result.metadata, metadata)
+        run_cycle.assert_not_called()
+        self.assertFalse(hasattr(controller, "current_state"))
+        self.assertFalse(hasattr(controller, "max_cycles"))
+
+    def test_run_chains_exact_states_and_observations(self) -> None:
+        """Passes each action-result Observation to the next bounded cycle."""
+
+        original = self._state()
+        initial = self._observation()
+        first = RuntimeController.initialize(
+            observation=Observation(source="action_executor", content={"step": 1}),
+        )
+        second = RuntimeController.initialize(
+            observation=Observation(source="action_executor", content={"step": 2}),
+        )
+        third = RuntimeController.initialize(
+            observation=Observation(source="action_executor", content={"step": 3}),
+        )
+
+        with patch.object(
+            RuntimeController,
+            "run_cycle",
+            side_effect=[first, second, third],
+        ) as run_cycle:
+            result = RuntimeController.run(original, initial, 3)
+
+        self.assertEqual(
+            run_cycle.call_args_list,
+            [
+                ((original, initial),),
+                ((first, first.observation),),
+                ((second, second.observation),),
+            ],
+        )
+        self.assertIs(result, third)
+
+    def test_run_real_cycles_preserve_inputs_and_metadata(self) -> None:
+        """Runs genuine cycles with immutable inputs and action observation chaining."""
+
+        original = self._state()
+        initial = self._observation()
+        original_snapshot = deepcopy(original.to_dict())
+        initial_snapshot = deepcopy(initial.to_dict())
+
+        final = RuntimeController.run(original, initial, 2)
+
+        self.assertIsInstance(final, RuntimeState)
+        self.assertIsNot(final, original)
+        self.assertEqual(final.belief.version, original.belief.version + 2)
+        self.assertEqual(final.observation.source, "action_executor")
+        self.assertIn(final.observation.content["action"], {"await_observation", "maintain_belief"})
+        self.assertEqual(final.metadata, original.metadata)
+        self.assertNotIn("cycle_count", final.metadata)
+        self.assertNotIn("history", final.metadata)
+        self.assertEqual(original.to_dict(), original_snapshot)
+        self.assertEqual(initial.to_dict(), initial_snapshot)
+
+    def test_run_stops_on_later_failure_and_later_call_succeeds(self) -> None:
+        """Propagates a later failure without advancing or storing state."""
+
+        controller = RuntimeController()
+        original = self._state()
+        initial = self._observation()
+        first = RuntimeController.initialize()
+        original_snapshot = deepcopy(original.to_dict())
+        initial_snapshot = deepcopy(initial.to_dict())
+
+        with patch.object(
+            RuntimeController,
+            "run_cycle",
+            side_effect=[first, RuntimeError("cycle failure")],
+        ) as run_cycle:
+            with self.assertRaisesRegex(RuntimeError, "cycle failure"):
+                controller.run(original, initial, 3)
+
+        self.assertEqual(run_cycle.call_count, 2)
+        self.assertEqual(original.to_dict(), original_snapshot)
+        self.assertEqual(initial.to_dict(), initial_snapshot)
+        self.assertFalse(hasattr(controller, "history"))
+        self.assertFalse(hasattr(controller, "trajectory"))
+        self.assertIsInstance(controller.run(original, initial, 1), RuntimeState)
+
+    def test_main_is_import_safe_and_uses_public_bounded_run(self) -> None:
+        """Validates the demonstration entry point without executing on import."""
+
+        from src import main as demo
+
+        final = RuntimeController.initialize()
+        with patch.object(RuntimeController, "run", return_value=final) as run, patch(
+            "builtins.print",
+        ) as print_output:
+            demo.main()
+
+        run.assert_called_once()
+        self.assertEqual(run.call_args.kwargs["max_cycles"], 3)
+        print_output.assert_called_once_with(final.to_dict())
 
 
 class RuntimeCoreIntegrationTest(unittest.TestCase):

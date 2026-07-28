@@ -435,7 +435,7 @@ Action performs execution.
 
 # M6 — Runtime Integration
 
-**Status:** 🚧 In Progress
+**Status:** ✅ Completed
 
 ### Goal
 
@@ -458,9 +458,18 @@ transition.
 
 #### Single Runtime Cycle
 
-Status: 🚧 In Progress (Issue #17)
+Status: ✅ Completed (Issue #17)
 
 Composes one inference transition and one decision transition without a loop.
+
+---
+
+#### Bounded Runtime Loop and Demonstration
+
+Status: ✅ Completed (Issue #18)
+
+Executes an explicit finite number of single runtime cycles and returns the
+final RuntimeState.
 
 ---
 
@@ -560,7 +569,7 @@ The MIND-Lite prototype becomes reproducible, testable and suitable for public r
 
 **Current Milestone**
 
-> M6 — Runtime Integration
+> M7 — Prototype Validation
 
 ---
 
@@ -576,24 +585,25 @@ The MIND-Lite prototype becomes reproducible, testable and suitable for public r
 - ✅ M4 Issue #9 — Prototype Inference Engine
 - ✅ M4 — Inference Layer
 - ✅ M5 — Decision Layer
+- ✅ M6 — Runtime Integration
 
 ---
 
 **In Progress**
 
-- 🚧 M6 — Runtime Integration
+- 🚧 M7 — Prototype Validation
 
 ---
 
 **Upcoming**
 
-- M7 — Prototype Validation
+- No milestone is currently planned after M7.
 
 ---
 
 **Next Milestone**
 
-> M7 — Prototype Validation
+> Not yet defined after M7.
 
 # Architecture Evolution
 
@@ -825,7 +835,7 @@ Current Version:
 
 Current Milestone:
 
-**M6 — Runtime Integration**
+**M7 — Prototype Validation**
 
 Maintained by:
 
