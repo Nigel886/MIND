@@ -821,6 +821,21 @@ remain explicit future scope.
 
 # 13. Future Extensions
 
+## M8 Task and Goal Models
+
+M8 implements immutable, serializable Task and Goal models. A Task owns exactly
+one Goal and a stable UUID identity. A Goal contains a non-empty outcome
+description, ordered non-empty success criteria, and optional metadata; it has
+no identity or timestamp in this version. A Task contains required dictionary
+input plus optional context, constraints, and metadata. These mappings are
+recursively protected from caller-owned mutable aliases and reconstruct through
+`to_dict()` / `from_dict()` without changing their semantic data.
+
+Task input is original user-level request data; it is distinct from the initial
+runtime Observation that a future Agent may derive from it. Task and Goal remain
+outside RuntimeState, whose fields are unchanged. Task execution, AgentResult,
+completion evaluation, Tools, and GoalDirectedAgent remain future M8 issues.
+
 The following capabilities are intentionally reserved for future versions of MIND.
 
 ## Version 0.2

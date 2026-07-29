@@ -996,6 +996,21 @@ The M6 Issue #16 decision-integration increment is considered successful when:
 
 # 15. Extension Points
 
+## M8 Task Model Layer
+
+`src/core/task.py` provides immutable `Goal` and `Task` value models with
+`to_dict()` / `from_dict()` public serialization APIs. `Goal` contains a
+description, an ordered tuple of success criteria, and metadata. `Task` owns one
+Goal, uses a stable UUID identity, and contains dictionary input, context,
+constraints, and metadata. Recursive immutable storage prevents nested mutable
+caller values from altering model semantics; serialization returns fresh ordinary
+containers.
+
+Task and Goal remain outside RuntimeState. Task input becomes an initial
+Observation only in future task-level integration. These models contain no
+execution logic and have no dependency on RuntimeController, inference, Policy,
+ActionExecutor, or tools.
+
 The Version 1.0 architecture intentionally reserves extension points.
 
 Future versions should extend the system without redesigning the architecture.

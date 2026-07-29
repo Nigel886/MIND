@@ -573,7 +573,7 @@ The MIND-Lite cognitive runtime foundation becomes stable, reproducible, measura
 
 # M8 — Goal-Directed Agent
 
-**Status:** ⬜ Planned
+**Status:** 🔄 In Progress
 
 ### Goal
 
@@ -586,6 +586,15 @@ Transform the cognitive runtime foundation into an Agent capable of receiving a 
 - Semantic task-completion and termination behavior
 - Real Tool abstraction and controlled Tool execution
 - Goal-aware Policy behavior, end-to-end task-solving workflow, and tests
+
+### Issue Progress
+
+- [x] Issue #23 — Define Immutable Task and Goal Models
+- [ ] Issue #24 — Implement Agent Result Model
+- [ ] Issue #25 — Implement Task Completion Evaluation
+- [ ] Issue #26 — Implement Goal-Directed Agent
+- [ ] Issue #27 — Implement Controlled Tool Abstraction
+- [ ] Issue #28 — Validate Goal-Directed Agent Workflow
 
 ### Architecture Outcome
 
@@ -669,7 +678,7 @@ The full implemented research prototype becomes understandable, reproducible, an
 
 **Current Milestone**
 
-> M7 — Cognitive Runtime Foundation Validation
+> M8 — Goal-Directed Agent
 
 ---
 
@@ -690,13 +699,13 @@ The full implemented research prototype becomes understandable, reproducible, an
 - ✅ M7 Issue #20 — Implement Cognitive Runtime Benchmark Framework
 - ✅ M7 Issue #21 — Document Cognitive Runtime Foundation
 - ✅ M7 — Cognitive Runtime Foundation Validation
+- ✅ M8 Issue #23 — Define Immutable Task and Goal Models
 
 ---
 
 **Upcoming**
 
-- Issue #21 — Document Cognitive Runtime Foundation
-- M8 — Goal-Directed Agent
+- Issue #24 — Implement Agent Result Model
 - M9 — Meta-Inference Layer
 - M10 — Comparative Evaluation
 - M11 — Documentation and Release
