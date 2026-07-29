@@ -1044,6 +1044,15 @@ runtime_state) -> Policy`. It depends only on Task, RuntimeState, and Policy;
 it has no ToolRegistry or CompletionEvaluator dependency. Future GoalDirectedAgent
 will consume its decision data. Existing PolicyEngine remains unchanged.
 
+## M8 Goal-Directed Agent Layer
+
+`src/core/agent.py` provides `GoalDirectedAgent` above the runtime
+foundation. It receives an explicit ToolRegistry, uses RuntimeController
+initialization/inference/update APIs only, consumes GoalAwarePolicy decisions,
+adapts ToolResult to Observation, calls CompletionEvaluator, and assembles
+AgentResult. It does not use RuntimeController's prototype decision/run APIs,
+retain trajectories, or alter existing component contracts.
+
 The Version 1.0 architecture intentionally reserves extension points.
 
 Future versions should extend the system without redesigning the architecture.

@@ -592,9 +592,9 @@ Transform the cognitive runtime foundation into an Agent capable of receiving a 
 - [x] Issue #23 — Define Immutable Task and Goal Models
 - [x] Issue #24 — Implement Agent Result Model
 - [x] Issue #25 — Implement Controlled Local Tool Architecture
-- [ ] Issue #27 — Implement Goal-Directed Agent Integration
+- [x] Issue #27 — Implement Goal-Directed Agent Integration
 - [x] Issue #26 — Implement Goal-Aware Policy Engine
-- [ ] Issue #27 — Implement Controlled Tool Abstraction
+- [x] Issue #25 — Implement Controlled Tool Abstraction
 - [ ] Issue #28 — Validate Goal-Directed Agent Workflow
 
 ### Architecture Outcome
@@ -704,6 +704,7 @@ The full implemented research prototype becomes understandable, reproducible, an
 - ✅ M8 Issue #24 — Implement Agent Result Model
 - ✅ M8 Issue #25 — Implement Controlled Local Tool Architecture
 - ✅ M8 Issue #26 — Implement Goal-Aware Policy Engine
+- ✅ M8 Issue #27 — Implement Goal-Directed Agent Integration
 
 ---
 

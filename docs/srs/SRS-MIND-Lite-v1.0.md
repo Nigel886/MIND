@@ -874,6 +874,16 @@ Policies from Task and RuntimeState. It does not execute tools, determine
 completion, assemble AgentResult, interpret natural-language Goals, or alter the
 existing belief-only PolicyEngine.
 
+## M8 Goal-Directed Agent Orchestration
+
+M8 implements a stateless Agent that accepts a Task and explicit ToolRegistry,
+derives an initial Task Observation, executes bounded task-level Policy cycles,
+validates candidates through CompletionEvaluator, and returns AgentResult.
+Bounded exhaustion is incomplete; expected unsupported task, Tool, and Policy
+failures are explicit results. No trajectory, retry, natural-language Goal
+interpretation, Tool auto-selection, network, LLM, or Meta-Inference is implemented.
+M8 final validation remains pending Issue #28.
+
 The following capabilities are intentionally reserved for future versions of MIND.
 
 ## Version 0.2
