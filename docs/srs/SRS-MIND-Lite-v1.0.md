@@ -866,6 +866,14 @@ finite numeric operands. Network, filesystem, shell, arbitrary code, browser,
 external API, LLM, automatic discovery, and autonomous tool selection remain
 out of scope; M8 is not complete.
 
+## M8 Goal-Aware Policy
+
+M8 implements a stateless GoalAwarePolicyEngine that deterministically produces
+direct candidate-answer, Calculator tool-call, or unsupported-task failure
+Policies from Task and RuntimeState. It does not execute tools, determine
+completion, assemble AgentResult, interpret natural-language Goals, or alter the
+existing belief-only PolicyEngine.
+
 The following capabilities are intentionally reserved for future versions of MIND.
 
 ## Version 0.2

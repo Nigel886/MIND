@@ -1037,6 +1037,13 @@ Tool execution remains distinct from ActionExecutor and RuntimeController. A
 future GoalDirectedAgent will explicitly resolve registered tools; no ToolExecutor,
 plugin discovery, or ToolRequest model is proposed in this increment.
 
+## M8 Goal-Aware Policy Layer
+
+`src/core/goal_policy.py` provides `GoalAwarePolicyEngine.generate(task,
+runtime_state) -> Policy`. It depends only on Task, RuntimeState, and Policy;
+it has no ToolRegistry or CompletionEvaluator dependency. Future GoalDirectedAgent
+will consume its decision data. Existing PolicyEngine remains unchanged.
+
 The Version 1.0 architecture intentionally reserves extension points.
 
 Future versions should extend the system without redesigning the architecture.
