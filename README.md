@@ -1,8 +1,8 @@
 # MIND
 
-## Meta-Inference Network Dynamics
+## Cognitive Runtime Foundation
 
-**An Inference Runtime for Adaptive Multi-Agent Systems**
+**A validated immutable runtime foundation for future MIND research.**
 
 ---
 
@@ -29,6 +29,56 @@ Current Development Focus:
 > M4 — Inference Layer
 
 ---
+
+# Current Foundation Status
+
+M7 — Cognitive Runtime Foundation Validation is complete. The next planned
+milestone is M8 — Goal-Directed Agent; M8 has not started.
+
+MIND-Lite implements immutable Observation, Belief, RuntimeState and Policy
+models; stateless inference, policy, action and runtime controllers; bounded
+runtime execution; end-to-end validation; and a local engineering benchmark.
+It is not a complete Agent, Task/Goal solver, final-answer system, Tool/LLM/
+network integration, Meta-Inference system, multi-agent runtime, or comparative
+evaluation.
+
+## Quick Start
+
+Requires Python 3.11 or later.
+
+```bash
+python --version
+python -m unittest
+python -m src.main
+python -m benchmark.runtime_benchmark
+```
+
+The demonstration prints a final serialized RuntimeState, not a completed task
+answer. Benchmark timings are machine-local engineering observations, not
+intelligence or task-quality measurements.
+
+## RuntimeState and Runtime Lifecycle
+
+RuntimeState is an immutable internal snapshot of Observation, Belief, and
+metadata. It is serializable and passed between transitions for testing,
+traceability, reproducibility, and future persistence; it is not a final answer,
+Task, Goal, AgentResult, trajectory, Policy store, or mutable container.
+
+Observation -> apply_inference -> InferenceEngine -> Belief -> apply_decision
+-> PolicyEngine -> transient Policy -> ActionExecutor -> action-result
+Observation -> new RuntimeState. `run_cycle()` performs one transition; `run()`
+performs only explicit finite `max_cycles`, with later cycles receiving the prior
+action-result Observation. There is no semantic termination, trajectory storage,
+hidden loop, or external Tool execution.
+
+## Public APIs
+
+Observation, Belief, RuntimeState, and Policy provide `to_dict()`/`from_dict()`.
+InferenceEngine exposes `infer()`, PolicyEngine `generate()`, ActionExecutor
+`execute()`, and RuntimeController exposes `initialize()`, `update()`,
+`apply_inference()`, `apply_decision()`, `run_cycle()`, and `run()`.
+Benchmark APIs are RuntimeBenchmarkConfig, RuntimeBenchmarkResult, and
+`run_runtime_benchmark()`.
 
 # 🚀 Why MIND?
 

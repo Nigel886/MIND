@@ -484,7 +484,9 @@ RuntimeController is responsible for:
 
 RuntimeController SHALL remain stateless.
 
-Execution orchestration will be introduced by future milestones.
+RuntimeController currently provides stateless initialization, immutable update,
+inference and decision coordination, one complete cycle, and finite bounded
+execution through its documented public APIs.
 
 ---
 
@@ -503,7 +505,7 @@ RuntimeSubsystem
 │   ├── Observation
 │   └── Belief
 │
-└── RuntimeController (future)
+└── RuntimeController
 ```
 
 Ownership relationships are fixed.
@@ -805,9 +807,9 @@ class RuntimeController:
 
 # 10. Runtime Sequence
 
-The following is the conceptual full lifecycle. M6 Issue #17 freezes one cycle
-by composing inference coordination and decision integration; repetition
-remains a future Issue #18 concern.
+The following is the implemented finite lifecycle. `run_cycle()` composes one
+inference-decision-action transition; `run()` repeats it only up to explicit
+`max_cycles`, using the previous action-result Observation as later input.
 
 ```text
 Receive Observation
@@ -849,7 +851,15 @@ New RuntimeState
 `apply_inference()`, then calls `apply_decision()` once. `run()` may compose a
 finite explicit number of such cycles, chaining the preceding action-result
 Observation as the next input; it does not introduce scheduling or an
-unbounded loop.
+unbounded loop, semantic termination, trajectory storage, retries, a separate
+Runtime class, constructor dependency injection, or external Tool execution.
+
+RuntimeState is a passive immutable internal snapshot of Observation, Belief,
+and metadata. It is serializable for tracing, testing, reproducibility, and
+future persistence; it is not a final answer, Task, Goal, AgentResult,
+trajectory, Policy store, or Meta-Inference model. Policy is transient during
+decision integration. The root `benchmark` package is a non-core development
+utility that measures local runtime engineering behavior only.
 
 ---
 

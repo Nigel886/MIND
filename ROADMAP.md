@@ -148,7 +148,7 @@ The repository foundation serves as the baseline for all future milestones.
 
 # Version v0.2 — Core Cognitive Architecture
 
-**Status:** 🚧 In Progress
+**Status:** ✅ Completed
 
 ### Objective
 
@@ -557,7 +557,7 @@ This issue measures software-runtime behavior only; it does not evaluate task-so
 
 #### Issue #21 — Document Cognitive Runtime Foundation
 
-Status: ⬜ Planned
+Status: ✅ Completed
 
 - RuntimeState, lifecycle, public APIs, demonstration, test, and benchmark documentation
 - Architecture boundaries, capabilities, limitations, and M7 documentation consistency review
@@ -688,12 +688,8 @@ The full implemented research prototype becomes understandable, reproducible, an
 - ✅ M6 — Runtime Integration
 - ✅ M7 Issue #19 — Validate End-to-End Cognitive Runtime Foundation
 - ✅ M7 Issue #20 — Implement Cognitive Runtime Benchmark Framework
-
----
-
-**In Progress**
-
-- 🚧 M7 — Cognitive Runtime Foundation Validation
+- ✅ M7 Issue #21 — Document Cognitive Runtime Foundation
+- ✅ M7 — Cognitive Runtime Foundation Validation
 
 ---
 

@@ -754,7 +754,10 @@ Policy
 Action
 ```
 
-The runtime continues executing until a termination condition is reached.
+The implemented prototype executes only a finite number of cycles explicitly
+requested through `RuntimeController.run(..., max_cycles=...)`. It has no
+semantic termination, trajectory storage, hidden long-running loop, or external
+Tool execution. Semantic completion is future Goal-Directed Agent scope.
 
 ---
 
@@ -768,22 +771,19 @@ The MIND-Lite prototype will be considered complete when all of the following co
 * [x] RuntimeState supports serialization.
 * [x] RuntimeController initializes RuntimeState.
 * [x] RuntimeController updates RuntimeState immutably.
-* [ ] Runtime Core integration is validated.
+* [x] Runtime Core integration and bounded execution are validated.
 
 ---
 
 ## Observation
 
-* [ ] Observation objects can be created.
-* [ ] Observation objects are immutable.
+* [x] Observation objects can be created and are immutable.
 
 ---
 
 ## Belief
 
-* [ ] Belief objects can be created.
-* [ ] Belief updates are successful.
-* [ ] Belief serialization is supported.
+* [x] Belief objects, immutable inference updates, and serialization are supported.
 
 ---
 
@@ -798,23 +798,24 @@ The MIND-Lite prototype will be considered complete when all of the following co
 
 ## Policy
 
-* [ ] Policies are generated from beliefs.
-* [ ] Policies remain independent of execution.
+* [x] Policies are generated deterministically from Belief and remain independent of execution.
 
 ---
 
 ## Action
 
-* [ ] Runtime can execute actions.
-* [ ] Executed actions generate new observations.
+* [x] Prototype actions generate new immutable observations.
 
 ---
 
 ## System
 
-* [ ] Complete runtime loop executes correctly.
-* [ ] No module violates responsibility boundaries.
-* [ ] Public interfaces remain stable.
+* [x] Finite bounded runtime execution, end-to-end validation, and public-interface checks pass.
+
+The completed system is a cognitive runtime foundation. Task/Goal solving,
+AgentResult/final answers, real Tools, LLM/network integration, multiple
+operators, Meta-Inference, multi-agent behavior, and comparative evaluation
+remain explicit future scope.
 
 ---
 

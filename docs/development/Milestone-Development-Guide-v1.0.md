@@ -781,6 +781,16 @@ The objective is faithful implementation rather than autonomous redesign.
 
 # 16. Definition of Completion
 
+## Current milestone alignment
+
+This guide preserves its historical milestone instructions. The current ROADMAP
+is authoritative for future sequencing: M1–M6 completed the runtime foundation;
+M7 validates and documents that foundation and its benchmark; M8 is future
+Goal-Directed Agent work including real Tool abstraction/execution; M9 is future
+Meta-Inference; M10 is future comparative Agent evaluation; M11 is future
+documentation and release. M7 benchmark work measures runtime engineering
+behavior only and does not evaluate Agent quality.
+
 The MIND-Lite prototype is considered complete when all eight milestones have been successfully completed.
 
 Completion requires:
