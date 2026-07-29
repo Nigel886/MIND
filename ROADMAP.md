@@ -545,7 +545,7 @@ Status: ✅ Completed
 
 #### Issue #20 — Implement Cognitive Runtime Benchmark Framework
 
-Status: ⬜ Planned
+Status: ✅ Completed
 
 - Fixed-input bounded-runtime benchmarks, repeated runs, and duration/cycle measurements
 - Belief-version, RuntimeState serialization, and deterministic content-equivalence measurements
@@ -687,6 +687,7 @@ The full implemented research prototype becomes understandable, reproducible, an
 - ✅ M5 — Decision Layer
 - ✅ M6 — Runtime Integration
 - ✅ M7 Issue #19 — Validate End-to-End Cognitive Runtime Foundation
+- ✅ M7 Issue #20 — Implement Cognitive Runtime Benchmark Framework
 
 ---
 
@@ -698,7 +699,6 @@ The full implemented research prototype becomes understandable, reproducible, an
 
 **Upcoming**
 
-- Issue #20 — Implement Cognitive Runtime Benchmark Framework
 - Issue #21 — Document Cognitive Runtime Foundation
 - M8 — Goal-Directed Agent
 - M9 — Meta-Inference Layer
