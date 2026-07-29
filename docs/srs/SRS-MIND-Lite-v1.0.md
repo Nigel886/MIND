@@ -836,6 +836,26 @@ runtime Observation that a future Agent may derive from it. Task and Goal remain
 outside RuntimeState, whose fields are unchanged. Task execution, AgentResult,
 completion evaluation, Tools, and GoalDirectedAgent remain future M8 issues.
 
+## M8 Agent Result and Completion Semantics
+
+M8 implements an immutable, serializable `AgentResult` that identifies its Task
+by UUID and distinguishes `completed`, `failed`, and `incomplete` outcomes. It
+preserves a verified answer when available, the final RuntimeState when runtime
+initialization occurred, a validated termination reason, a non-negative
+completed-cycle count, compact evidence, and optional metadata. It does not
+represent a full trajectory or mutable execution state.
+
+Completed means a Goal is satisfied with a valid answer; bounded execution that
+does not satisfy the Goal is incomplete with `max_cycles_reached`; an expected
+unsupported task is failed. Invalid model input and unexpected programming
+defects remain exceptions rather than result values. `CompletionDecision` is the
+immutable intermediate verification value. The stateless `CompletionEvaluator`
+verifies a candidate answer against the structured `expected_answer` Task-input
+key using deterministic equality; plain-text Goal criteria are not executable
+predicates. Tool execution, GoalAwarePolicyEngine, GoalDirectedAgent, and
+natural-language success-criterion interpretation are not implemented; M8 is
+not complete.
+
 The following capabilities are intentionally reserved for future versions of MIND.
 
 ## Version 0.2

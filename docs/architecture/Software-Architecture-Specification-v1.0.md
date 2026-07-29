@@ -1011,6 +1011,23 @@ Observation only in future task-level integration. These models contain no
 execution logic and have no dependency on RuntimeController, inference, Policy,
 ActionExecutor, or tools.
 
+## M8 Result and Completion Layer
+
+`src/core/result.py` owns `AgentStatus`, `TerminationReason`,
+`CompletionDecision`, and `AgentResult`. These immutable serializable value
+models hold task-level outcome information and may depend on Task identity and
+RuntimeState, but never alter RuntimeState. `AgentResult` does not embed a Task
+or an execution trajectory.
+
+`src/core/completion.py` owns a stateless `CompletionEvaluator` with
+an evaluation-only public API accepting Task, RuntimeState, and an optional
+candidate answer. It deterministically validates only the Task-input
+`expected_answer` value and returns a compact `CompletionDecision`; it does not
+invoke tools, generate policies or answers, mutate state, or orchestrate runtime
+cycles. A future task-level Agent, not RuntimeController or PolicyEngine, will
+construct final AgentResult values from completion and termination context. No
+full trajectory is stored, and Runtime Foundation APIs remain unchanged.
+
 The Version 1.0 architecture intentionally reserves extension points.
 
 Future versions should extend the system without redesigning the architecture.
