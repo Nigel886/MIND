@@ -573,7 +573,7 @@ The MIND-Lite cognitive runtime foundation becomes stable, reproducible, measura
 
 # M8 — Goal-Directed Agent
 
-**Status:** 🔄 In Progress
+**Status:** ✅ Completed
 
 ### Goal
 
@@ -592,14 +592,16 @@ Transform the cognitive runtime foundation into an Agent capable of receiving a 
 - [x] Issue #23 — Define Immutable Task and Goal Models
 - [x] Issue #24 — Implement Agent Result Model
 - [x] Issue #25 — Implement Controlled Local Tool Architecture
-- [x] Issue #27 — Implement Goal-Directed Agent Integration
 - [x] Issue #26 — Implement Goal-Aware Policy Engine
-- [x] Issue #25 — Implement Controlled Tool Abstraction
-- [ ] Issue #28 — Validate Goal-Directed Agent Workflow
+- [x] Issue #27 — Implement Goal-Directed Agent Integration
+- [x] Issue #28 — Validate Goal-Directed Agent End to End
 
 ### Architecture Outcome
 
-The runtime foundation becomes a functional goal-directed Agent rather than only an internal state-transition system.
+The runtime foundation now includes a validated bounded Goal-Directed Agent for
+narrow deterministic direct-value and Calculator tasks. M8 completion does not
+claim general task intelligence, planning, unrestricted Tool use, LLM/network
+integration, Meta-Inference, multi-agent execution, or comparative superiority.
 
 ---
 
@@ -679,7 +681,7 @@ The full implemented research prototype becomes understandable, reproducible, an
 
 **Current Milestone**
 
-> M8 — Goal-Directed Agent
+> M8 — Goal-Directed Agent — Completed
 
 ---
 
@@ -705,12 +707,13 @@ The full implemented research prototype becomes understandable, reproducible, an
 - ✅ M8 Issue #25 — Implement Controlled Local Tool Architecture
 - ✅ M8 Issue #26 — Implement Goal-Aware Policy Engine
 - ✅ M8 Issue #27 — Implement Goal-Directed Agent Integration
+- ✅ M8 Issue #28 — Validate Goal-Directed Agent End to End
+- ✅ M8 — Goal-Directed Agent
 
 ---
 
 **Upcoming**
 
-- Issue #24 — Implement Agent Result Model
 - M9 — Meta-Inference Layer
 - M10 — Comparative Evaluation
 - M11 — Documentation and Release
@@ -719,7 +722,7 @@ The full implemented research prototype becomes understandable, reproducible, an
 
 **Next Milestone**
 
-> M8 — Goal-Directed Agent
+> M9 — Meta-Inference Layer — Planned
 
 # Architecture Evolution
 

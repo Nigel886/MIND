@@ -1006,8 +1006,8 @@ constraints, and metadata. Recursive immutable storage prevents nested mutable
 caller values from altering model semantics; serialization returns fresh ordinary
 containers.
 
-Task and Goal remain outside RuntimeState. Task input becomes an initial
-Observation only in future task-level integration. These models contain no
+Task and Goal remain outside RuntimeState. GoalDirectedAgent derives Task input
+into an initial Observation at task-execution time. These models contain no
 execution logic and have no dependency on RuntimeController, inference, Policy,
 ActionExecutor, or tools.
 
@@ -1024,34 +1024,46 @@ an evaluation-only public API accepting Task, RuntimeState, and an optional
 candidate answer. It deterministically validates only the Task-input
 `expected_answer` value and returns a compact `CompletionDecision`; it does not
 invoke tools, generate policies or answers, mutate state, or orchestrate runtime
-cycles. A future task-level Agent, not RuntimeController or PolicyEngine, will
-construct final AgentResult values from completion and termination context. No
-full trajectory is stored, and Runtime Foundation APIs remain unchanged.
+cycles. GoalDirectedAgent, not RuntimeController or PolicyEngine, constructs
+final AgentResult values from completion and termination context. No full
+trajectory is stored, and Runtime Foundation APIs remain unchanged.
 
 ## M8 Controlled Tool Layer
 
 `src/core/tool.py` contains the Tool contract, immutable ToolResult,
 explicit instance ToolRegistry, and ToolResult-to-Observation adapter. Concrete
 local capabilities belong below it in `src/tools/`, beginning with CalculatorTool.
-Tool execution remains distinct from ActionExecutor and RuntimeController. A
-future GoalDirectedAgent will explicitly resolve registered tools; no ToolExecutor,
-plugin discovery, or ToolRequest model is proposed in this increment.
+Tool execution remains distinct from ActionExecutor and RuntimeController.
+GoalDirectedAgent explicitly resolves registered tools, invokes them, adapts the
+ToolResult to Observation, and sends that Observation through
+RuntimeController.apply_inference(). No ToolExecutor, plugin discovery, or
+ToolRequest model is present.
 
 ## M8 Goal-Aware Policy Layer
 
 `src/core/goal_policy.py` provides `GoalAwarePolicyEngine.generate(task,
 runtime_state) -> Policy`. It depends only on Task, RuntimeState, and Policy;
-it has no ToolRegistry or CompletionEvaluator dependency. Future GoalDirectedAgent
-will consume its decision data. Existing PolicyEngine remains unchanged.
+it has no ToolRegistry or CompletionEvaluator dependency. GoalDirectedAgent
+consumes only its decision data. Existing PolicyEngine remains unchanged.
 
 ## M8 Goal-Directed Agent Layer
 
 `src/core/agent.py` provides `GoalDirectedAgent` above the runtime
 foundation. It receives an explicit ToolRegistry, uses RuntimeController
-initialization/inference/update APIs only, consumes GoalAwarePolicy decisions,
+initialization and inference APIs only, consumes GoalAwarePolicy decisions,
 adapts ToolResult to Observation, calls CompletionEvaluator, and assembles
 AgentResult. It does not use RuntimeController's prototype decision/run APIs,
-retain trajectories, or alter existing component contracts.
+retain trajectories, or alter existing component contracts. It is behaviorally
+stateless: the only retained reference is the caller-owned explicit ToolRegistry.
+
+The complete M8 flow is Task/Goal -> Task Observation -> runtime initialization
+and inference -> GoalAwarePolicyEngine -> direct completion evaluation or
+registered Tool execution -> ToolResult Observation -> inference -> completion
+evaluation -> AgentResult. Direct candidates do not change RuntimeState; Tool
+results do. Each run has an explicit finite `max_cycles`; a final state plus
+compact evidence is retained, not a history. End-to-end validation covers
+completed, failed, incomplete, zero-cycle, serialization, semantic determinism,
+immutability, and statelessness behavior.
 
 The Version 1.0 architecture intentionally reserves extension points.
 

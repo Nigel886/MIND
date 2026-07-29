@@ -810,16 +810,14 @@ The MIND-Lite prototype will be considered complete when all of the following co
 
 ## System
 
-* [x] Finite bounded runtime execution, end-to-end validation, and public-interface checks pass.
-
-The completed system is a cognitive runtime foundation. Task/Goal solving,
-AgentResult/final answers, real Tools, LLM/network integration, multiple
-operators, Meta-Inference, multi-agent behavior, and comparative evaluation
-remain explicit future scope.
+* [x] Finite bounded runtime execution, public-interface checks, and M7
+  runtime-foundation validation pass.
+* [x] M8 bounded Goal-Directed Agent end-to-end validation passes for the
+  approved direct and Calculator task schemas.
 
 ---
 
-# 13. Future Extensions
+# 13. M8 Goal-Directed Agent
 
 ## M8 Task and Goal Models
 
@@ -832,9 +830,9 @@ recursively protected from caller-owned mutable aliases and reconstruct through
 `to_dict()` / `from_dict()` without changing their semantic data.
 
 Task input is original user-level request data; it is distinct from the initial
-runtime Observation that a future Agent may derive from it. Task and Goal remain
-outside RuntimeState, whose fields are unchanged. Task execution, AgentResult,
-completion evaluation, Tools, and GoalDirectedAgent remain future M8 issues.
+runtime Observation derived by `GoalDirectedAgent` when execution begins. Task
+and Goal remain outside RuntimeState, whose fields remain observation, belief,
+and metadata only.
 
 ## M8 Agent Result and Completion Semantics
 
@@ -852,19 +850,19 @@ defects remain exceptions rather than result values. `CompletionDecision` is the
 immutable intermediate verification value. The stateless `CompletionEvaluator`
 verifies a candidate answer against the structured `expected_answer` Task-input
 key using deterministic equality; plain-text Goal criteria are not executable
-predicates. Tool execution, GoalAwarePolicyEngine, GoalDirectedAgent, and
-natural-language success-criterion interpretation are not implemented; M8 is
-not complete.
+predicates. `GoalDirectedAgent` converts this decision and bounded termination
+context into `AgentResult`; it does not make plain-text Goal criteria executable.
 
 ## M8 Controlled Local Tools
 
 M8 implements controlled deterministic local Tools with explicit registration and
 immutable ToolResult values. Tools remain separated from ActionExecutor,
-RuntimeController, PolicyEngine, and CompletionEvaluator. The initial proposed
-capability is a calculator supporting only addition and multiplication over two
-finite numeric operands. Network, filesystem, shell, arbitrary code, browser,
-external API, LLM, automatic discovery, and autonomous tool selection remain
-out of scope; M8 is not complete.
+RuntimeController, PolicyEngine, and CompletionEvaluator. The implemented
+CalculatorTool supports only addition and multiplication over two finite numeric
+operands. ToolResult converts through a separate adapter into an Observation,
+which RuntimeController incorporates through inference. Network, filesystem,
+shell, arbitrary code, browser, external API, LLM, automatic discovery, and
+autonomous tool selection remain out of scope.
 
 ## M8 Goal-Aware Policy
 
@@ -878,11 +876,23 @@ existing belief-only PolicyEngine.
 
 M8 implements a stateless Agent that accepts a Task and explicit ToolRegistry,
 derives an initial Task Observation, executes bounded task-level Policy cycles,
-validates candidates through CompletionEvaluator, and returns AgentResult.
-Bounded exhaustion is incomplete; expected unsupported task, Tool, and Policy
-failures are explicit results. No trajectory, retry, natural-language Goal
-interpretation, Tool auto-selection, network, LLM, or Meta-Inference is implemented.
-M8 final validation remains pending Issue #28.
+validates candidates through CompletionEvaluator, and returns AgentResult. The
+validated direct schema produces a candidate answer; the validated Calculator
+schema produces a `call_tool` policy whose parameters exclude `expected_answer`.
+Bounded exhaustion is incomplete; expected unsupported task, controlled Tool,
+and Policy failures are explicit results. Direct mismatches terminate immediately
+because repeating the same deterministic candidate cannot change state; Tool
+mismatches execute only to their explicit `max_cycles` bound. The final result
+retains only the final state and compact evidence, never a full trajectory.
+
+Issue #28 validates direct completion, Calculator completion, direct mismatch,
+bounded Tool incompletion, unsupported tasks, controlled Tool failure,
+zero-cycle behavior, result round trips, deterministic semantic outcomes,
+immutability, behavioral statelessness, and component boundaries.
+
+M8 is complete. It does not implement natural-language Goal interpretation,
+planning, Tool auto-selection, retry, network, LLM, memory, Meta-Inference,
+multi-agent behavior, or comparative evaluation.
 
 The following capabilities are intentionally reserved for future versions of MIND.
 

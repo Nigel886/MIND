@@ -1,472 +1,153 @@
 # MIND
 
-## Cognitive Runtime Foundation
+## Cognitive Runtime Foundation and Goal-Directed Agent
 
-**A validated immutable runtime foundation for future MIND research.**
+MIND is a specification-driven research prototype for an inference-centric
+agent architecture. M8 is complete: the repository now contains a validated,
+bounded Goal-Directed Agent for narrow deterministic structured tasks.
 
----
+## Status
 
-> MIND is an open research project exploring inference-centric runtime architectures for adaptive intelligent agent systems.
+- Completed: M1–M8, including the Cognitive Runtime Foundation and the
+  Goal-Directed Agent.
+- Next: M9 — Meta-Inference Layer (planned, not started).
+- The current implementation is not a general-purpose Agent or a claim of
+  reasoning superiority.
 
----
-
-## Project Status
-
-Current Version: **v0.3.0 (Runtime Core)**
-
-Current Milestone:
-
-- ✅ M1 — Repository Foundation
-- ✅ M2 — Cognitive State Models
-- ✅ M3 — Runtime Core
-- ⏳ M4 — Inference Layer
-- ⏳ M5 — Policy Layer
-- ⏳ M6 — Action Layer
-- ⏳ M7 — System Integration
-
-Current Development Focus:
-
-> M4 — Inference Layer
-
----
-
-# Current Foundation Status
-
-M7 — Cognitive Runtime Foundation Validation is complete. The next planned
-milestone is M8 — Goal-Directed Agent; M8 has not started.
-
-MIND-Lite implements immutable Observation, Belief, RuntimeState and Policy
-models; stateless inference, policy, action and runtime controllers; bounded
-runtime execution; end-to-end validation; and a local engineering benchmark.
-It is not a complete Agent, Task/Goal solver, final-answer system, Tool/LLM/
-network integration, Meta-Inference system, multi-agent runtime, or comparative
-evaluation.
-
-## Quick Start
+## Quick start
 
 Requires Python 3.11 or later.
 
 ```bash
-python --version
 python -m unittest
 python -m src.main
+python -m examples.goal_directed_agent_demo
 python -m benchmark.runtime_benchmark
 ```
 
-The demonstration prints a final serialized RuntimeState, not a completed task
-answer. Benchmark timings are machine-local engineering observations, not
-intelligence or task-quality measurements.
+`python -m src.main` demonstrates the bounded M7 Cognitive Runtime Foundation
+and prints a serialized `RuntimeState`. `python -m
+examples.goal_directed_agent_demo` demonstrates bounded M8 task execution and
+prints a serialized `AgentResult` for `17 * 23 = 391`.
 
-## RuntimeState and Runtime Lifecycle
+The runtime benchmark is a machine-local engineering measurement of the M7
+runtime. It is not an Agent-quality, reasoning-quality, or comparative
+evaluation benchmark; comparative evaluation belongs to M10.
 
-RuntimeState is an immutable internal snapshot of Observation, Belief, and
-metadata. It is serializable and passed between transitions for testing,
-traceability, reproducibility, and future persistence; it is not a final answer,
-Task, Goal, AgentResult, trajectory, Policy store, or mutable container.
+## M8 Goal-Directed Agent
 
-Observation -> apply_inference -> InferenceEngine -> Belief -> apply_decision
--> PolicyEngine -> transient Policy -> ActionExecutor -> action-result
-Observation -> new RuntimeState. `run_cycle()` performs one transition; `run()`
-performs only explicit finite `max_cycles`, with later cycles receiving the prior
-action-result Observation. There is no semantic termination, trajectory storage,
-hidden loop, or external Tool execution.
-
-## Public APIs
-
-Observation, Belief, RuntimeState, and Policy provide `to_dict()`/`from_dict()`.
-InferenceEngine exposes `infer()`, PolicyEngine `generate()`, ActionExecutor
-`execute()`, and RuntimeController exposes `initialize()`, `update()`,
-`apply_inference()`, `apply_decision()`, `run_cycle()`, and `run()`.
-Benchmark APIs are RuntimeBenchmarkConfig, RuntimeBenchmarkResult, and
-`run_runtime_benchmark()`.
-
-# 🚀 Why MIND?
-
-Recent Large Language Model (LLM) agents have achieved remarkable progress in planning, tool use, reflection and multi-agent collaboration.
-
-However, most existing agent systems are still organized around manually designed workflow pipelines.
+M8 separates user-level task execution from the low-level immutable runtime.
 
 ```text
-User Request
-      │
-      ▼
- Planner
-      │
-      ▼
- Tool Calling
-      │
-      ▼
- Reflection
-      │
-      ▼
- Final Answer
+Task + Goal
+  -> GoalAwarePolicyEngine
+  -> produce_answer | call_tool | fail_task
+  -> optional ToolRegistry / CalculatorTool
+  -> ToolResult -> Observation -> RuntimeController.apply_inference()
+  -> CompletionEvaluator
+  -> AgentResult
 ```
 
-Although effective, workflow pipelines tightly couple reasoning, planning and execution, making adaptive behavior difficult to formalize and extend.
+### Public M8 components
 
-MIND explores a different direction.
+- `Goal` and `Task`: immutable, serializable value models. A `Task` owns one
+  `Goal`, has a stable UUID, and remains outside `RuntimeState`.
+- `AgentResult`, `CompletionDecision`, `AgentStatus`, and
+  `TerminationReason`: immutable task-level completion and failure values.
+- `CompletionEvaluator`: stateless deterministic comparison against the
+  structured `expected_answer` task input.
+- `Tool`, `ToolResult`, and `ToolRegistry`: controlled, explicit local Tool
+  boundary. There is no default/global registry.
+- `CalculatorTool`: deterministic addition or multiplication for exactly two
+  finite non-boolean integer or float operands.
+- `GoalAwarePolicyEngine`: deterministic task-schema routing; it only creates
+  decision data and never executes a Tool.
+- `GoalDirectedAgent`: bounded, behaviorally stateless task orchestrator that
+  returns an `AgentResult`; it does not store a trajectory.
 
-Instead of treating an agent as a workflow executor, MIND models an agent as an **Inference Runtime**.
+### Supported task schemas
 
-The runtime continuously performs an inference loop:
+Direct value task:
+
+```python
+Task(
+    goal=Goal("return the value", ("candidate equals expected answer",)),
+    input={"value": "ready", "expected_answer": "ready"},
+)
+```
+
+Calculator task:
+
+```python
+Task(
+    goal=Goal("calculate the product", ("candidate equals expected answer",)),
+    input={
+        "operation": "multiply",
+        "operands": [17, 23],
+        "expected_answer": 391,
+    },
+)
+```
+
+The supported actions are task-level decision identifiers only:
+`produce_answer`, `call_tool`, and `fail_task`. Completion remains the
+responsibility of `CompletionEvaluator`, not Policy generation.
+
+### Outcomes and boundaries
+
+- Matching direct and Calculator tasks produce `completed` /
+  `goal_satisfied` results.
+- An unsupported structured task produces `failed` /
+  `unsupported_task`.
+- A controlled Tool failure produces `failed` / `tool_failure`.
+- A direct mismatch returns immediately as `incomplete` /
+  `max_cycles_reached`; an unsatisfied Tool task remains bounded by
+  `max_cycles`.
+- RuntimeState remains an immutable snapshot of only observation, belief, and
+  metadata. It is not a Task, Goal, final answer, AgentResult, or trajectory.
+
+## Runtime foundation
+
+The retained M7 runtime flow is:
 
 ```text
-Observation
-      │
-      ▼
-Inference
-      │
-      ▼
-Belief Update
-      │
-      ▼
-Policy Selection
-      │
-      ▼
-Action
-      │
-      ▼
-New Observation
+Observation -> InferenceEngine -> Belief -> PolicyEngine -> ActionExecutor
+-> Observation -> new RuntimeState
 ```
 
-Reasoning is therefore represented as an iterative inference process rather than a sequence of workflow nodes.
+`RuntimeController` remains stateless and exposes `initialize()`, `update()`,
+`apply_inference()`, `apply_decision()`, `run_cycle()`, and `run()`. The M8
+Agent uses only the approved lower-level initialization and inference path, so
+the prototype Policy/Action path remains independent of task orchestration.
 
----
+## Current capabilities and limitations
 
-# ✨ Highlights
+The system validates immutable state transitions, deterministic inference,
+controlled local calculation, explicit task outcomes, and bounded deterministic
+task execution. It does not provide arbitrary natural-language understanding,
+general planning, unrestricted Tool use, network/browser/search/API/shell/file
+access, LLM integration, memory, Meta-Inference, multi-agent behavior, or a
+comparative baseline. M8 therefore does not establish general-purpose Agent
+intelligence.
 
-- 🧠 Inference-centric runtime architecture
-- 📊 Explicit probabilistic belief representation
-- 🔌 Modular inference operator interface
-- ⚙️ Adaptive runtime configuration
-- 🤝 Structured multi-agent communication
-- 📦 Model-independent design
-- 🧪 Research-first development
-
----
-
-# 🎯 Research Objectives
-
-MIND currently investigates four fundamental research questions.
-
-### RQ1 — Explicit Beliefs
-
-Can explicit probabilistic belief states provide a better internal representation than raw conversation history?
-
-### RQ2 — Unified Runtime
-
-Can different inference mechanisms share a common runtime interface?
-
-### RQ3 — Adaptive Runtime
-
-Can runtime behavior adapt automatically according to changing environments?
-
-### RQ4 — Structured Collaboration
-
-Can structured belief exchange improve collaboration between intelligent agents?
-
----
-
-# 🏛 Design Principles
-
-The project follows six core principles.
-
-| Principle | Description |
-|-----------|-------------|
-| Explicit State | Beliefs are represented explicitly rather than hidden in prompts. |
-| Separation of Concerns | Inference, memory, policy and execution remain independent. |
-| Runtime Modularity | Components can be replaced independently. |
-| Probabilistic Semantics | Runtime state preserves uncertainty whenever possible. |
-| Model Independence | The runtime is independent of any specific language model. |
-| Research First | Scientific validation takes priority over engineering convenience. |
-
----
-
-# 🏗 Architecture
-
-MIND models an intelligent agent as a continuous inference system rather than a workflow executor.
-
-Every execution cycle follows the same runtime loop.
+## Repository structure
 
 ```text
-                 Environment
-                       │
-                       ▼
-            Observation Interface
-                       │
-                       ▼
-             Inference Runtime
-                       │
-                       ▼
-                Belief State
-                       │
-                       ▼
-                Policy Engine
-                       │
-                       ▼
-              Action Interface
-                       │
-                       ▼
-                 Environment
+src/core/       immutable models, runtime, policy, tools, completion, Agent
+src/tools/      controlled concrete local Tools
+examples/       finite public-API demonstrations
+tests/          unit, integration, and end-to-end validation
+benchmark/      M7 runtime engineering benchmark
+docs/           SRS, SAS, ADRs, RFCs, and development guidance
 ```
 
-The runtime continuously updates beliefs from observations and derives actions from the current belief state.
-
-Detailed architecture documentation is available in `ARCHITECTURE.md`.
-
-Future releases will extend the runtime with inference, policy and action components.
-
----
-
-# 🧩 Core Components
-
-| Component | Responsibility |
-|-----------|----------------|
-| Observation Interface | Collect observations from users, tools and external environments. |
-| Inference Runtime | Transform observations into updated beliefs. |
-| Belief State | Maintain the agent's current understanding of the world. |
-| Policy Engine | Select the next action according to the current belief state. |
-| Action Interface | Execute tool calls, retrieval, code execution and communication. |
-
----
-
-# 📚 Documentation
-
-The project documentation is organized as a collection of RFCs.
-
-| Document | Description | Status |
-|----------|-------------|--------|
-| RFC-000 | Project Vision | ✅ |
-| RFC-001 | Research Gap Analysis | ✅ |
-| RFC-001A | Belief Representation Specification | ✅ |
-| RFC-001B | Concept Hierarchy Specification | ✅ |
-| RFC-002 | Research Blueprint | ✅ |
-| RFC-003 | MIND Formalism | ✅ |
-| ARCHITECTURE.md | Runtime Architecture Overview | ✅ |
-| ROADMAP.md | Development Roadmap | ✅ |
-
-More documents will be added as the project evolves.
-
----
-
-# 📂 Repository Structure
-
-```text
-MIND/
-│
-├── docs/
-│   ├── rfc/
-│   ├── architecture/
-│   ├── references/
-│   └── math/
-│
-├── src/
-├── experiments/
-├── benchmark/
-├── datasets/
-├── paper/
-├── configs/
-├── scripts/
-├── tests/
-│
-├── README.md
-├── ROADMAP.md
-├── CONTRIBUTING.md
-├── LICENSE
-└── CITATION.cff
-```
-
----
-
-# 🗺 Project Roadmap
-
-The project is divided into five major milestones.
-
-| Phase | Objective | Status |
-|------|-----------|--------|
-| Phase 1 | Research Specification | ✅ Completed |
-| Phase 2 | Runtime Foundation (MIND-Lite)  | 🚧 In Progress |
-| Phase 3 | Cognitive Inference | ⏳ Planned |
-| Phase 4 | Multi-Agent Runtime | ⏳ Planned |
-| Phase 5 | Benchmark & Publication | ⏳ Planned |
-
-For a detailed development plan, see **ROADMAP.md**.
-
----
-
-# ⭐ Current Milestone
-
-The project is currently focused on **MIND-Lite**, the first runnable prototype of the MIND Runtime.
-
-The primary objective of this milestone is to validate the core runtime abstraction before introducing adaptive runtime management and multi-agent collaboration.
-
-Current development priorities:
-
-- [x] Observation Module
-- [x] Belief Representation
-- [x] Runtime Core
-- [ ] Inference Layer
-- [ ] Policy Layer
-- [ ] Action Layer
-- [ ] Runtime Integration
-- [ ] Initial Evaluation
-
-Expected outcome:
-
-- - A complete inference pipeline built upon the validated Runtime Core.
-
----
-
-# 📈 Current Progress
-
-| Area | Progress |
-|------|----------|
-| Vision | ✅ Complete |
-| Research Specification | ✅ Complete |
-| Runtime Core | ✅ Complete |
-| Runtime Architecture | ✅ Complete |
-| Prototype Development | 🚧 In Progress |
-| Benchmark Design | ⏳ Planned |
-| Experimental Evaluation | ⏳ Planned |
-| Academic Publication | ⏳ Planned |
-
----
-
-# 🔬 Current Research Focus
-
-The first prototype (MIND-Lite) focuses on validating three core hypotheses.
-
-1. Explicit belief states provide a better runtime abstraction than conversation history.
-
-2. An inference runtime is more modular and extensible than workflow-based agent architectures.
-
-3. A standardized inference interface enables multiple reasoning mechanisms to coexist within a unified runtime.
-
-These hypotheses will be evaluated through prototype implementation and benchmark experiments.
-
----
-# 📖 Project Philosophy
-
-MIND is built upon one simple idea.
-
-> **Agents should not merely execute workflows.**
->
-> **Agents should perform inference.**
-
-Instead of viewing reasoning as a predefined execution pipeline, MIND models reasoning as a continuous process of:
-
-- observing the environment;
-- updating beliefs through inference;
-- selecting policies;
-- interacting with the world;
-- incorporating new observations.
-
-This philosophy serves as the foundation of the entire runtime architecture.
-
----
-
-# 🔭 Long-Term Vision
-
-MIND aims to evolve into a general-purpose runtime for adaptive intelligent agent systems.
-
-Future development directions include:
-
-- Adaptive Inference Runtime
-- Multiple Inference Operators
-- Structured Belief Graph
-- Runtime Memory Management
-- Multi-Agent Collaboration
-- Distributed Belief Synchronization
-- Benchmark Suite
-- Visualization Dashboard
-- Open Research Platform
-
----
-
-# 🤝 Contributing
-
-Contributions of all kinds are welcome.
-
-You can contribute by:
-
-- Reporting bugs
-- Improving documentation
-- Implementing runtime modules
-- Developing benchmarks
-- Proposing research ideas
-- Improving evaluation pipelines
-
-Please read **CONTRIBUTING.md** before opening an issue or submitting a pull request.
-
----
-
-# 📄 Additional Information
-
-### Publications
-
-There are currently no publications associated with this project.
-
-Future technical reports, preprints and peer-reviewed papers will be listed here.
-
-### Citation
-
-Citation information will be provided in **CITATION.cff** after the first public research release.
-
-### License
-
-MIND is released under the **MIT License**.
-
-See the **LICENSE** file for details.
-
----
-
-# 🙏 Acknowledgements
-
-MIND is an independent open research project.
-
-The project draws inspiration from research in:
-
-- Bayesian Inference
-- Active Inference
-- Probabilistic Reasoning
-- World Models
-- Multi-Agent Systems
-- Large Language Model Agents
-
-These fields provide the theoretical background for this project.
-
-Any future claims of novelty will be supported by prototype implementation, experimental validation and peer-reviewed publications.
-
----
-
-## Road to v1.0
-
-```text
-Research Idea
-      │
-Research Specification
-      │
-Runtime Core      ← Current Stage
-      │
-Inference Layer
-      │
-Adaptive Runtime
-      │
-Multi-Agent Runtime
-      │
-Benchmark Evaluation
-      │
-First Research Paper
-      │
-MIND v1.0
-```
-
----
-
-## Final Note
-
-MIND is currently an active research project.
-
-The immediate objective is to build and validate **MIND-Lite**, the first runnable implementation of the proposed inference runtime.
-
-Once the core hypotheses are validated through prototype development and experiments, the project will progressively evolve toward adaptive runtime management, multi-agent collaboration and reproducible research.
+## Architecture roadmap
+
+M8 is complete. M9 will add Meta-Inference architecture; M10 will conduct
+comparative evaluation; M11 will consolidate documentation and release
+materials. These future milestones are not implemented by the current code.
+
+See [ROADMAP.md](ROADMAP.md), the
+[SRS](docs/srs/SRS-MIND-Lite-v1.0.md), the
+[SAS](docs/architecture/Software-Architecture-Specification-v1.0.md), and
+accepted ADRs under `docs/architecture/adr/` for the authoritative contracts.
