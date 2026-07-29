@@ -1028,6 +1028,15 @@ cycles. A future task-level Agent, not RuntimeController or PolicyEngine, will
 construct final AgentResult values from completion and termination context. No
 full trajectory is stored, and Runtime Foundation APIs remain unchanged.
 
+## M8 Controlled Tool Layer
+
+`src/core/tool.py` contains the Tool contract, immutable ToolResult,
+explicit instance ToolRegistry, and ToolResult-to-Observation adapter. Concrete
+local capabilities belong below it in `src/tools/`, beginning with CalculatorTool.
+Tool execution remains distinct from ActionExecutor and RuntimeController. A
+future GoalDirectedAgent will explicitly resolve registered tools; no ToolExecutor,
+plugin discovery, or ToolRequest model is proposed in this increment.
+
 The Version 1.0 architecture intentionally reserves extension points.
 
 Future versions should extend the system without redesigning the architecture.

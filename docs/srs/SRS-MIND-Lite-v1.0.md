@@ -856,6 +856,16 @@ predicates. Tool execution, GoalAwarePolicyEngine, GoalDirectedAgent, and
 natural-language success-criterion interpretation are not implemented; M8 is
 not complete.
 
+## M8 Controlled Local Tools
+
+M8 implements controlled deterministic local Tools with explicit registration and
+immutable ToolResult values. Tools remain separated from ActionExecutor,
+RuntimeController, PolicyEngine, and CompletionEvaluator. The initial proposed
+capability is a calculator supporting only addition and multiplication over two
+finite numeric operands. Network, filesystem, shell, arbitrary code, browser,
+external API, LLM, automatic discovery, and autonomous tool selection remain
+out of scope; M8 is not complete.
+
 The following capabilities are intentionally reserved for future versions of MIND.
 
 ## Version 0.2
