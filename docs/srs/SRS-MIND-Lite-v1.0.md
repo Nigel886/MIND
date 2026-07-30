@@ -911,6 +911,23 @@ Future M9 Issues own explicit registry association, deterministic selection,
 and GoalDirectedAgent integration. M10 comparative evaluation remains future
 scope.
 
+## M9 Meta-Inference Decision and Evidence Semantics
+
+M9 Issue #30 defines immutable, serializable data-only MetaInferenceDecision and
+DecisionEvidence models. A decision shall contain a selection-only status, the
+selected strategy name when selected, compact ordered evidence, and descriptive
+metadata. Evidence shall contain a type, a human-readable description, and
+JSON-compatible supporting data. A selected decision shall reference exactly one
+stable strategy name; an unavailable or rejected decision shall not reference a
+selected strategy.
+
+These models shall not select, score, register, execute, or apply a strategy;
+they shall not mutate state or represent Agent execution outcomes. Confidence,
+uncertainty, RuntimeState, complete trajectories, Tool history, logs,
+exceptions, timestamps, and executable objects are outside this Issue #30
+contract. Future M9 Issues own registry availability, selection behavior, and
+GoalDirectedAgent integration.
+
 The following capabilities are intentionally reserved for future versions of MIND.
 
 ## Version 0.2

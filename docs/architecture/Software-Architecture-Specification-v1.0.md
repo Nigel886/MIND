@@ -1080,6 +1080,22 @@ select descriptor data; GoalDirectedAgent may later consume the approved
 decision. None of those future components is introduced here. RuntimeState and
 all current M1–M8 APIs remain unchanged.
 
+## M9 Decision Model Layer
+
+Issue #30 introduces a data-only src/core/meta_inference.py layer containing
+MetaInferenceDecisionStatus, DecisionEvidence, and MetaInferenceDecision. The
+dependency direction is from a future MetaInferenceEngine to these value models;
+these models do not depend on the registry, InferenceEngine, RuntimeController,
+GoalDirectedAgent, or runtime state.
+
+InferenceStrategy describes an available strategy; MetaInferenceDecision records
+one selection result by stable strategy name and compact ordered selection
+rationale. DecisionEvidence is distinct from AgentResult evidence: it explains
+a strategy decision rather than task execution. The models contain no strategy
+implementation, selection algorithm, score, confidence, uncertainty, runtime
+history, or Agent integration. Issue #31 owns registry association, Issue #32
+owns selection behavior, and Issue #33 owns Agent use of an approved decision.
+
 The Version 1.0 architecture intentionally reserves extension points.
 
 Future versions should extend the system without redesigning the architecture.
