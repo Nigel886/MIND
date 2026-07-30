@@ -1065,6 +1065,21 @@ compact evidence is retained, not a history. End-to-end validation covers
 completed, failed, incomplete, zero-cycle, serialization, semantic determinism,
 immutability, and statelessness behavior.
 
+## M9 Strategy Model Layer
+
+M9 Issue #29 introduces `src/core/inference_strategy.py`, containing one immutable,
+serializable `InferenceStrategy` descriptor. Its dependency direction is data
+only: it does not depend on RuntimeController, InferenceEngine, Policy,
+ActionExecutor, ToolRegistry, CompletionEvaluator, or GoalDirectedAgent.
+
+The descriptor supplies a stable case-sensitive name, description, ordered
+capabilities, stable configuration, and metadata. It contains no executable
+implementation reference. A later explicit instance-level registry may map its
+name to a controlled executable association; MetaInferenceEngine may later
+select descriptor data; GoalDirectedAgent may later consume the approved
+decision. None of those future components is introduced here. RuntimeState and
+all current M1–M8 APIs remain unchanged.
+
 The Version 1.0 architecture intentionally reserves extension points.
 
 Future versions should extend the system without redesigning the architecture.

@@ -894,6 +894,23 @@ M8 is complete. It does not implement natural-language Goal interpretation,
 planning, Tool auto-selection, retry, network, LLM, memory, Meta-Inference,
 multi-agent behavior, or comparative evaluation.
 
+## M9 Inference Strategy Representation
+
+M9 Issue #29 defines an immutable, serializable `InferenceStrategy` data
+descriptor with a stable case-sensitive string name, required non-empty
+description, ordered non-empty duplicate-free string capabilities, stable
+configuration mapping, and descriptive metadata mapping. Configuration and
+metadata shall recursively protect caller-owned mutable values and serialize to
+fresh ordinary containers. The public descriptor shall contain data only: no
+callables, import paths, module/class instances, registries, runtime state,
+Policy, Tool, Agent, exception, or external-service object.
+
+The descriptor does not select or execute inference, alter Belief or
+RuntimeState, determine completion, generate Policy, or produce AgentResult.
+Future M9 Issues own explicit registry association, deterministic selection,
+and GoalDirectedAgent integration. M10 comparative evaluation remains future
+scope.
+
 The following capabilities are intentionally reserved for future versions of MIND.
 
 ## Version 0.2
