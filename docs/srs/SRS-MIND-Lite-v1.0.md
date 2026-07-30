@@ -928,6 +928,17 @@ exceptions, timestamps, and executable objects are outside this Issue #30
 contract. Future M9 Issues own registry availability, selection behavior, and
 GoalDirectedAgent integration.
 
+## M9 Controlled Inference Strategy Registry
+
+M9 Issue #31 defines an explicit instance-scoped InferenceStrategyRegistry that
+registers one immutable
+InferenceStrategy and one controlled inference implementation under the
+strategy's exact stable name. It shall support deterministic descriptor lookup,
+implementation lookup, containment, and ordered registered-name listing.
+Duplicate registration shall fail explicitly; missing lookup shall fail
+explicitly. The registry shall not select, score, execute, serialize executable
+state, mutate descriptors, discover implementations, or use global state.
+
 The following capabilities are intentionally reserved for future versions of MIND.
 
 ## Version 0.2

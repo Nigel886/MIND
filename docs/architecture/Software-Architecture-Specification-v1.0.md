@@ -1096,6 +1096,22 @@ implementation, selection algorithm, score, confidence, uncertainty, runtime
 history, or Agent integration. Issue #31 owns registry association, Issue #32
 owns selection behavior, and Issue #33 owns Agent use of an approved decision.
 
+## M9 Controlled Strategy Registry Layer
+
+Issue #31 introduces src/core/inference_registry.py as an instance-scoped
+configuration layer between InferenceStrategy and a future MetaInferenceEngine.
+It keeps the immutable descriptor separate from a controlled Protocol-backed
+implementation association, with explicit registration and exact deterministic
+lookup. It has no selection, scoring, confidence, uncertainty, inference
+invocation, RuntimeController, or GoalDirectedAgent behavior.
+
+The dependency direction is InferenceStrategy and the implementation Protocol
+into InferenceStrategyRegistry, then a future MetaInferenceEngine consuming the
+registry and MetaInferenceDecision models. Registry state is runtime
+configuration and is deliberately not serialized. No global registry, dynamic
+import, plugin discovery, reflection loading, replacement, or thread-safety
+mechanism is introduced.
+
 The Version 1.0 architecture intentionally reserves extension points.
 
 Future versions should extend the system without redesigning the architecture.
