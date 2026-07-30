@@ -1123,6 +1123,16 @@ selected, no match unavailable, and multiple matches rejected without priority.
 The Engine has no inference execution, RuntimeController, observation, Agent,
 confidence, uncertainty, ranking, or scoring behavior.
 
+## M9 Meta-Inference Agent Integration Layer
+
+Issue #33 introduces explicit optional MetaInferenceEngine injection into
+GoalDirectedAgent. The Agent initializes state, invokes select, records compact
+decision evidence, then continues its existing policy/tool/completion flow only
+for selected outcomes. It does not invoke registry implementations or change
+RuntimeController/InferencesEngine behavior. Unavailable/rejected outcomes end
+before task policy cycles with an explicit existing terminal result; no fallback
+is permitted.
+
 The Version 1.0 architecture intentionally reserves extension points.
 
 Future versions should extend the system without redesigning the architecture.

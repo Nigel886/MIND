@@ -950,6 +950,16 @@ multiple matches are rejected as ambiguous. The engine shall produce compact
 deterministic decision evidence and shall not execute, score, rank, calculate
 confidence or uncertainty, mutate runtime state, or integrate with the Agent.
 
+## M9 Meta-Inference Agent Integration
+
+When explicitly supplied a MetaInferenceEngine, M9 Issue #33 makes GoalDirectedAgent select a
+strategy after initial runtime inference and before task policy execution. A
+selected decision shall be retained as compact AgentResult execution evidence;
+the Agent shall not execute the selected implementation in this increment.
+Unavailable or rejected decisions shall fail explicitly with no default
+strategy fallback. Omission of the optional dependency preserves legacy M8
+behavior.
+
 The following capabilities are intentionally reserved for future versions of MIND.
 
 ## Version 0.2
