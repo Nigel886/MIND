@@ -1112,6 +1112,17 @@ configuration and is deliberately not serialized. No global registry, dynamic
 import, plugin discovery, reflection loading, replacement, or thread-safety
 mechanism is introduced.
 
+## M9 Deterministic Meta-Inference Engine Layer
+
+Issue #32 introduces a state-free MetaInferenceEngine consuming an explicit
+InferenceStrategyRegistry plus Task and RuntimeState inputs to construct a
+MetaInferenceDecision. Its deterministic subset-capability match reads only
+Task.metadata.required_inference_capabilities. It uses registry list_names and
+descriptor get; it does not retrieve or invoke implementations. One match is
+selected, no match unavailable, and multiple matches rejected without priority.
+The Engine has no inference execution, RuntimeController, observation, Agent,
+confidence, uncertainty, ranking, or scoring behavior.
+
 The Version 1.0 architecture intentionally reserves extension points.
 
 Future versions should extend the system without redesigning the architecture.

@@ -939,6 +939,17 @@ Duplicate registration shall fail explicitly; missing lookup shall fail
 explicitly. The registry shall not select, score, execute, serialize executable
 state, mutate descriptors, discover implementations, or use global state.
 
+## M9 Deterministic Meta-Inference Engine
+
+M9 Issue #32 defines a state-free MetaInferenceEngine that accepts Task and
+RuntimeState and returns only MetaInferenceDecision. Required inference
+capabilities shall be explicit Task metadata under
+required_inference_capabilities. A strategy matches when it supports every
+required capability. Exactly one match is selected; no match is unavailable;
+multiple matches are rejected as ambiguous. The engine shall produce compact
+deterministic decision evidence and shall not execute, score, rank, calculate
+confidence or uncertainty, mutate runtime state, or integrate with the Agent.
+
 The following capabilities are intentionally reserved for future versions of MIND.
 
 ## Version 0.2
