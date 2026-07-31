@@ -16,12 +16,11 @@ repository-code: "https://github.com/Nigel886/MIND"
 
 license: MIT
 
-version: "v0.1.1-spec"
-
-date-released: 2026-06-26
+version: "0.5.0.dev0"
 
 abstract: >
-  MIND (Meta-Inference Network Dynamics) is a research project
-  exploring inference-centric runtime architectures for intelligent
-  agent systems through explicit belief representation,
-  modular inference operators and adaptive runtime design.
+  MIND (Meta-Inference Network Dynamics) is a specification-driven research
+  artifact containing an immutable cognitive runtime, a bounded Goal-Directed
+  Agent, deterministic Meta-Inference capability selection, and a frozen local
+  comparative-evaluation protocol. It does not claim general intelligence,
+  adaptive learning, or comparative superiority.

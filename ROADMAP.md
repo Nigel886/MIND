@@ -114,10 +114,11 @@ No implementation is considered complete until the complete workflow has been fi
 
 | Version | Status | Description |
 |---------|--------|-------------|
-| v0.1 | Completed | Repository foundation and project infrastructure |
-| v0.2 | In Progress | Core cognitive architecture prototype |
-| v0.3 | Planned | Integrated runtime and inference prototype |
-| v1.0 | Future | Stable research platform |
+| v0.1-spec | Released | Initial specification and repository documentation |
+| v0.2.0 | Released | Immutable cognitive state models |
+| v0.3.0 | Released | Runtime core |
+| v0.4.0 | Released | Bounded cognitive runtime |
+| v0.5.0.dev0 | Active development | Completed M1-M10 research artifact; M11 finalization |
 
 # Development Milestones
 
@@ -669,7 +670,7 @@ The full implemented research prototype becomes understandable, reproducible, an
 
 **Current Version**
 
-> v0.2 — Core Cognitive Architecture
+> v0.5.0.dev0 — Current Research Artifact
 
 ---
 
@@ -770,96 +771,73 @@ This evolution strategy ensures that every architectural layer is independently 
 
 ---
 
-# Planned Releases
+# Release Metadata
 
-## v0.1
+## v0.1-spec
 
-**Repository Foundation**
+**Repository specification baseline**
 
 Status:
 
-✅ Released
+Released
 
-Highlights:
-
-- Repository initialized
-- Development workflow established
-- Project documentation
-- Initial architecture specification
+This historical tag records the initial project specification and repository
+documentation.
 
 ---
 
-## v0.2
+## v0.2.0
 
-**Core Cognitive Architecture**
+**Cognitive State Models**
 
 Status:
 
-🚧 In Development
+Released
 
-Highlights:
-
-- Observation
-- Belief
-- RuntimeState
-- RuntimeController
-- Runtime Update
-- Runtime Core Integration
-
-This version establishes the immutable runtime state architecture.
+This historical tag records the immutable Observation and Belief foundation.
 
 ---
 
-## v0.3
+## v0.3.0
 
-**Integrated Runtime Prototype**
+**Runtime Core**
 
 Status:
 
-Planned
+Released
 
-Highlights:
-
-- Inference Layer
-- Decision Layer
-- Runtime lifecycle
-- End-to-end execution
-- First executable prototype
+This historical tag records the completed runtime-core milestone.
 
 ---
 
-## v0.4
+## v0.4.0
 
-**Experimental Platform**
+**Bounded Runtime**
 
 Status:
 
-Planned
+Released
 
-Highlights:
-
-- Benchmark framework
-- Runtime evaluation
-- Experimental infrastructure
-- Performance analysis
+This historical tag records the bounded cognitive runtime loop.
 
 ---
 
-## v1.0
+## v0.5.0.dev0
 
-**Stable Research Platform**
+**Current Research Artifact**
 
 Status:
 
-Future
+Active development; no release has been created.
 
-Highlights:
+The current pre-release artifact includes completed M1-M10 work: the cognitive
+runtime foundation, bounded Goal-Directed Agent, deterministic Meta-Inference
+selection, and frozen local comparative evaluation. M11 is consolidating
+documentation, reproducibility, public API navigation, repository metadata, and
+final artifact validation.
 
-- Stable public APIs
-- Complete documentation
-- Reproducible experiments
-- Long-term maintenance
-- Research-ready architecture
+No new release, publication, or package distribution is implied by this version
+reference.
 
 ---
 
@@ -953,11 +931,11 @@ Status:
 
 Current Version:
 
-**v0.2**
+**v0.5.0.dev0**
 
 Current Milestone:
 
-**M7 — Cognitive Runtime Foundation Validation**
+**M11 — Framework Consolidation and Research Artifact Finalization**
 
 Maintained by:
 
