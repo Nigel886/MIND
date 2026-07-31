@@ -929,9 +929,9 @@ Policy, Tool, Agent, exception, or external-service object.
 
 The descriptor does not select or execute inference, alter Belief or
 RuntimeState, determine completion, generate Policy, or produce AgentResult.
-Future M9 Issues own explicit registry association, deterministic selection,
-and GoalDirectedAgent integration. M10 comparative evaluation remains future
-scope.
+Registry association, deterministic selection, and GoalDirectedAgent
+integration are delivered in M9. M10 comparative evaluation is delivered
+separately and remains outside this representation contract.
 
 ## M9 Meta-Inference Decision and Evidence Semantics
 
@@ -981,6 +981,27 @@ the Agent shall not execute the selected implementation in this increment.
 Unavailable or rejected decisions shall fail explicitly with no default
 strategy fallback. Omission of the optional dependency preserves legacy M8
 behavior.
+
+## M12 Controlled Meta-Inference Validation (Planned)
+
+M12 shall validate only the delivered selection-only Meta-Inference behavior
+under frozen local deterministic conditions. It shall evaluate explicit
+capability-match selection, unavailable detection, ambiguity rejection, compact
+decision-evidence completeness and consistency, repeated-run semantic
+determinism, and preservation of M8 GoalDirectedAgent outcomes and failure
+semantics.
+
+M12 shall compare an M8 Agent without Meta-Inference, a pre-specified
+deterministic fixed-strategy baseline, and the delivered M9 Agent with explicit
+MetaInferenceEngine. Baselines shall use equivalent Task data, local tools,
+cycle budgets, capability vocabulary, and public result schemas.
+
+M12 shall not execute selected implementations, change Agent, RuntimeController,
+Policy, InferenceEngine, Tool behavior, or M10 methodology. It shall not
+introduce LLMs, network, external APIs, external benchmarks, planning,
+multi-tool optimization, autonomous learning, or claims that Meta-Inference
+improves task success, reasoning, intelligence, or general capability.
+
 
 The following capabilities are intentionally reserved for future versions of MIND.
 

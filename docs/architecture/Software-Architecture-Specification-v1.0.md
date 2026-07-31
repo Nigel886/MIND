@@ -1158,6 +1158,27 @@ retains no RuntimeState, Agent, Tool, registry, strategy implementation, or
 trajectory. It has no network, LLM, external dataset, adaptive learning, or
 claim of intelligence, reasoning quality, generalization, or superiority.
 
+## M12 Controlled Meta-Inference Validation Scope (Planned)
+
+M12 is an evaluation-only layer above the delivered M8/M9 public interfaces.
+It shall consume frozen Task, MetaInferenceDecision, AgentResult, and compact
+evaluation-result values without changing Agent, RuntimeController,
+InferenceEngine, Policy, Tool, registry, or MetaInferenceEngine behavior.
+
+The planned baseline contract is: M8 Agent with no Meta-Inference, a separately
+frozen deterministic fixed-selection baseline, and the delivered M9 Agent with
+MetaInferenceEngine and registry. All comparisons shall hold Task data, local
+ToolRegistry configuration, cycle budget, capability vocabulary, descriptors,
+and result schema constant.
+
+M12 validates selection, unavailable, ambiguity, evidence-consistency,
+determinism, and M8-preservation semantics. It does not execute selected
+strategy implementations and shall not interpret decision evidence as an
+execution input. No LLM, network, external benchmark, planning, multi-tool
+optimization, autonomous learning, strategy-execution change, or
+task-performance-improvement claim belongs to this layer.
+
+
 ## Reserved Extension Points
 
 ### Inference Operators

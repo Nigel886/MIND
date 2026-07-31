@@ -666,6 +666,35 @@ The full implemented research prototype becomes understandable, reproducible, an
 
 ---
 
+# M12 — Controlled Meta-Inference Validation
+
+**Status:** 🟡 Planned
+
+### Goal
+
+Validate the delivered Meta-Inference layer under controlled deterministic
+conditions. M12 evaluates strategy-selection correctness, unavailable and
+ambiguity semantics, compact decision-evidence consistency, and preservation of
+M8 GoalDirectedAgent behavior. It does not claim task-success improvement.
+
+### Planned Deliverables
+
+- Frozen local capability-matching, unavailable, ambiguity, and M8
+  compatibility evaluation protocol
+- Fair M8, fixed-strategy, and full Meta-Inference baseline contract
+- Decision, consistency, and compatibility metrics with explicit denominators
+- Bounded validation report and reproducibility record
+
+### Exclusions
+
+M12 excludes LLMs, external APIs, network services, external benchmarks,
+strategy-execution changes, multi-step planning, multi-tool optimization,
+open-domain reasoning, autonomous learning, and task-performance-improvement
+claims.
+
+
+---
+
 # Current Development Focus
 
 **Current Version**
@@ -712,13 +741,13 @@ The full implemented research prototype becomes understandable, reproducible, an
 
 **Upcoming**
 
-- No post-M11 milestone is currently planned.
+- 🟡 M12 — Controlled Meta-Inference Validation
 
 ---
 
 **Next Milestone**
 
-> Post-M11 scope has not been planned.
+> M12 — Controlled Meta-Inference Validation — Planned
 
 # Architecture Evolution
 
