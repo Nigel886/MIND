@@ -6,7 +6,7 @@
  
  Version: **v1.0**
  
- Status: **Draft**
+ Status: **Maintained implementation-aligned specification**
  
  ---
  
@@ -202,8 +202,8 @@ Receive New Observation
  * Distributed execution
  * Long-term memory optimization
  * Reinforcement learning
- * Meta-Inference
- * Operator adaptation
+* Meta-Inference beyond the delivered deterministic capability-selection layer
+* Operator adaptation or execution switching
  
  ---
 
@@ -523,6 +523,28 @@ scheduling.
   unbounded loop is introduced. Component exceptions propagate immediately.
 
 ---
+
+# 7.1 Delivered M8-M10 Architecture Status
+
+The following delivered layers extend the original runtime scope while
+preserving immutable-state and separation-of-responsibility principles.
+
+- **M8 Goal-Directed Agent:** immutable Task/Goal, AgentResult and completion
+  values, explicit local ToolRegistry and CalculatorTool, deterministic
+  GoalAwarePolicyEngine, and bounded GoalDirectedAgent execution are delivered.
+  Task execution remains distinct from RuntimeState and is limited to approved
+  deterministic schemas.
+- **M9 Meta-Inference:** immutable strategy and decision/evidence values, an
+  explicit strategy registry, a state-free deterministic capability selector,
+  and optional Agent integration are delivered. Selection does not execute a
+  selected implementation, alter RuntimeController, or add learning.
+- **M10 Comparative Evaluation:** immutable frozen scenario fixtures, an A/B
+  runner, pure compact-result metrics, result storage, and a local formal report
+  are delivered. Results are bounded protocol observations, not claims of
+  intelligence, reasoning superiority, generalization, or adaptive learning.
+
+These layers do not add LLM access, network services, arbitrary execution,
+memory, online learning, or multi-agent systems.
 
 # 8. Non-Functional Requirements
 

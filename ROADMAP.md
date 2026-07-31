@@ -511,13 +511,13 @@ Provide the first executable MIND-Lite prototype.
 
 ### Architecture Outcome
 
-The complete cognitive runtime architecture becomes operational.
+The complete cognitive runtime architecture is operational and validated.
 
 ---
 
 # M7 — Cognitive Runtime Foundation Validation
 
-**Status:** 🚧 In Progress
+**Status:** ✅ Completed
 
 ### Goal
 
@@ -567,7 +567,7 @@ Status: ✅ Completed
 
 ### Architecture Outcome
 
-The MIND-Lite cognitive runtime foundation becomes stable, reproducible, measurable, and ready to support goal-directed Agent capabilities in the next milestone. Completion of M7 does not mean that the complete Meta-Inference Network Dynamics architecture has been implemented or experimentally validated.
+The MIND-Lite cognitive runtime foundation is stable, reproducible, and measurable. It remains distinct from the delivered bounded Agent, Meta-Inference, and comparative-evaluation layers.
 
 ---
 
@@ -611,20 +611,18 @@ integration, Meta-Inference, multi-agent execution, or comparative superiority.
 
 ### Goal
 
-Implement the central Meta-Inference capabilities of the MIND architecture.
+Deliver deterministic, bounded Meta-Inference capability selection for the Goal-Directed Agent.
 
-### Planned Deliverables
+### Delivered Components
 
-- Multiple inference operators and a common inference-operator contract
-- Controlled discovery, selection, evaluation, adaptation, and switching
-- Confidence, uncertainty, and conflicting inference-result handling
-- Meta-Inference decision logic, traceable operator-selection records, and tests
-- Multi-agent network dynamics as a future extension
+- Immutable InferenceStrategy, MetaInferenceDecision, and DecisionEvidence values
+- Explicit InferenceStrategyRegistry with deterministic capability matching
+- Stateless MetaInferenceEngine that returns selected, unavailable, or rejected decisions
+- Optional GoalDirectedAgent integration that consumes a decision without executing a strategy
 
 ### Architecture Outcome
 
-The Agent can reason about and adapt its own inference process instead of using one fixed inference strategy.
-
+The Agent can consume an explicit deterministic capability-selection decision. M9 does not implement strategy execution, adaptation, operator switching, learning, or multi-agent dynamics.
 ---
 
 # M10 — Comparative Evaluation
@@ -633,27 +631,23 @@ The Agent can reason about and adapt its own inference process instead of using 
 
 ### Goal
 
-Evaluate MIND under a common task interface against representative existing Agent architectures.
+Execute and document a frozen local comparative-evaluation protocol for the delivered M8 and M9 configurations.
 
-### Planned Deliverables
+### Delivered Components
 
-- Shared Task and AgentResult contracts, MIND adapter, and baseline adapters
-- Representative ReAct, Plan-and-Execute, and fixed pipeline Agent baselines
-- Common scenarios, reproducible protocol, success, answer-quality, tool-efficiency, latency, and resource metrics
-- Uncertainty, calibration, robustness, explainability, and traceability analysis
-- Comparative evaluation report
-
-Comparison claims are limited to collected evidence and the approved experimental protocol.
+- Ten frozen deterministic scenarios and three repetitions per baseline
+- Baseline A: GoalDirectedAgent with the controlled local ToolRegistry
+- Baseline B: the same Agent with explicit Meta-Inference injection
+- Immutable evaluation tasks, scenarios, compact run results, runner, metrics, experiment results, and formal report
 
 ### Architecture Outcome
 
-The research value and limitations of the MIND architecture are evaluated against representative Agent baselines.
-
+M10 records bounded protocol outcomes, including success/failure, deterministic semantics, evidence consistency, and Meta-Inference selection behavior. It does not compare against external Agent architectures or claim intelligence, reasoning improvement, generalization, or superiority.
 ---
 
-# M11 — Documentation and Release
+# M11 — Framework Consolidation and Research Artifact Finalization
 
-**Status:** ⬜ Planned
+**Status:** 🚧 In Progress
 
 ### Goal
 
@@ -681,7 +675,7 @@ The full implemented research prototype becomes understandable, reproducible, an
 
 **Current Milestone**
 
-> M8 — Goal-Directed Agent — Completed
+> M11 — Framework Consolidation and Research Artifact Finalization — In Progress
 
 ---
 
@@ -709,20 +703,20 @@ The full implemented research prototype becomes understandable, reproducible, an
 - ✅ M8 Issue #27 — Implement Goal-Directed Agent Integration
 - ✅ M8 Issue #28 — Validate Goal-Directed Agent End to End
 - ✅ M8 — Goal-Directed Agent
+- ✅ M9 — Meta-Inference Layer
+- ✅ M10 — Comparative Evaluation
 
 ---
 
 **Upcoming**
 
-- ✅ M9 — Meta-Inference Layer
-- M10 — Comparative Evaluation
-- M11 — Documentation and Release
+- 🚧 M11 — Framework Consolidation and Research Artifact Finalization
 
 ---
 
 **Next Milestone**
 
-> M10 — Comparative Evaluation — Planned
+> M11 is active; post-M11 scope has not been planned.
 
 # Architecture Evolution
 

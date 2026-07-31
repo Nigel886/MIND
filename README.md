@@ -1,18 +1,24 @@
 # MIND
 
-## Cognitive Runtime Foundation and Goal-Directed Agent
+## Cognitive Runtime, Goal-Directed Agent, and Meta-Inference Evaluation
 
 MIND is a specification-driven research prototype for an inference-centric
-agent architecture. M8 is complete: the repository now contains a validated,
-bounded Goal-Directed Agent for narrow deterministic structured tasks.
+agent architecture. M1-M10 are complete: the repository contains a validated
+bounded Goal-Directed Agent, a deterministic Meta-Inference selection layer,
+and a frozen local comparative-evaluation artifact.
 
 ## Status
 
-- Completed: M1–M8, including the Cognitive Runtime Foundation and the
-  Goal-Directed Agent.
-- Next: M9 — Meta-Inference Layer (planned, not started).
+- Completed: M1–M10, including the Cognitive Runtime Foundation,
+  Goal-Directed Agent, deterministic Meta-Inference layer, and local
+  comparative-evaluation artifact.
+- Current: M11 — Framework Consolidation and Research Artifact Finalization.
 - The current implementation is not a general-purpose Agent or a claim of
   reasoning superiority.
+
+The completed M1-M10 scope includes the Cognitive Runtime Foundation, the
+Goal-Directed Agent, deterministic Meta-Inference selection, and a frozen local
+comparative-evaluation artifact. M11 is the current consolidation milestone.
 
 ## Quick start
 
@@ -31,8 +37,9 @@ examples.goal_directed_agent_demo` demonstrates bounded M8 task execution and
 prints a serialized `AgentResult` for `17 * 23 = 391`.
 
 The runtime benchmark is a machine-local engineering measurement of the M7
-runtime. It is not an Agent-quality, reasoning-quality, or comparative
-evaluation benchmark; comparative evaluation belongs to M10.
+runtime. It is not an Agent-quality or reasoning-quality benchmark. The frozen
+M10 evaluation artifact is documented in
+[M10-Comparative-Evaluation-Report.md](docs/evaluation/M10-Comparative-Evaluation-Report.md).
 
 ## M8 Goal-Directed Agent
 
@@ -120,21 +127,38 @@ Observation -> InferenceEngine -> Belief -> PolicyEngine -> ActionExecutor
 Agent uses only the approved lower-level initialization and inference path, so
 the prototype Policy/Action path remains independent of task orchestration.
 
+## M9 Meta-Inference and M10 evaluation
+
+M9 adds immutable `InferenceStrategy`, `MetaInferenceDecision`, and
+`DecisionEvidence` values; an explicit `InferenceStrategyRegistry`; and a
+state-free `MetaInferenceEngine`. `GoalDirectedAgent` optionally consumes one
+selection decision before its existing task-policy flow. The engine selects only
+from explicit capability requirements: one match is selected, no match is
+unavailable, and multiple matches are rejected. It does not execute registered
+strategy implementations.
+
+M10 adds frozen deterministic scenarios, an evaluation runner, compact result
+storage, and pure metrics. The completed protocol compares the M8-style Agent
+with the same Agent plus explicit Meta-Inference injection over local,
+handcrafted scenarios. It reports observable protocol outcomes only, not
+intelligence, reasoning quality, generalization, or superiority.
+
 ## Current capabilities and limitations
 
 The system validates immutable state transitions, deterministic inference,
 controlled local calculation, explicit task outcomes, and bounded deterministic
 task execution. It does not provide arbitrary natural-language understanding,
 general planning, unrestricted Tool use, network/browser/search/API/shell/file
-access, LLM integration, memory, Meta-Inference, multi-agent behavior, or a
-comparative baseline. M8 therefore does not establish general-purpose Agent
-intelligence.
+access, LLM integration, memory, adaptive strategy execution, online learning,
+or multi-agent behavior. The completed M10 evaluation does not establish
+general-purpose Agent intelligence or comparative superiority.
 
 ## Repository structure
 
 ```text
-src/core/       immutable models, runtime, policy, tools, completion, Agent
+src/core/       immutable models, runtime, policy, tools, Agent, Meta-Inference
 src/tools/      controlled concrete local Tools
+evaluation/     frozen scenarios, runner, metrics, and compact experiment results
 examples/       finite public-API demonstrations
 tests/          unit, integration, and end-to-end validation
 benchmark/      M7 runtime engineering benchmark
@@ -143,9 +167,9 @@ docs/           SRS, SAS, ADRs, RFCs, and development guidance
 
 ## Architecture roadmap
 
-M8 is complete. M9 will add Meta-Inference architecture; M10 will conduct
-comparative evaluation; M11 will consolidate documentation and release
-materials. These future milestones are not implemented by the current code.
+M1-M10 are complete. M11 consolidates documentation, reproducibility, public
+API navigation, and research-artifact readiness; it does not add new cognitive
+capabilities.
 
 See [ROADMAP.md](ROADMAP.md), the
 [SRS](docs/srs/SRS-MIND-Lite-v1.0.md), the

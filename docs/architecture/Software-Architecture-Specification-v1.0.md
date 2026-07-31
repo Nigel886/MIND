@@ -4,7 +4,7 @@ Project: **MIND-Lite**
 
 Version: **v1.0**
 
-Status: **Architecture Frozen**
+Status: **Architecture Frozen; maintained through completed M10**
 
 ---
 
@@ -1138,6 +1138,25 @@ The Version 1.0 architecture intentionally reserves extension points.
 Future versions should extend the system without redesigning the architecture.
 
 ---
+
+## M10 Comparative Evaluation Layer
+
+The completed M10 evaluation layer is outside the cognitive runtime and Agent
+architecture. It consumes immutable public values and must not change Agent,
+RuntimeController, InferenceEngine, Policy, Tool, or Meta-Inference behavior.
+
+`evaluation/tasks/` provides immutable EvaluationTask and EvaluationScenario
+values plus a frozen deterministic fixture factory. `evaluation/runner/`
+returns compact immutable EvaluationRunResult values for explicitly configured
+M8-style and M9-enabled GoalDirectedAgent baselines. `evaluation/metrics/`
+consumes only compact run results and produces immutable deterministic metrics.
+`evaluation/results/` executes the frozen local protocol and retains only
+repetition-indexed compact summaries, consistency indicators, and metrics.
+
+The approved A/B distinction is explicit Meta-Inference injection. Evaluation
+retains no RuntimeState, Agent, Tool, registry, strategy implementation, or
+trajectory. It has no network, LLM, external dataset, adaptive learning, or
+claim of intelligence, reasoning quality, generalization, or superiority.
 
 ## Reserved Extension Points
 
