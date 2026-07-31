@@ -40,6 +40,8 @@ The runtime benchmark is a machine-local engineering measurement of the M7
 runtime. It is not an Agent-quality or reasoning-quality benchmark. The frozen
 M10 evaluation artifact is documented in
 [M10-Comparative-Evaluation-Report.md](docs/evaluation/M10-Comparative-Evaluation-Report.md).
+Execution steps and reproducibility boundaries are in
+[REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md).
 
 ## M8 Goal-Directed Agent
 
