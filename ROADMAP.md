@@ -648,17 +648,17 @@ M10 records bounded protocol outcomes, including success/failure, deterministic 
 
 # M11 — Framework Consolidation and Research Artifact Finalization
 
-**Status:** 🚧 In Progress
+**Status:** ✅ Completed
 
 ### Goal
 
 Complete project-wide documentation, reproducibility materials, and release readiness after the goal-directed Agent, Meta-Inference layer, and comparative evaluation are complete.
 
-### Planned Deliverables
+### Completed Deliverables
 
-- Complete README, architecture, public API, Task/Agent, Tool, and Meta-Inference documentation
+- README, architecture, public API, Task/Agent, Tool, and Meta-Inference documentation
 - Benchmark and experiment reproduction instructions and known limitations
-- Release-readiness checklist, final validation report, and public prototype release preparation
+- Final artifact validation and release-readiness review
 
 ### Architecture Outcome
 
@@ -676,7 +676,7 @@ The full implemented research prototype becomes understandable, reproducible, an
 
 **Current Milestone**
 
-> M11 — Framework Consolidation and Research Artifact Finalization — In Progress
+> M11 — Framework Consolidation and Research Artifact Finalization — Completed
 
 ---
 
@@ -706,18 +706,19 @@ The full implemented research prototype becomes understandable, reproducible, an
 - ✅ M8 — Goal-Directed Agent
 - ✅ M9 — Meta-Inference Layer
 - ✅ M10 — Comparative Evaluation
+- ✅ M11 — Framework Consolidation and Research Artifact Finalization
 
 ---
 
 **Upcoming**
 
-- 🚧 M11 — Framework Consolidation and Research Artifact Finalization
+- No post-M11 milestone is currently planned.
 
 ---
 
 **Next Milestone**
 
-> M11 is active; post-M11 scope has not been planned.
+> Post-M11 scope has not been planned.
 
 # Architecture Evolution
 
