@@ -41,7 +41,8 @@ runtime. It is not an Agent-quality or reasoning-quality benchmark. The frozen
 M10 evaluation artifact is documented in
 [M10-Comparative-Evaluation-Report.md](docs/evaluation/M10-Comparative-Evaluation-Report.md).
 Execution steps and reproducibility boundaries are in
-[REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md).
+[REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md). A developer-oriented component
+map is available in [API_REFERENCE.md](docs/API_REFERENCE.md).
 
 ## M8 Goal-Directed Agent
 
