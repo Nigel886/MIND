@@ -118,7 +118,7 @@ No implementation is considered complete until the complete workflow has been fi
 | v0.2.0 | Released | Immutable cognitive state models |
 | v0.3.0 | Released | Runtime core |
 | v0.4.0 | Released | Bounded cognitive runtime |
-| v0.5.0.dev0 | Active development | Completed M1-M12 research artifact; M13 scope review |
+| v0.5.0.dev0 | Active development | Completed M1-M13 controlled research artifact; M14 planned |
 
 # Development Milestones
 
@@ -697,7 +697,7 @@ claims.
 
 # M13 — LLM-Integrated Meta-Inference
 
-**Status:** 🟡 Planned (Scope Review)
+**Status:** ✅ Completed
 
 ### Goal
 
@@ -706,15 +706,16 @@ Meta-Inference. The LLM may propose structured capability requirements from a
 Task; deterministic validation and the existing MetaInferenceEngine retain all
 selection authority.
 
-### Planned Direction
+### Completed Deliverables
 
-- Treat LLM output as an untrusted, schema-constrained interpretation proposal
-- Validate and project only allowed capability requirements before deterministic
-  Meta-Inference selection
-- Preserve existing SELECTED, UNAVAILABLE, and REJECTED semantics and the
-  current GoalDirectedAgent decision-consumption boundary
-- Evaluate proposal validity, failure handling, evidence consistency, bounded
-  latency, and bounded cost under controlled conditions
+- Immutable untrusted TaskInterpretationProposal, trusted ValidatedRequirement,
+  and immutable CapabilitySnapshot models
+- Deterministic validation/projection with explicit invalid constraint and
+  unsupported capability failures
+- Vendor-neutral provider contract and deterministic FakeLLMProvider
+- Opt-in adapter delegation to the unchanged MetaInferenceEngine
+- Eight frozen local scenarios, 27 compact records, and controlled semantic
+  validation of interpretation, decision, evidence, and failure boundaries
 
 ### Exclusions
 
@@ -722,6 +723,27 @@ M13 excludes autonomous self-improvement, online learning, hidden
 chain-of-thought collection, uncontrolled tools, dynamic strategy registration,
 direct strategy execution, changes to RuntimeController, and claims of
 intelligence or reasoning superiority.
+
+### Architecture Outcome
+
+M13 validates a bounded LLM-assisted interpretation path under deterministic
+local conditions. The LLM remains an untrusted interpreter; validation and the
+existing MetaInferenceEngine retain control authority. Completion does not
+claim Agent quality, task-success improvement, real-provider performance, or
+comparative superiority.
+
+---
+
+# M14 — Agent Quality Evaluation
+
+**Status:** 🟡 Planned
+
+### Goal
+
+Define and evaluate Agent-level task quality and external comparisons only
+after a separately approved architecture, safety, and evaluation protocol.
+
+M14 is not implemented by the completed M13 architecture validation.
 
 ---
 
@@ -735,7 +757,7 @@ intelligence or reasoning superiority.
 
 **Current Milestone**
 
-> M13 — LLM-Integrated Meta-Inference — Scope Review
+> M14 — Agent Quality Evaluation — Planned
 
 ---
 
@@ -767,18 +789,19 @@ intelligence or reasoning superiority.
 - ✅ M10 — Comparative Evaluation
 - ✅ M11 — Framework Consolidation and Research Artifact Finalization
 - ✅ M12 — Controlled Meta-Inference Validation
+- ✅ M13 — LLM-Integrated Meta-Inference
 
 ---
 
 **Upcoming**
 
-- 🟡 M13 — LLM-Integrated Meta-Inference (Scope Review)
+- 🟡 M14 — Agent Quality Evaluation (Planned)
 
 ---
 
 **Next Milestone**
 
-> M13 — LLM-Integrated Meta-Inference — Scope Review
+> M14 — Agent Quality Evaluation — Planned
 
 # Architecture Evolution
 
@@ -996,7 +1019,7 @@ Current Version:
 
 Current Milestone:
 
-**M13 — LLM-Integrated Meta-Inference (Scope Review)**
+**M14 — Agent Quality Evaluation (Planned)**
 
 Maintained by:
 
