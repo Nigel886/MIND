@@ -62,6 +62,28 @@ def _freeze_mapping(value: Any, name: str) -> Mapping[str, Any]:
     return _freeze_value(value)
 
 
+def _constraints_are_valid(value: Any) -> bool:
+    """Return whether JSON-compatible constraints satisfy generic key rules.
+
+    Proposal construction deliberately accepts JSON-compatible mapping keys so
+    that the validator remains the explicit trust boundary. Validation adds no
+    domain meaning: every nested mapping key must simply be a non-empty string
+    without leading or trailing whitespace.
+    """
+
+    if isinstance(value, Mapping):
+        return all(
+            isinstance(key, str)
+            and bool(key.strip())
+            and key == key.strip()
+            and _constraints_are_valid(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return all(_constraints_are_valid(item) for item in value)
+    return value is None or isinstance(value, (bool, str, int, float))
+
+
 @dataclass(frozen=True)
 class ValidationFailure:
     """Immutable, explicit validation failure without fallback behavior."""
@@ -117,6 +139,11 @@ def validate_proposal(
 
     try:
         normalized_constraints = proposal.to_dict()["constraints"]
+        if not _constraints_are_valid(normalized_constraints):
+            return ValidationFailure(
+                ValidationFailureCategory.INVALID_CONSTRAINT,
+                {"outcome": "invalid"},
+            )
         return ValidatedRequirement(
             required_capabilities=proposal.required_capabilities,
             constraints=normalized_constraints,

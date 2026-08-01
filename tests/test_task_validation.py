@@ -48,14 +48,26 @@ class ValidationProjectionTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             validate_proposal(TaskInterpretationProposal("calculate"), "snapshot")  # type: ignore[arg-type]
 
-    def test_invalid_constraint_returns_explicit_failure(self) -> None:
-        proposal = TaskInterpretationProposal("calculate", constraints={"valid": True})
-        object.__setattr__(proposal, "constraints", {"invalid": object()})
+    def test_invalid_constraint_returns_explicit_failure_through_public_api(self) -> None:
+        proposal = TaskInterpretationProposal(
+            "calculate",
+            constraints={"nested": {" ": "invalid key"}},
+        )
 
-        result = validate_proposal(proposal, self.snapshot)
+        first = validate_proposal(proposal, self.snapshot)
+        second = validate_proposal(proposal, self.snapshot)
 
-        self.assertIsInstance(result, ValidationFailure)
-        self.assertEqual(ValidationFailureCategory.INVALID_CONSTRAINT, result.category)
+        self.assertIsInstance(first, ValidationFailure)
+        self.assertEqual(ValidationFailureCategory.INVALID_CONSTRAINT, first.category)
+        self.assertEqual(first, second)
+        self.assertEqual(
+            first,
+            ValidationFailure.from_dict(first.to_dict()),
+        )
+        self.assertEqual(
+            {"nested": {" ": "invalid key"}},
+            proposal.to_dict()["constraints"],
+        )
 
     def test_constraint_normalization_is_deterministic_and_preserves_input(self) -> None:
         source = {"nested": {"items": [1, 2]}}

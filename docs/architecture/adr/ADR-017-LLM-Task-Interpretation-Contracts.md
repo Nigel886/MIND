@@ -71,6 +71,18 @@ ValidatedRequirement(
   is neither provider interpretation evidence nor Meta-Inference decision
   evidence.
 
+### Constraint validation clarification
+
+Constraint validation is deterministic and domain-agnostic. Proposal
+construction accepts JSON-compatible constraint mappings as untrusted input;
+the validator approves a mapping only when every mapping key, at every nested
+level, is a non-empty string without leading or trailing whitespace. Values
+must remain JSON-compatible values already supported by the immutable model
+contract. This is a structural rule only: it does not assign task-specific
+meaning to a constraint key or value. A structurally invalid mapping returns
+`ValidationFailure(invalid_constraint)` through the normal public validation
+flow, without mutating a Proposal or relying on a private object mutation.
+
 The relationship is one-way:
 
 ```text
