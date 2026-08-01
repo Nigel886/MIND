@@ -118,7 +118,7 @@ No implementation is considered complete until the complete workflow has been fi
 | v0.2.0 | Released | Immutable cognitive state models |
 | v0.3.0 | Released | Runtime core |
 | v0.4.0 | Released | Bounded cognitive runtime |
-| v0.5.0.dev0 | Active development | Completed M1-M10 research artifact; M11 finalization |
+| v0.5.0.dev0 | Active development | Completed M1-M12 research artifact; M13 scope review |
 
 # Development Milestones
 
@@ -668,7 +668,7 @@ The full implemented research prototype becomes understandable, reproducible, an
 
 # M12 — Controlled Meta-Inference Validation
 
-**Status:** 🟡 Planned
+**Status:** ✅ Completed
 
 ### Goal
 
@@ -677,7 +677,7 @@ conditions. M12 evaluates strategy-selection correctness, unavailable and
 ambiguity semantics, compact decision-evidence consistency, and preservation of
 M8 GoalDirectedAgent behavior. It does not claim task-success improvement.
 
-### Planned Deliverables
+### Completed Deliverables
 
 - Frozen local capability-matching, unavailable, ambiguity, and M8
   compatibility evaluation protocol
@@ -695,6 +695,36 @@ claims.
 
 ---
 
+# M13 — LLM-Integrated Meta-Inference
+
+**Status:** 🟡 Planned (Scope Review)
+
+### Goal
+
+Evaluate a constrained LLM task-interpreter research direction for
+Meta-Inference. The LLM may propose structured capability requirements from a
+Task; deterministic validation and the existing MetaInferenceEngine retain all
+selection authority.
+
+### Planned Direction
+
+- Treat LLM output as an untrusted, schema-constrained interpretation proposal
+- Validate and project only allowed capability requirements before deterministic
+  Meta-Inference selection
+- Preserve existing SELECTED, UNAVAILABLE, and REJECTED semantics and the
+  current GoalDirectedAgent decision-consumption boundary
+- Evaluate proposal validity, failure handling, evidence consistency, bounded
+  latency, and bounded cost under controlled conditions
+
+### Exclusions
+
+M13 excludes autonomous self-improvement, online learning, hidden
+chain-of-thought collection, uncontrolled tools, dynamic strategy registration,
+direct strategy execution, changes to RuntimeController, and claims of
+intelligence or reasoning superiority.
+
+---
+
 # Current Development Focus
 
 **Current Version**
@@ -705,7 +735,7 @@ claims.
 
 **Current Milestone**
 
-> M11 — Framework Consolidation and Research Artifact Finalization — Completed
+> M13 — LLM-Integrated Meta-Inference — Scope Review
 
 ---
 
@@ -736,18 +766,19 @@ claims.
 - ✅ M9 — Meta-Inference Layer
 - ✅ M10 — Comparative Evaluation
 - ✅ M11 — Framework Consolidation and Research Artifact Finalization
+- ✅ M12 — Controlled Meta-Inference Validation
 
 ---
 
 **Upcoming**
 
-- 🟡 M12 — Controlled Meta-Inference Validation
+- 🟡 M13 — LLM-Integrated Meta-Inference (Scope Review)
 
 ---
 
 **Next Milestone**
 
-> M12 — Controlled Meta-Inference Validation — Planned
+> M13 — LLM-Integrated Meta-Inference — Scope Review
 
 # Architecture Evolution
 
@@ -965,7 +996,7 @@ Current Version:
 
 Current Milestone:
 
-**M11 — Framework Consolidation and Research Artifact Finalization**
+**M13 — LLM-Integrated Meta-Inference (Scope Review)**
 
 Maintained by:
 
