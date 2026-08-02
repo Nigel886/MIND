@@ -1,0 +1,355 @@
+{
+  "baseline_id": "mind_goal_directed",
+  "fixture_count": 4,
+  "fixture_suite_hash": "813e147780cf72ff4b3170364756b4f8f50fd42093960ad17e5d685afd2020f4",
+  "metrics": {
+    "failure_categories": {
+      "tool_failure": 3,
+      "unsupported_task": 3
+    },
+    "outcome_counts": {
+      "success": 12
+    },
+    "recovery_attempts": 0,
+    "resource_counters": {},
+    "success_rate": 1.0,
+    "successful_recoveries": 0,
+    "total_runs": 12,
+    "total_steps": 18,
+    "total_tool_calls": 6
+  },
+  "protocol": "controlled_evaluation_foundation_validation",
+  "records": [
+    {
+      "baseline_id": "mind_goal_directed",
+      "configuration_hash": "cef158e4dcafc51655a7fada83970d9661fc05c0ee6fb5c22f1d09f2780f5695",
+      "deterministic_signature": "3c0a2f2ddc711a944ae4349ec184087851b09989e675f7115a02977bb89a2a66",
+      "metrics": {
+        "resource_counters": {},
+        "steps": 1,
+        "tool_calls": 0
+      },
+      "outcome": {
+        "outcome_type": "success",
+        "payload": {}
+      },
+      "repeat_index": 0,
+      "task_id": "m14-direct-ready",
+      "trace_summary": {
+        "action_types": [
+          "answer"
+        ],
+        "feedback_types": [
+          "initial_input"
+        ],
+        "interaction_count": 0
+      }
+    },
+    {
+      "baseline_id": "mind_goal_directed",
+      "configuration_hash": "cef158e4dcafc51655a7fada83970d9661fc05c0ee6fb5c22f1d09f2780f5695",
+      "deterministic_signature": "3c0a2f2ddc711a944ae4349ec184087851b09989e675f7115a02977bb89a2a66",
+      "metrics": {
+        "resource_counters": {},
+        "steps": 1,
+        "tool_calls": 0
+      },
+      "outcome": {
+        "outcome_type": "success",
+        "payload": {}
+      },
+      "repeat_index": 1,
+      "task_id": "m14-direct-ready",
+      "trace_summary": {
+        "action_types": [
+          "answer"
+        ],
+        "feedback_types": [
+          "initial_input"
+        ],
+        "interaction_count": 0
+      }
+    },
+    {
+      "baseline_id": "mind_goal_directed",
+      "configuration_hash": "cef158e4dcafc51655a7fada83970d9661fc05c0ee6fb5c22f1d09f2780f5695",
+      "deterministic_signature": "3c0a2f2ddc711a944ae4349ec184087851b09989e675f7115a02977bb89a2a66",
+      "metrics": {
+        "resource_counters": {},
+        "steps": 1,
+        "tool_calls": 0
+      },
+      "outcome": {
+        "outcome_type": "success",
+        "payload": {}
+      },
+      "repeat_index": 2,
+      "task_id": "m14-direct-ready",
+      "trace_summary": {
+        "action_types": [
+          "answer"
+        ],
+        "feedback_types": [
+          "initial_input"
+        ],
+        "interaction_count": 0
+      }
+    },
+    {
+      "baseline_id": "mind_goal_directed",
+      "configuration_hash": "18117789c81eff8e561d0b598e0f0d03170aefa06ebde18a94d839c997160ac4",
+      "deterministic_signature": "045587e44367a610369528c11f5dbeb96fb1aece49488fd0391c9922e23b824b",
+      "metrics": {
+        "resource_counters": {},
+        "steps": 2,
+        "tool_calls": 1
+      },
+      "outcome": {
+        "outcome_type": "success",
+        "payload": {}
+      },
+      "repeat_index": 0,
+      "task_id": "m14-calculator-multiply",
+      "trace_summary": {
+        "action_types": [
+          "tool_call",
+          "answer"
+        ],
+        "feedback_types": [
+          "initial_input",
+          "tool_response"
+        ],
+        "interaction_count": 1
+      }
+    },
+    {
+      "baseline_id": "mind_goal_directed",
+      "configuration_hash": "18117789c81eff8e561d0b598e0f0d03170aefa06ebde18a94d839c997160ac4",
+      "deterministic_signature": "045587e44367a610369528c11f5dbeb96fb1aece49488fd0391c9922e23b824b",
+      "metrics": {
+        "resource_counters": {},
+        "steps": 2,
+        "tool_calls": 1
+      },
+      "outcome": {
+        "outcome_type": "success",
+        "payload": {}
+      },
+      "repeat_index": 1,
+      "task_id": "m14-calculator-multiply",
+      "trace_summary": {
+        "action_types": [
+          "tool_call",
+          "answer"
+        ],
+        "feedback_types": [
+          "initial_input",
+          "tool_response"
+        ],
+        "interaction_count": 1
+      }
+    },
+    {
+      "baseline_id": "mind_goal_directed",
+      "configuration_hash": "18117789c81eff8e561d0b598e0f0d03170aefa06ebde18a94d839c997160ac4",
+      "deterministic_signature": "045587e44367a610369528c11f5dbeb96fb1aece49488fd0391c9922e23b824b",
+      "metrics": {
+        "resource_counters": {},
+        "steps": 2,
+        "tool_calls": 1
+      },
+      "outcome": {
+        "outcome_type": "success",
+        "payload": {}
+      },
+      "repeat_index": 2,
+      "task_id": "m14-calculator-multiply",
+      "trace_summary": {
+        "action_types": [
+          "tool_call",
+          "answer"
+        ],
+        "feedback_types": [
+          "initial_input",
+          "tool_response"
+        ],
+        "interaction_count": 1
+      }
+    },
+    {
+      "baseline_id": "mind_goal_directed",
+      "configuration_hash": "cf29221e4bbde86c2eb93dc66221e925e1dcc693667485fe7f1ec0f42abefb90",
+      "deterministic_signature": "b58a7f2689113bd21f37e21df126a387639d9f85a741dd3b65f7b47a84c2e2a5",
+      "metrics": {
+        "resource_counters": {},
+        "steps": 1,
+        "tool_calls": 0
+      },
+      "outcome": {
+        "outcome_type": "success",
+        "payload": {
+          "failure_category": "unsupported_task"
+        }
+      },
+      "repeat_index": 0,
+      "task_id": "m14-unsupported-operation",
+      "trace_summary": {
+        "action_types": [
+          "fail"
+        ],
+        "feedback_types": [
+          "initial_input"
+        ],
+        "interaction_count": 0
+      }
+    },
+    {
+      "baseline_id": "mind_goal_directed",
+      "configuration_hash": "cf29221e4bbde86c2eb93dc66221e925e1dcc693667485fe7f1ec0f42abefb90",
+      "deterministic_signature": "b58a7f2689113bd21f37e21df126a387639d9f85a741dd3b65f7b47a84c2e2a5",
+      "metrics": {
+        "resource_counters": {},
+        "steps": 1,
+        "tool_calls": 0
+      },
+      "outcome": {
+        "outcome_type": "success",
+        "payload": {
+          "failure_category": "unsupported_task"
+        }
+      },
+      "repeat_index": 1,
+      "task_id": "m14-unsupported-operation",
+      "trace_summary": {
+        "action_types": [
+          "fail"
+        ],
+        "feedback_types": [
+          "initial_input"
+        ],
+        "interaction_count": 0
+      }
+    },
+    {
+      "baseline_id": "mind_goal_directed",
+      "configuration_hash": "cf29221e4bbde86c2eb93dc66221e925e1dcc693667485fe7f1ec0f42abefb90",
+      "deterministic_signature": "b58a7f2689113bd21f37e21df126a387639d9f85a741dd3b65f7b47a84c2e2a5",
+      "metrics": {
+        "resource_counters": {},
+        "steps": 1,
+        "tool_calls": 0
+      },
+      "outcome": {
+        "outcome_type": "success",
+        "payload": {
+          "failure_category": "unsupported_task"
+        }
+      },
+      "repeat_index": 2,
+      "task_id": "m14-unsupported-operation",
+      "trace_summary": {
+        "action_types": [
+          "fail"
+        ],
+        "feedback_types": [
+          "initial_input"
+        ],
+        "interaction_count": 0
+      }
+    },
+    {
+      "baseline_id": "mind_goal_directed",
+      "configuration_hash": "2cbfec120d50f0eab79ea2e9e1764cba4bd309a895812cb69a5ff481359c95d2",
+      "deterministic_signature": "023c608f791f8eb89b052b264246109edfc5dc7f387709b9df0475caaa6f187f",
+      "metrics": {
+        "resource_counters": {},
+        "steps": 2,
+        "tool_calls": 1
+      },
+      "outcome": {
+        "outcome_type": "success",
+        "payload": {
+          "failure_category": "tool_failure"
+        }
+      },
+      "repeat_index": 0,
+      "task_id": "m14-declared-tool-failure",
+      "trace_summary": {
+        "action_types": [
+          "tool_call",
+          "fail"
+        ],
+        "feedback_types": [
+          "initial_input",
+          "tool_failure"
+        ],
+        "interaction_count": 1
+      }
+    },
+    {
+      "baseline_id": "mind_goal_directed",
+      "configuration_hash": "2cbfec120d50f0eab79ea2e9e1764cba4bd309a895812cb69a5ff481359c95d2",
+      "deterministic_signature": "023c608f791f8eb89b052b264246109edfc5dc7f387709b9df0475caaa6f187f",
+      "metrics": {
+        "resource_counters": {},
+        "steps": 2,
+        "tool_calls": 1
+      },
+      "outcome": {
+        "outcome_type": "success",
+        "payload": {
+          "failure_category": "tool_failure"
+        }
+      },
+      "repeat_index": 1,
+      "task_id": "m14-declared-tool-failure",
+      "trace_summary": {
+        "action_types": [
+          "tool_call",
+          "fail"
+        ],
+        "feedback_types": [
+          "initial_input",
+          "tool_failure"
+        ],
+        "interaction_count": 1
+      }
+    },
+    {
+      "baseline_id": "mind_goal_directed",
+      "configuration_hash": "2cbfec120d50f0eab79ea2e9e1764cba4bd309a895812cb69a5ff481359c95d2",
+      "deterministic_signature": "023c608f791f8eb89b052b264246109edfc5dc7f387709b9df0475caaa6f187f",
+      "metrics": {
+        "resource_counters": {},
+        "steps": 2,
+        "tool_calls": 1
+      },
+      "outcome": {
+        "outcome_type": "success",
+        "payload": {
+          "failure_category": "tool_failure"
+        }
+      },
+      "repeat_index": 2,
+      "task_id": "m14-declared-tool-failure",
+      "trace_summary": {
+        "action_types": [
+          "tool_call",
+          "fail"
+        ],
+        "feedback_types": [
+          "initial_input",
+          "tool_failure"
+        ],
+        "interaction_count": 1
+      }
+    }
+  ],
+  "repetitions": 3,
+  "schema_version": "m14-controlled-evaluation-foundation-validation-v1",
+  "validation": {
+    "deterministic_replay_verified": true,
+    "record_count_verified": true,
+    "trace_boundary_verified": true
+  }
+}
