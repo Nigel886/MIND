@@ -666,16 +666,18 @@ The full implemented research prototype becomes understandable, reproducible, an
 
 ---
 
-# M12 — Controlled Meta-Inference Validation
+# M12 — Meta-Inference Controlled Validation
 
 **Status:** ✅ Completed
 
 ### Goal
 
-Validate the delivered Meta-Inference layer under controlled deterministic
-conditions. M12 evaluates strategy-selection correctness, unavailable and
-ambiguity semantics, compact decision-evidence consistency, and preservation of
-M8 GoalDirectedAgent behavior. It does not claim task-success improvement.
+Validate the correctness, determinism, and evidence consistency of the
+completed Meta-Inference layer under controlled deterministic conditions before
+introducing LLM-assisted integration. M12 evaluates MetaInferenceEngine decision
+behavior, strategy-selection consistency, deterministic execution, evidence
+boundaries, and the controlled evaluation protocol. It does not claim
+task-success improvement.
 
 ### Completed Deliverables
 
@@ -687,10 +689,20 @@ M8 GoalDirectedAgent behavior. It does not claim task-success improvement.
 
 ### Exclusions
 
-M12 excludes LLMs, external APIs, network services, external benchmarks,
-strategy-execution changes, multi-step planning, multi-tool optimization,
-open-domain reasoning, autonomous learning, and task-performance-improvement
-claims.
+M12 excludes LLM task interpretation, external provider integration, Agent
+benchmark comparison, external APIs, network services, strategy-execution
+changes, multi-step planning, multi-tool optimization, open-domain reasoning,
+autonomous learning, and task-performance-improvement claims.
+
+### Relationship to M13
+
+M12 provides the validation foundation for M13:
+
+Meta-Inference correctness validation
+
+↓
+
+LLM-Integrated Meta-Inference
 
 
 ---
