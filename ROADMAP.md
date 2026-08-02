@@ -734,16 +734,31 @@ comparative superiority.
 
 ---
 
-# M14 — Agent Quality Evaluation
+# M14 — Evaluation Foundation and Agent Quality Benchmark Evaluation
 
-**Status:** 🟡 Planned
+**Status:** 🟡 Phase 1 In Progress; Phase 2 Blocked
 
 ### Goal
 
-Define and evaluate Agent-level task quality and external comparisons only
-after a separately approved architecture, safety, and evaluation protocol.
+Separate evaluation-foundation validation from future agent-quality comparison.
+The repository must not present local deterministic infrastructure validation
+as an external benchmark result.
 
-M14 is not implemented by the completed M13 architecture validation.
+#### Phase 1 — Evaluation Foundation
+
+Validate public evaluation contracts, the controlled task-action-feedback loop,
+the deterministic environment, the evaluation-only Agent adapter, fixture and
+artifact schemas, and deterministic replay rules. Phase 1 does not measure
+intelligence, reasoning, Agent superiority, or benchmark performance.
+
+#### Phase 2 — Agent Quality Benchmark Evaluation
+
+Perform fair agent comparison only after an independently reviewed LLM-enabled
+MIND execution path exists. Phase 2 requires comparable baseline agents and
+the same task suite, provider/model configuration, tools, budgets, completion
+rules, and reproducibility controls.
+
+M14 Phase 2 is not implemented by M13 or by Phase 1 infrastructure work.
 
 ---
 
@@ -757,7 +772,7 @@ M14 is not implemented by the completed M13 architecture validation.
 
 **Current Milestone**
 
-> M14 — Agent Quality Evaluation — Planned
+> M14 Phase 1 — Evaluation Foundation — In Progress
 
 ---
 
@@ -795,13 +810,14 @@ M14 is not implemented by the completed M13 architecture validation.
 
 **Upcoming**
 
-- 🟡 M14 — Agent Quality Evaluation (Planned)
+- 🟡 M14 Phase 1 — Evaluation Foundation (In Progress)
+- 🔒 M14 Phase 2 — Agent Quality Benchmark Evaluation (Blocked pending independently reviewed LLM-enabled MIND execution)
 
 ---
 
 **Next Milestone**
 
-> M14 — Agent Quality Evaluation — Planned
+> M14 Phase 1 — Evaluation Foundation — In Progress
 
 # Architecture Evolution
 
@@ -1019,7 +1035,7 @@ Current Version:
 
 Current Milestone:
 
-**M14 — Agent Quality Evaluation (Planned)**
+**M14 Phase 1 — Evaluation Foundation (In Progress)**
 
 Maintained by:
 
