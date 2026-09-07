@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import unittest
+from unittest.mock import patch
 
 from src.core.agent import GoalDirectedAgent
 from src.core.cognitive_session import (
@@ -14,11 +15,21 @@ from src.core.cognitive_session import (
     CognitiveSessionTerminationReason,
 )
 from src.core.inference_registry import InferenceStrategyRegistry
+from src.core.inference_strategy import InferenceStrategy
 from src.core.meta_engine import MetaInferenceEngine
 from src.core.observation import Observation
+from src.core.runtime import RuntimeController
 from src.core.task import Goal, Task
+from src.core.task_validation import ValidationFailure, ValidationFailureCategory
 from src.core.tool import ToolRegistry
-from src.integration.meta_inference_adapter import IntegrationSelected
+from src.integration.meta_inference_adapter import (
+    IntegrationFailure,
+    IntegrationFailureCategory,
+    IntegrationSelected,
+)
+from src.integration.llm_provider import FakeLLMProvider, ProviderFailure, ProviderFailureCategory, ProviderResponse
+from src.integration.llm_session_admission import M13SessionAdmissionResolver
+from src.integration.task_interpreter import InterpreterFailure, InterpreterFailureCategory, TaskInterpreter
 from src.core.meta_inference import DecisionEvidence, MetaInferenceDecision, MetaInferenceDecisionStatus
 from src.tools.calculator import CalculatorTool
 
@@ -170,6 +181,83 @@ class CognitiveAgentSessionTest(unittest.TestCase):
         self.assertEqual(context_session.step().action_request.action, "answer")
         with self.assertRaises(ValueError):
             CognitiveAgentSession(1, meta_inference_engine=engine).start(task, validated_context=context)
+
+    def test_admission_resolver_receives_canonical_state_once_and_persists_across_cycles(self) -> None:
+        task = self._tool_task(expected=10)
+        calls = []
+        decision = MetaInferenceDecision(
+            MetaInferenceDecisionStatus.SELECTED, "selected", (DecisionEvidence("match", "selected", {}),),
+        )
+        context = IntegrationSelected(decision, {})
+        def resolver(task, runtime_state):
+            calls.append((task, runtime_state))
+            return context
+
+        session = CognitiveAgentSession(2)
+        original = RuntimeController.apply_inference
+        created_states = []
+        def capture_state(state, observation):
+            result = original(state, observation)
+            created_states.append(result)
+            return result
+        with patch.object(RuntimeController, "apply_inference", side_effect=capture_state):
+            session.start(task, admission_resolver=resolver)
+        self.assertIs(calls[0][0], task)
+        self.assertIs(calls[0][1], created_states[0])
+        self.assertIs(session._validated_context, context)
+        session.step(); session.observe(self._feedback({"status": "completed", "output": 5})); session.step()
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(hasattr(session, "validated_context"))
+
+    def test_admission_failures_are_compact_and_prevent_action_request(self) -> None:
+        failure = ProviderFailure(ProviderFailureCategory.TIMEOUT, {"private": {"prompt": "secret"}})
+        session = CognitiveAgentSession(1)
+        session.start(self._tool_task(), admission_resolver=lambda task, state: failure)
+        result = session.step()
+        self.assertEqual(result.termination_reason, CognitiveSessionTerminationReason.FAILED)
+        self.assertIsNone(result.action_request)
+        self.assertEqual(result.to_dict()["evidence"], [{"type": "m13_admission", "outcome": "failed"}])
+        self.assertNotIn("RuntimeState", repr(result)); self.assertNotIn("secret", repr(result))
+        with self.assertRaises(RuntimeError): session.step()
+
+    def test_all_existing_m13_non_success_outcomes_map_to_compact_session_failure(self) -> None:
+        outcomes = (
+            ProviderFailure(ProviderFailureCategory.TIMEOUT, {"private": "provider"}),
+            InterpreterFailure(InterpreterFailureCategory.INVALID_OUTPUT_FORMAT, {"private": "interpreter"}),
+            ValidationFailure(ValidationFailureCategory.UNSUPPORTED_CAPABILITY, {"private": "validation"}),
+            IntegrationFailure(IntegrationFailureCategory.META_INFERENCE_UNAVAILABLE, {"private": "integration"}),
+        )
+        for outcome in outcomes:
+            with self.subTest(outcome=type(outcome).__name__):
+                session = CognitiveAgentSession(1)
+                session.start(self._tool_task(), admission_resolver=lambda task, state, result=outcome: result)
+                result = session.step()
+                self.assertEqual(result.termination_reason, CognitiveSessionTerminationReason.FAILED)
+                self.assertIsNone(result.action_request)
+                self.assertEqual(result.to_dict()["evidence"], [{"type": "m13_admission", "outcome": "failed"}])
+                self.assertNotIn("private", repr(result))
+
+    def test_session_keeps_provider_and_action_execution_boundaries_external(self) -> None:
+        source = inspect.getsource(CognitiveAgentSession)
+        for internal_dependency in ("LLMProvider", "TaskInterpreter", "MetaInferenceAdapter", "ActionExecutor"):
+            with self.subTest(internal_dependency=internal_dependency):
+                self.assertNotIn(internal_dependency, source)
+
+    def test_concrete_fake_provider_admission_and_existing_start_behavior(self) -> None:
+        registry = InferenceStrategyRegistry()
+        registry.register(InferenceStrategy("selected", "selected", ("calculator",)), type("Noop", (), {"infer": lambda self, observation, belief: belief})())
+        resolver = M13SessionAdmissionResolver(
+            TaskInterpreter(FakeLLMProvider(ProviderResponse({"intent": "calculate", "required_capabilities": ["calculator"]}))),
+            registry,
+        )
+        session = CognitiveAgentSession(1)
+        session.start(Task(self.goal, {"value": "ready", "expected_answer": "ready"}), admission_resolver=resolver)
+        self.assertEqual(session.step().action_request.action, "answer")
+
+        unchanged = CognitiveAgentSession(1); unchanged.start(Task(self.goal, {"value": "ready", "expected_answer": "ready"}))
+        self.assertEqual(unchanged.step().action_request.action, "answer")
+        with self.assertRaises(TypeError):
+            CognitiveAgentSession(1).start(self._tool_task(), admission_resolver="resolver")
 
     def test_equivalent_fresh_sessions_are_deterministic_and_agent_run_is_unchanged(self) -> None:
         task = self._tool_task()

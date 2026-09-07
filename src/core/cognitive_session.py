@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 from math import isfinite
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping, TypeAlias
 
 from src.core.cognitive_execution import CognitiveExecutionLoopController
 from src.core.meta_engine import MetaInferenceEngine
@@ -52,6 +52,8 @@ _FORBIDDEN_FEEDBACK_KEYS = frozenset(
         "api_key",
     },
 )
+
+_AdmissionResolver: TypeAlias = Callable[[Task, RuntimeState], object]
 
 
 def _freeze_json(value: Any) -> Any:
@@ -265,6 +267,7 @@ class CognitiveAgentSession:
         self._pending_observation: Observation | None = None
         self._pending_feedback: Mapping[str, Any] | None = None
         self._pending_start_failure: tuple[dict[str, Any], ...] | None = None
+        self._validated_context: IntegrationSelected | None = None
         self._terminal_result: CognitiveSessionStepResult | None = None
 
     @property
@@ -284,6 +287,7 @@ class CognitiveAgentSession:
         task: Task,
         *,
         validated_context: IntegrationSelected | None = None,
+        admission_resolver: _AdmissionResolver | None = None,
     ) -> None:
         """Initialize a single session using existing public runtime interfaces."""
 
@@ -298,6 +302,14 @@ class CognitiveAgentSession:
             raise TypeError("validated_context must be an IntegrationSelected or None")
         if validated_context is not None and self._meta_inference_engine is not None:
             raise ValueError("validated_context and meta_inference_engine are mutually exclusive")
+        if admission_resolver is not None and not callable(admission_resolver):
+            raise TypeError("admission_resolver must be callable or None")
+        if admission_resolver is not None and (
+            validated_context is not None or self._meta_inference_engine is not None
+        ):
+            raise ValueError(
+                "admission_resolver, validated_context, and meta_inference_engine are mutually exclusive",
+            )
 
         initial = _task_observation(task)
         self._task = task
@@ -306,6 +318,16 @@ class CognitiveAgentSession:
         self._started = True
 
         if validated_context is not None:
+            self._validated_context = validated_context
+            return
+        if admission_resolver is not None:
+            admission = admission_resolver(task, self._runtime_state)
+            if isinstance(admission, IntegrationSelected):
+                self._validated_context = admission
+            else:
+                self._pending_start_failure = (
+                    {"type": "m13_admission", "outcome": "failed"},
+                )
             return
         if self._meta_inference_engine is not None:
             decision = self._meta_inference_engine.select(task, self._runtime_state)
