@@ -1,7 +1,7 @@
 [project]
 name = "mind-lite"
-version = "0.5.0.dev0"
-description = "A specification-driven cognitive runtime, bounded Goal-Directed Agent, deterministic Meta-Inference layer, and local comparative-evaluation artifact."
+version = "1.0.0"
+description = "MIND-Lite v1.0: a bounded cognitive-agent prototype with immutable runtime state, deterministic Meta-Inference, and controlled LLM-assisted session admission."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

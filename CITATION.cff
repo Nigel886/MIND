@@ -16,11 +16,12 @@ repository-code: "https://github.com/Nigel886/MIND"
 
 license: MIT
 
-version: "0.5.0.dev0"
+version: "1.0.0"
 
 abstract: >
   MIND (Meta-Inference Network Dynamics) is a specification-driven research
-  artifact containing an immutable cognitive runtime, a bounded Goal-Directed
-  Agent, deterministic Meta-Inference capability selection, and a frozen local
-  comparative-evaluation protocol. It does not claim general intelligence,
-  adaptive learning, or comparative superiority.
+  prototype containing immutable cognitive state progression, bounded
+  goal-directed execution, deterministic Meta-Inference capability selection,
+  and controlled LLM-assisted session admission. It does not claim general
+  intelligence, adaptive learning, real-provider performance, or comparative
+  superiority.

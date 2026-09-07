@@ -1,8 +1,9 @@
 # Reproducibility and Evaluation Execution Guide
 
-This guide reproduces the completed local MIND artifact from a clean checkout.
+This guide reproduces the MIND-Lite v1.0 local artifact from a clean checkout.
 It covers verification, the runtime and Goal-Directed Agent demonstrations, the
-M7 runtime benchmark, and the frozen M10 comparative-evaluation protocol.
+M7 runtime benchmark, the frozen M10 comparative-evaluation protocol, and the
+deterministic M13-to-M15 session-admission architecture path.
 
 ## 1. Environment Requirements
 
@@ -40,8 +41,9 @@ Run the complete regression suite:
 
     python -m unittest
 
-A successful run reports all repository tests passing. At the M11 Issue #43
-baseline, this is 193 tests.
+A successful closure-review run reports 322 tests passing. This count records
+the verified v1.0 baseline; it is not a permanent semantic compatibility
+guarantee for future development.
 
 ## 4. Runtime Demonstration
 
@@ -132,8 +134,12 @@ The published observed outcomes and metric interpretation are in
   behavior for each frozen scenario/baseline group.
 - UUIDs, timestamps, elapsed durations, and machine-local benchmark timings are
   intentionally not semantic equality targets.
-- The protocol uses deterministic handcrafted scenarios only; it has no
+- The M10 protocol uses deterministic handcrafted scenarios only; it has no
   external benchmark, external dataset, network dependency, or LLM dependency.
+- M13/M15 closure validation uses the deterministic `FakeLLMProvider` path:
+  interpretation, deterministic validation, one-time session admission, and
+  observation-aware multi-cycle session behavior. It requires no API key,
+  network call, or real provider and makes no real-provider performance claim.
 - The results are bounded protocol observations. They do not establish
   intelligence, reasoning improvement, generalization, or superiority of either
   baseline.

@@ -524,7 +524,7 @@ scheduling.
 
 ---
 
-# 7.1 Delivered M8-M10 Architecture Status
+# 7.1 Delivered M8-M15 Architecture Status
 
 The following delivered layers extend the original runtime scope while
 preserving immutable-state and separation-of-responsibility principles.
@@ -542,9 +542,36 @@ preserving immutable-state and separation-of-responsibility principles.
   runner, pure compact-result metrics, result storage, and a local formal report
   are delivered. Results are bounded protocol observations, not claims of
   intelligence, reasoning superiority, generalization, or adaptive learning.
+- **M12 Controlled Meta-Inference Validation:** frozen deterministic scenarios,
+  compact semantic records, and evidence/failure-boundary validation are
+  delivered. They do not establish task-capability improvement.
+- **M13 LLM-Integrated Meta-Inference:** a provider-neutral untrusted
+  interpretation boundary, deterministic validation projection, capability
+  snapshot, and adapter delegation to the existing MetaInferenceEngine are
+  delivered. `FakeLLMProvider` provides the deterministic closure-validation
+  path; real-provider behavior is outside this requirement.
+- **M14 Evaluation Foundation:** public evaluation contracts and deterministic
+  controlled-environment infrastructure are delivered. Agent Quality Benchmark
+  Evaluation has not been executed.
+- **M15 Cognitive Agent Runtime:** `CognitiveAgentSession` owns a bounded
+  `start()`, `step()`, `observe()`, and `terminate()` lifecycle. It SHALL keep
+  Task, RuntimeState, Belief, admitted context, and pending feedback private;
+  it SHALL publish only immutable `CognitiveActionRequest` and
+  `CognitiveSessionStepResult` values. An accepted
+  `Observation(source="agent_environment")` SHALL be applied through
+  `RuntimeController.apply_inference()` before the next policy transition.
+  The internal controller SHALL use the existing GoalAwarePolicyEngine and
+  SHALL NOT execute tools, environments, providers, or actions.
+- **M15 M13 admission:** `CognitiveAgentSession.start()` MAY receive an
+  optional keyword-only admission resolver after it creates its canonical
+  private initial RuntimeState. The resolver SHALL be invoked once per Session;
+  only existing `IntegrationSelected` is admitted, and every non-success M13
+  outcome SHALL produce the existing bounded `failed` Session termination with
+  no action request or foreign evidence.
 
-These layers do not add LLM access, network services, arbitrary execution,
-memory, online learning, or multi-agent systems.
+These layers do not add real-provider execution, network services, arbitrary
+execution, open-domain planning, memory, online learning, dynamic strategy
+switching, multi-agent systems, or claims of intelligence or superiority.
 
 # 8. Non-Functional Requirements
 

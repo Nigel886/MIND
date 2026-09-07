@@ -1,24 +1,23 @@
 # MIND
 
-## Cognitive Runtime, Goal-Directed Agent, and Meta-Inference Evaluation
+## MIND-Lite v1.0 Bounded Cognitive-Agent Prototype
 
-MIND is a specification-driven research prototype for an inference-centric
-agent architecture. M1-M10 are complete: the repository contains a validated
-bounded Goal-Directed Agent, a deterministic Meta-Inference selection layer,
-and a frozen local comparative-evaluation artifact.
+MIND-Lite v1.0 is a specification-driven research prototype for an
+inference-centric cognitive-agent architecture. It combines immutable
+Observation, Belief, and RuntimeState models; deterministic inference and
+goal-aware Policy boundaries; bounded GoalDirectedAgent compatibility;
+deterministic Meta-Inference; and controlled LLM-assisted session admission.
 
 ## Status
 
-- Completed: M1–M10, including the Cognitive Runtime Foundation,
-  Goal-Directed Agent, deterministic Meta-Inference layer, and local
-  comparative-evaluation artifact.
-- Current: M11 — Framework Consolidation and Research Artifact Finalization.
-- The current implementation is not a general-purpose Agent or a claim of
-  reasoning superiority.
-
-The completed M1-M10 scope includes the Cognitive Runtime Foundation, the
-Goal-Directed Agent, deterministic Meta-Inference selection, and a frozen local
-comparative-evaluation artifact. M11 is the current consolidation milestone.
+- Completed: M1–M15, including the immutable runtime foundation, bounded
+  GoalDirectedAgent compatibility path, deterministic Meta-Inference, M13
+  provider-neutral interpretation and validation, M14 evaluation foundation,
+  and the M15 observation-aware cognitive session runtime.
+- M14 Phase 2 Agent Quality Benchmark Evaluation has not been executed.
+- The implementation is not a general-purpose Agent and makes no intelligence,
+  reasoning-superiority, benchmark-superiority, or real-provider-performance
+  claim.
 
 ## Quick start
 
@@ -146,20 +145,52 @@ with the same Agent plus explicit Meta-Inference injection over local,
 handcrafted scenarios. It reports observable protocol outcomes only, not
 intelligence, reasoning quality, generalization, or superiority.
 
+## M13/M15 LLM-assisted cognitive session
+
+M13 treats LLM output as untrusted structured interpretation only:
+
+```text
+Task -> LLMProvider -> TaskInterpreter -> deterministic validation
+     -> MetaInferenceAdapter -> IntegrationSelected
+```
+
+M15 admits that selected context into a bounded `CognitiveAgentSession` through
+an optional keyword-only `admission_resolver`. The session first creates its
+canonical private initial RuntimeState, invokes the resolver exactly once, and
+admits only `IntegrationSelected`. Provider, interpreter, validation, and
+integration failures produce a bounded public `failed` session result without
+leaking private state or provider data.
+
+```text
+Session.step() -> CognitiveActionRequest -> external tool/environment
+               -> Observation(source="agent_environment")
+               -> Session.observe() -> RuntimeController.apply_inference()
+               -> next policy request or explicit termination
+```
+
+`CognitiveExecutionLoopController` is an internal session implementation
+component, not a supported public API. It applies accepted feedback through the
+canonical immutable RuntimeController path, classifies completion/failure, and
+uses the existing GoalAwarePolicyEngine. Neither the session nor the controller
+executes tools, calls providers, or exposes RuntimeState, Belief, Policy, or
+chain-of-thought.
+
 ## Current capabilities and limitations
 
 The system validates immutable state transitions, deterministic inference,
-controlled local calculation, explicit task outcomes, and bounded deterministic
-task execution. It does not provide arbitrary natural-language understanding,
-general planning, unrestricted Tool use, network/browser/search/API/shell/file
-access, LLM integration, memory, adaptive strategy execution, online learning,
-or multi-agent behavior. The completed M10 evaluation does not establish
+controlled local calculation, explicit task outcomes, bounded deterministic
+task execution, and a FakeLLMProvider-validated interpretation/admission path.
+It does not provide real-provider performance validation, arbitrary
+natural-language task solving, open-domain planning, unrestricted Tool use,
+network/browser/search/API/shell/file access, long-term memory, dynamic strategy
+switching, online learning, or multi-agent behavior. M10/M14 do not establish
 general-purpose Agent intelligence or comparative superiority.
 
 ## Repository structure
 
 ```text
-src/core/       immutable models, runtime, policy, tools, Agent, Meta-Inference
+src/core/       immutable models, runtime, policy, tools, Agent, Meta-Inference, Session
+src/integration/ provider-neutral LLM interpretation, validation admission, and adapter boundary
 src/tools/      controlled concrete local Tools
 evaluation/     frozen scenarios, runner, metrics, and compact experiment results
 examples/       finite public-API demonstrations
@@ -170,9 +201,8 @@ docs/           SRS, SAS, ADRs, RFCs, and development guidance
 
 ## Architecture roadmap
 
-M1-M10 are complete. M11 consolidates documentation, reproducibility, public
-API navigation, and research-artifact readiness; it does not add new cognitive
-capabilities.
+MIND-Lite v1.0 architecture closure is complete. Future work remains separate
+Full MIND research, including M14 Phase 2 Agent Quality Benchmark Evaluation.
 
 See [ROADMAP.md](ROADMAP.md), the
 [SRS](docs/srs/SRS-MIND-Lite-v1.0.md), the

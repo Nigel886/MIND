@@ -8,8 +8,8 @@ not provide general intelligence, autonomous learning, or reasoning superiority.
 
 ## 1. Architecture Overview
 
-The architecture preserves a separation between immutable runtime state and
-task-level Agent execution:
+The architecture preserves a separation between immutable runtime state,
+bounded task-level Agent compatibility, and controlled session execution:
 
     Observation
           |
@@ -20,7 +20,7 @@ task-level Agent execution:
      RuntimeState
           |
           v
-  GoalDirectedAgent
+  GoalDirectedAgent / CognitiveAgentSession
           |
           v
       AgentResult
@@ -30,9 +30,9 @@ runtime APIs. GoalDirectedAgent begins from a Task, uses the approved runtime
 path, optionally selects a Meta-Inference strategy descriptor, applies
 goal-aware decision data, and returns one terminal AgentResult.
 
-The Agent does not place Task or Goal in RuntimeState as state fields, does not
-retain a trajectory, and does not make the low-level RuntimeController a task
-orchestration component.
+The Agent and Session do not place Task or Goal in RuntimeState as state fields,
+do not expose a trajectory, and do not make the low-level RuntimeController a
+task orchestration component.
 
 ## 2. Core Data Models
 
@@ -130,6 +130,41 @@ bypass the engine or execute a registered inference implementation.
 GoalDirectedAgent is bounded by max_cycles. It returns a terminal immutable
 AgentResult; it does not expose an open-ended background loop, scheduling,
 memory, or autonomous retry behavior.
+
+### CognitiveAgentSession
+
+Module: `src.core.cognitive_session`
+
+`CognitiveAgentSession` is the M15 public lifecycle API for controlled,
+observation-aware multi-cycle execution. It keeps Task, RuntimeState, Belief,
+Policy, feedback history, and admitted M13 context private.
+
+    session = CognitiveAgentSession(max_cycles)
+    session.start(task, *, admission_resolver=None)
+    step = session.step()
+    session.observe(observation)
+    terminal = session.terminate(reason)
+
+`step()` publishes either an immutable `CognitiveActionRequest` or an immutable
+`CognitiveSessionStepResult` termination. A `tool_call` request is executed by
+an external environment, which returns an existing
+`Observation(source="agent_environment")` to `observe()`. The next `step()`
+incorporates it through the canonical RuntimeController inference transition.
+
+`CognitiveActionRequest` supports only `answer` and `tool_call` external
+requests. `CognitiveSessionPhase` is `ready`, `awaiting_observation`, or
+`terminated`; `CognitiveSessionTerminationReason` is `completed`, `failed`,
+`timeout`, `user_stopped`, or `max_cycles_reached`.
+
+The optional keyword-only `admission_resolver` is the controlled M13 handoff:
+it is called once with the exact Task and the Session's private canonical initial
+RuntimeState. Only an existing `IntegrationSelected` is admitted. Provider,
+interpreter, validation, and integration failures produce a bounded `failed`
+result without an action request or private M13 evidence. The resolver is an
+integration boundary, not a provider SDK or a public RuntimeState accessor.
+
+`CognitiveExecutionLoopController` is deliberately internal and is not a
+supported external API.
 
 ## 4. Meta-Inference API
 
@@ -294,8 +329,9 @@ ComparativeExperimentResult values.
 
 ## 7. Scope Boundaries
 
-Only implemented interfaces are listed here. The repository does not expose
-LLM integration, network access, browser/search/API/shell/file tools, online
-learning, adaptive strategy execution, general planning, multi-agent execution,
-or claims of general AI capability. Extend the artifact only through a new
-approved specification and architecture review.
+Only implemented interfaces are listed here. The repository exposes only a
+provider-neutral, deterministic LLM interpretation and admission boundary; it
+does not expose real-provider execution, network access, browser/search/API/
+shell/file tools, online learning, adaptive strategy execution, general
+planning, multi-agent execution, or claims of general AI capability. Extend the
+artifact only through a new approved specification and architecture review.

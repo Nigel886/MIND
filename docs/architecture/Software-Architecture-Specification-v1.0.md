@@ -1158,14 +1158,14 @@ retains no RuntimeState, Agent, Tool, registry, strategy implementation, or
 trajectory. It has no network, LLM, external dataset, adaptive learning, or
 claim of intelligence, reasoning quality, generalization, or superiority.
 
-## M12 Controlled Meta-Inference Validation Scope (Planned)
+## M12 Controlled Meta-Inference Validation Layer
 
-M12 is an evaluation-only layer above the delivered M8/M9 public interfaces.
-It shall consume frozen Task, MetaInferenceDecision, AgentResult, and compact
+M12 is a completed evaluation-only layer above the delivered M8/M9 public interfaces.
+It consumes frozen Task, MetaInferenceDecision, AgentResult, and compact
 evaluation-result values without changing Agent, RuntimeController,
 InferenceEngine, Policy, Tool, registry, or MetaInferenceEngine behavior.
 
-The planned baseline contract is: M8 Agent with no Meta-Inference, a separately
+The delivered baseline contract is: M8 Agent with no Meta-Inference, a separately
 frozen deterministic fixed-selection baseline, and the delivered M9 Agent with
 MetaInferenceEngine and registry. All comparisons shall hold Task data, local
 ToolRegistry configuration, cycle budget, capability vocabulary, descriptors,
@@ -1177,6 +1177,49 @@ strategy implementations and shall not interpret decision evidence as an
 execution input. No LLM, network, external benchmark, planning, multi-tool
 optimization, autonomous learning, strategy-execution change, or
 task-performance-improvement claim belongs to this layer.
+
+## M13-M15 Bounded Cognitive-Agent Extension
+
+The delivered M13-to-M15 architecture adds a provider-neutral, bounded path
+without changing the established RuntimeController, MetaInferenceEngine,
+GoalAwarePolicyEngine, ToolRegistry, or GoalDirectedAgent APIs:
+
+```text
+Task
+  -> LLMProvider / TaskInterpreter
+  -> deterministic validation projection
+  -> MetaInferenceAdapter / IntegrationSelected
+  -> CognitiveAgentSession admission
+  -> internal CognitiveExecutionLoopController
+  -> RuntimeController.apply_inference
+  -> immutable RuntimeState and Belief
+  -> GoalAwarePolicyEngine
+  -> CognitiveActionRequest
+  -> external environment or tool execution
+  -> Observation
+  -> next bounded session transition
+```
+
+`TaskInterpreter` treats provider output as untrusted. Deterministic validation
+must produce a trusted `ValidatedRequirement`; only the existing
+MetaInferenceAdapter may delegate capability selection to MetaInferenceEngine.
+`FakeLLMProvider` supports deterministic architecture validation and is not a
+real-provider performance claim.
+
+`CognitiveAgentSession` owns lifecycle, private runtime state, pending external
+feedback, explicit cycle limits, and compact public step projection. Its
+optional keyword-only admission resolver is invoked once after canonical private
+initial-state construction; only immutable `IntegrationSelected` is admitted.
+Non-success M13 outcomes become bounded session failure without leaking provider
+payloads, DecisionEvidence, RuntimeState, or Belief.
+
+`CognitiveExecutionLoopController` is an internal session component. It applies
+accepted `Observation(source="agent_environment")` feedback through
+`RuntimeController.apply_inference()`, classifies completion/failure, and then
+uses the unchanged GoalAwarePolicyEngine. It is not a public API and neither it
+nor the Session executes tools, actions, environments, or providers. External
+execution returns the next Observation. The Session termination reasons are
+explicitly completed, failed, timeout, user_stopped, and max_cycles_reached.
 
 
 ## Reserved Extension Points

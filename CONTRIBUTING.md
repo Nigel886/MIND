@@ -94,6 +94,8 @@ Bug reports should include:
 ## Research Contributions
 
 Potential research directions are welcome only through a new approved
-specification and architecture review. Existing MIND artifacts do not provide
-unrestricted tools, network access, LLM integration, online learning, or
-multi-agent execution.
+specification and architecture review. MIND-Lite v1.0 is the closed prototype
+baseline: it provides only bounded, provider-neutral LLM-assisted task
+interpretation behind deterministic validation. It does not provide
+unrestricted tools, network access, real-provider execution, online learning,
+or multi-agent execution. New capabilities belong to future Full MIND work.

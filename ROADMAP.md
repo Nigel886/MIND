@@ -118,7 +118,7 @@ No implementation is considered complete until the complete workflow has been fi
 | v0.2.0 | Released | Immutable cognitive state models |
 | v0.3.0 | Released | Runtime core |
 | v0.4.0 | Released | Bounded cognitive runtime |
-| v0.5.0.dev0 | Active development | Completed M1-M13 controlled research artifact; M14 planned |
+| v1.0.0 | Architecture closure | MIND-Lite v1.0 bounded cognitive-agent prototype; M1-M15 complete |
 
 # Development Milestones
 
@@ -748,7 +748,7 @@ comparative superiority.
 
 # M14 — Evaluation Foundation and Agent Quality Benchmark Evaluation
 
-**Status:** 🟡 Phase 1 In Progress; Phase 2 Blocked
+**Status:** ✅ Phase 1 Completed; Phase 2 Not Executed / Deferred
 
 ### Goal
 
@@ -763,14 +763,54 @@ the deterministic environment, the evaluation-only Agent adapter, fixture and
 artifact schemas, and deterministic replay rules. Phase 1 does not measure
 intelligence, reasoning, Agent superiority, or benchmark performance.
 
+**Status:** ✅ Completed. This validates evaluation infrastructure only; it is
+not an Agent Quality Benchmark result.
+
 #### Phase 2 — Agent Quality Benchmark Evaluation
 
-Perform fair agent comparison only after an independently reviewed LLM-enabled
-MIND execution path exists. Phase 2 requires comparable baseline agents and
+Perform fair agent comparison only under a separately approved benchmark
+execution plan. Phase 2 requires comparable baseline agents and
 the same task suite, provider/model configuration, tools, budgets, completion
 rules, and reproducibility controls.
 
-M14 Phase 2 is not implemented by M13 or by Phase 1 infrastructure work.
+M14 Phase 2 has not been executed. It is not implemented by M13, M15, or the
+completed Phase 1 infrastructure work.
+
+---
+
+# M15 — LLM-enabled Cognitive Agent Runtime
+
+**Status:** ✅ Completed
+
+### Goal
+
+Close the bounded MIND-Lite cognitive-agent runtime by connecting the existing
+M13 interpretation/validation/Meta-Inference path to an observation-aware,
+multi-cycle session without exposing private cognitive state or internalizing
+tool/environment execution.
+
+### Completed Deliverables
+
+- **Issue #69 — Cognitive Agent Session Runtime:** public bounded lifecycle,
+  immutable action/step values, external Observation feedback, and explicit
+  termination semantics.
+- **Issue #70 — Cognitive Execution Loop Controller:** private one-transition
+  coordination through canonical RuntimeController inference, completion/failure
+  classification, and the unchanged GoalAwarePolicyEngine.
+- **Issue #71 — LLM-Assisted Runtime Integration:** one-time M13 admission
+  resolver against the Session's canonical private initial RuntimeState; only
+  immutable IntegrationSelected is admitted.
+- **Issue #72 — MIND-Lite Closure Validation:** architecture, privacy,
+  determinism, compatibility, documentation, and version-consistency closure.
+
+### Architecture Outcome
+
+MIND-Lite v1.0 is an architecturally complete bounded cognitive-agent
+prototype. The LLM remains an untrusted interpreter behind deterministic
+validation; Meta-Inference remains the selection authority; Policy remains the
+decision authority; and tool/environment execution remains external. This does
+not claim general intelligence, real-provider performance, or Agent Quality
+Benchmark completion.
 
 ---
 
@@ -778,13 +818,13 @@ M14 Phase 2 is not implemented by M13 or by Phase 1 infrastructure work.
 
 **Current Version**
 
-> v0.5.0.dev0 — Current Research Artifact
+> v1.0.0 — MIND-Lite v1.0 Architecture Closure
 
 ---
 
 **Current Milestone**
 
-> M14 Phase 1 — Evaluation Foundation — In Progress
+> M15 completed — MIND-Lite v1.0 closure complete
 
 ---
 
@@ -817,19 +857,20 @@ M14 Phase 2 is not implemented by M13 or by Phase 1 infrastructure work.
 - ✅ M11 — Framework Consolidation and Research Artifact Finalization
 - ✅ M12 — Controlled Meta-Inference Validation
 - ✅ M13 — LLM-Integrated Meta-Inference
+- ✅ M14 Phase 1 — Evaluation Foundation
+- ✅ M15 — LLM-enabled Cognitive Agent Runtime
 
 ---
 
 **Upcoming**
 
-- 🟡 M14 Phase 1 — Evaluation Foundation (In Progress)
-- 🔒 M14 Phase 2 — Agent Quality Benchmark Evaluation (Blocked pending independently reviewed LLM-enabled MIND execution)
+- 🔒 M14 Phase 2 — Agent Quality Benchmark Evaluation (Not Executed / Deferred)
 
 ---
 
 **Next Milestone**
 
-> M14 Phase 1 — Evaluation Foundation — In Progress
+> Future Full MIND scope; M14 Phase 2 Agent Quality Benchmark Evaluation remains deferred
 
 # Architecture Evolution
 
@@ -875,7 +916,22 @@ Comparative Evaluation
 Documentation and Release
         │
         ▼
-Research Platform
+Meta-Inference Controlled Validation
+        │
+        ▼
+LLM-Integrated Meta-Inference
+        │
+        ▼
+Evaluation Foundation
+        │
+        ▼
+LLM-enabled Cognitive Agent Runtime
+        │
+        ▼
+MIND-Lite v1.0 Architecture Closure
+        │
+        ▼
+Future Full MIND Research
 
 ```
 
@@ -934,22 +990,20 @@ This historical tag records the bounded cognitive runtime loop.
 
 ---
 
-## v0.5.0.dev0
+## v1.0.0
 
-**Current Research Artifact**
+**MIND-Lite v1.0 Architecture Closure**
 
 Status:
 
-Active development; no release has been created.
+Architecture closure completed; release publication is a separate explicit
+delivery action.
 
-The current pre-release artifact includes completed M1-M10 work: the cognitive
-runtime foundation, bounded Goal-Directed Agent, deterministic Meta-Inference
-selection, and frozen local comparative evaluation. M11 is consolidating
-documentation, reproducibility, public API navigation, repository metadata, and
-final artifact validation.
-
-No new release, publication, or package distribution is implied by this version
-reference.
+The closed prototype includes M1-M15: immutable cognitive runtime state,
+bounded GoalDirectedAgent compatibility, deterministic Meta-Inference,
+provider-neutral LLM interpretation and deterministic validation, an
+observation-aware cognitive session, and external action/environment feedback
+boundaries. M14 Phase 2 Agent Quality Benchmark Evaluation remains deferred.
 
 ---
 
@@ -1039,15 +1093,15 @@ Version:
 
 Status:
 
-**Active Development**
+**MIND-Lite v1.0 Architecture Closure**
 
 Current Version:
 
-**v0.5.0.dev0**
+**v1.0.0**
 
 Current Milestone:
 
-**M14 Phase 1 — Evaluation Foundation (In Progress)**
+**M15 Completed — MIND-Lite v1.0 Closure Complete**
 
 Maintained by:
 

@@ -5,7 +5,7 @@
 M14 has two separate stages. Their evidence, claims, prerequisites, and outputs
 must not be combined.
 
-## Stage A — Evaluation Foundation Validation
+## Stage A — Evaluation Foundation Validation — Completed
 
 Stage A validates evaluation infrastructure for the delivered deterministic MIND
 Agent:
@@ -31,14 +31,14 @@ Stage A does **not** measure or claim:
 - external-agent comparison;
 - LLM-provider performance.
 
-The current Issue #67 scope is therefore **Controlled Evaluation Foundation
-Validation**. It must not execute a benchmark evaluation or draw agent-quality
-conclusions.
+The completed controlled evaluation foundation validates infrastructure only.
+It did not execute a benchmark evaluation or draw agent-quality conclusions.
 
-## Stage B — Agent Quality Benchmark Evaluation
+## Stage B — Agent Quality Benchmark Evaluation — Not Executed
 
-Stage B is conditional future work. It may begin only after an independently
-reviewed LLM-enabled MIND Agent execution path exists.
+Stage B is deferred future work. MIND-Lite v1.0 architecture closure and the
+completed M15 LLM-enabled runtime path do not constitute Agent Quality
+Benchmark execution.
 
 A Stage B comparison requires:
 
