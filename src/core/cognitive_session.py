@@ -15,8 +15,7 @@ from math import isfinite
 from types import MappingProxyType
 from typing import Any, Mapping
 
-from src.core.completion import CompletionEvaluator
-from src.core.goal_policy import GoalAwarePolicyEngine
+from src.core.cognitive_execution import CognitiveExecutionLoopController
 from src.core.meta_engine import MetaInferenceEngine
 from src.core.meta_inference import MetaInferenceDecisionStatus
 from src.core.observation import Observation
@@ -263,7 +262,8 @@ class CognitiveAgentSession:
         self._task: Task | None = None
         self._runtime_state: RuntimeState | None = None
         self._cycles_completed = 0
-        self._latest_feedback: Mapping[str, Any] | None = None
+        self._pending_observation: Observation | None = None
+        self._pending_feedback: Mapping[str, Any] | None = None
         self._pending_start_failure: tuple[dict[str, Any], ...] | None = None
         self._terminal_result: CognitiveSessionStepResult | None = None
 
@@ -306,12 +306,6 @@ class CognitiveAgentSession:
         self._started = True
 
         if validated_context is not None:
-            self._latest_feedback = MappingProxyType(
-                {
-                    "meta_inference_status": "selected",
-                    "selected_strategy": validated_context.decision.selected_strategy,
-                },
-            )
             return
         if self._meta_inference_engine is not None:
             decision = self._meta_inference_engine.select(task, self._runtime_state)
@@ -332,15 +326,43 @@ class CognitiveAgentSession:
             self._pending_start_failure = None
             return self._finish(CognitiveSessionTerminationReason.FAILED, failure)
 
-        feedback_result = self._process_latest_feedback()
-        if feedback_result is not None:
-            return feedback_result
-        if self._cycles_completed >= self._max_cycles:
-            return self._finish(CognitiveSessionTerminationReason.MAX_CYCLES_REACHED)
-
         assert self._task is not None
         assert self._runtime_state is not None
-        policy = GoalAwarePolicyEngine.generate(self._task, self._runtime_state)
+        if self._pending_observation is not None:
+            transition = CognitiveExecutionLoopController.advance(
+                self._task,
+                self._runtime_state,
+                self._pending_observation,
+                self._pending_feedback,
+                request_policy=self._cycles_completed < self._max_cycles,
+            )
+            self._pending_observation = None
+            self._pending_feedback = None
+            self._runtime_state = transition.runtime_state
+            if transition.failure_category is not None:
+                return self._finish(
+                    CognitiveSessionTerminationReason.FAILED,
+                    ({"type": "environment_feedback", "category": transition.failure_category},),
+                )
+            if transition.completed_answer is not None:
+                return self._finish(
+                    CognitiveSessionTerminationReason.COMPLETED,
+                    ({"type": "completion", "satisfied": True},),
+                    transition.completed_answer,
+                )
+            if transition.policy is None:
+                return self._finish(CognitiveSessionTerminationReason.MAX_CYCLES_REACHED)
+        else:
+            if self._cycles_completed >= self._max_cycles:
+                return self._finish(CognitiveSessionTerminationReason.MAX_CYCLES_REACHED)
+            transition = CognitiveExecutionLoopController.advance(
+                self._task,
+                self._runtime_state,
+            )
+            self._runtime_state = transition.runtime_state
+
+        assert transition.policy is not None
+        policy = transition.policy
         request = _project_policy(policy)
         if request is None:
             return self._finish(
@@ -372,12 +394,8 @@ class CognitiveAgentSession:
         feedback = _freeze_json(observation.content)
         # A fresh reconstruction prevents aliases to caller-owned nested data.
         private_observation = Observation.from_dict(observation.to_dict())
-        assert self._runtime_state is not None
-        self._runtime_state = RuntimeController.apply_inference(
-            self._runtime_state,
-            private_observation,
-        )
-        self._latest_feedback = feedback
+        self._pending_observation = private_observation
+        self._pending_feedback = feedback
         self._phase = CognitiveSessionPhase.READY
 
     def terminate(
@@ -392,33 +410,6 @@ class CognitiveAgentSession:
         if self._terminal_result is not None:
             return self._terminal_result
         return self._finish(reason, ({"type": "external_termination", "reason": reason.value},))
-
-    def _process_latest_feedback(self) -> CognitiveSessionStepResult | None:
-        if self._latest_feedback is None:
-            return None
-        feedback = self._latest_feedback
-        self._latest_feedback = None
-        if feedback.get("status") == "failed":
-            category = feedback.get("failure_category", "external_failure")
-            return self._finish(
-                CognitiveSessionTerminationReason.FAILED,
-                ({"type": "environment_feedback", "category": str(category)},),
-            )
-        if "output" in feedback:
-            assert self._task is not None
-            assert self._runtime_state is not None
-            completion = CompletionEvaluator.evaluate(
-                self._task,
-                self._runtime_state,
-                _thaw_json(feedback["output"]),
-            )
-            if completion.is_satisfied:
-                return self._finish(
-                    CognitiveSessionTerminationReason.COMPLETED,
-                    ({"type": "completion", "satisfied": True},),
-                    completion.answer,
-                )
-        return None
 
     def _finish(
         self,

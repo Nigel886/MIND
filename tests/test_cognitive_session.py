@@ -78,6 +78,16 @@ class CognitiveAgentSessionTest(unittest.TestCase):
         self.assertEqual(session.cycles_completed, 2)
         self.assertEqual(terminal.termination_reason, CognitiveSessionTerminationReason.MAX_CYCLES_REACHED)
 
+    def test_observe_defers_runtime_transition_to_next_step_controller_cycle(self) -> None:
+        session = CognitiveAgentSession(2)
+        session.start(self._tool_task(expected=10))
+        first = session.step()
+        session.observe(self._feedback({"status": "completed", "output": 5}))
+        second = session.step()
+
+        self.assertEqual(first.action_request.to_dict(), second.action_request.to_dict())
+        self.assertEqual(second.phase, CognitiveSessionPhase.AWAITING_OBSERVATION)
+
     def test_feedback_completion_terminates_on_later_step(self) -> None:
         session = CognitiveAgentSession(3)
         session.start(self._tool_task())
