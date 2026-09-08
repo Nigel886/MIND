@@ -814,6 +814,37 @@ Benchmark completion.
 
 ---
 
+# M16 — MIND-Lite Agent Quality Evaluation
+
+**Status:** 🟡 Protocol Frozen; Benchmark Not Executed
+
+### Goal
+
+Define a fair, reproducible evaluation protocol for the frozen MIND-Lite v1.0
+artifact without confounding bounded Lite execution with the additional action
+planning capabilities of fully LLM-driven agents.
+
+### Frozen Evaluation Structure
+
+- **Cohort A — Fair Comparative Benchmark:** MIND-Lite v1.0 and a
+  schema-matched Direct Tool-Calling baseline on comparable direct and
+  single-tool tasks, with evaluator-owned success assessment.
+- **Cohort B — Capability Boundary Analysis:** planning, multi-step, and
+  recovery capability boundaries; it is explicitly not an overall agent-quality
+  ranking.
+- Cohort A targets at least 96 held-out cases across comparable task families
+  and difficulty levels. Provider, prompts, tools, environment, budgets, judge,
+  metrics, repetitions, and result schema must be frozen before formal runs.
+
+### Architecture Outcome
+
+M16 is **PARTIALLY COMPARABLE**. No benchmark result, real-provider
+integration, baseline implementation, or Agent Quality claim is delivered by
+the protocol freeze. A fair ReAct or Plan-and-Execute comparison requires a
+separately reviewed capability-equivalent execution contract.
+
+---
+
 # Current Development Focus
 
 **Current Version**
@@ -824,7 +855,7 @@ Benchmark completion.
 
 **Current Milestone**
 
-> M15 completed — MIND-Lite v1.0 closure complete
+> M16 — MIND-Lite Agent Quality Evaluation — Protocol Frozen
 
 ---
 
@@ -864,13 +895,14 @@ Benchmark completion.
 
 **Upcoming**
 
+- 🟡 M16 — MIND-Lite Agent Quality Evaluation (Protocol Frozen; Benchmark Not Executed)
 - 🔒 M14 Phase 2 — Agent Quality Benchmark Evaluation (Not Executed / Deferred)
 
 ---
 
 **Next Milestone**
 
-> Future Full MIND scope; M14 Phase 2 Agent Quality Benchmark Evaluation remains deferred
+> M16 — MIND-Lite Agent Quality Evaluation (Protocol Frozen; Benchmark Not Executed)
 
 # Architecture Evolution
 
@@ -1101,7 +1133,7 @@ Current Version:
 
 Current Milestone:
 
-**M15 Completed — MIND-Lite v1.0 Closure Complete**
+**M16 — Agent Quality Evaluation Protocol Frozen**
 
 Maintained by:
 
