@@ -1,16 +1,45 @@
 # M16 Agent Quality Evaluation Protocol
 
+**Protocol version:** 1.1.0
+**Status:** Pre-execution correction; benchmark not executed
+
+## Pre-Execution Protocol Correction (v1.1.0)
+
+Version 1.1.0 corrects a benchmark-validity boundary discovered before any
+formal suite, provider integration, or benchmark execution. MIND-Lite v1.0.0
+remains the immutable evaluated artifact; this correction does not alter its
+core implementation. Its frozen GoalAwarePolicy recognizes legacy task schemas
+by the presence of `expected_answer`, while formal M16 tasks must not disclose
+their expected answer to an agent.
+
+M16 therefore uses an evaluation-only private compatibility projection for the
+two eligible public schemas. A public direct task is exactly
+`{"value": <JSON value>}`; a public calculator task is exactly
+`{"operation": "add" | "multiply", "operands": [<int>, <int>]}`. Only on
+the private MIND evaluation path, the projection constructs a detached legacy
+Task copy with the fixed `"expected_answer": null` sentinel. The sentinel is
+always `null`, is never benchmark truth, and is not read, computed, derived, or
+revealed from evaluator-private truth. The Direct Tool-Calling baseline always
+receives the original public Task.
+
+Expected answers, judge configuration, formal membership, and private
+environment configuration remain in evaluator-private M16 structures. M16
+does not reuse M14 `completion_context`: that historic path emits completion
+context in public reset feedback. The M16 path instead uses a private
+environment boundary and deterministic exact evaluator-owned judge. No LLM
+judge is permitted.
+
 ## Purpose
 
 This protocol freezes the research design for M16 evaluation of MIND-Lite
-v1.0. It precedes baseline implementation, task construction, provider
+v1.0.0. It precedes formal task construction, provider
 integration, and benchmark execution. It defines a fair restricted comparison
 and separate capability-boundary analysis; it does not assume MIND-Lite is
 superior.
 
 ## Evaluation Subject
 
-The immutable subject is **MIND-Lite v1.0**, Git tag `v1.0.0`. Core behavior
+The immutable subject is **MIND-Lite v1.0.0**, Git tag `v1.0.0`. Core behavior
 must not change to improve benchmark results. Evaluation-side adapters may use
 public contracts only and must preserve the frozen architecture.
 
@@ -52,6 +81,8 @@ Cohort A is the sole primary comparative benchmark.
 Cohort A excludes planning, open-ended tool selection, multi-step dependency,
 and recovery cases unless a pre-execution review proves equivalent execution
 contracts. Its primary metric is evaluator-owned Task Completion Success Rate.
+The constant-null legacy schema projection is evaluation compatibility only,
+not a new MIND-Lite capability or source of task truth.
 
 ## Cohort B — Capability Boundary Analysis
 
@@ -65,8 +96,13 @@ pool these cases into Cohort A or transform safe failure into success.
 ## Task-Suite Design Rules
 
 Freeze comparable families and architecture-neutral difficulty definitions:
-easy, medium, and hard. Difficulty must arise from predeclared task properties,
-not from what is harder for MIND. The target is at least 96 held-out Cohort A
+easy, medium, and hard. Direct-answer strata may vary only by public `value`
+JSON structure (primitive, flat structured value, or nested structured value).
+Calculator strata may vary only by `add`/`multiply`, finite integer magnitude,
+and sign pattern. No added instruction keys, prose extraction, planning,
+recovery, multiple tools, or multi-step arithmetic may be used to manufacture
+difficulty. Difficulty must arise from these predeclared public properties, not
+from what is harder for MIND. The target remains at least 96 held-out Cohort A
 cases: two comparable families × three difficulties × approximately 16 cases.
 This is a design target, not proof of statistical sufficiency. Development and
 formal held-out cases must be separated; formal cases are prohibited from prompt
