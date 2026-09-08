@@ -1,0 +1,1 @@
+{"additionalProperties":false,"properties":{"operation":{"enum":["add","multiply"],"type":"string"},"operands":{"items":{"type":"integer"},"maxItems":2,"minItems":2,"type":"array"}},"required":["operation","operands"],"type":"object"}

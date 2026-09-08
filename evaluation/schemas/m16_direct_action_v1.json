@@ -1,0 +1,1 @@
+{"additionalProperties":false,"properties":{"action_type":{"enum":["answer","tool_call","fail","invalid"],"type":"string"},"payload":{"additionalProperties":false,"properties":{"answer":{},"parameters":{"type":"object"},"reason":{"type":"string"},"tool_name":{"type":"string"}},"type":"object"}},"required":["action_type","payload"],"type":"object"}

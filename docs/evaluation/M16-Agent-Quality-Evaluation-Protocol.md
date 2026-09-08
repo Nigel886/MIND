@@ -29,6 +29,18 @@ context in public reset feedback. The M16 path instead uses a private
 environment boundary and deterministic exact evaluator-owned judge. No LLM
 judge is permitted.
 
+### Held-Out Regression-Test Clarification
+
+"Held-out" prohibits using formal cases for provider-adapter debugging, prompt
+or schema tuning, model/output-cap/retry selection, Agent dry runs, smoke tests,
+benchmark execution, or task-level performance feedback before the formal run.
+It does not prohibit repository regression tests that perform only static suite
+integrity and contract checks: count/distribution, schema/privacy boundaries,
+canonical serialization and hashes, fixture separation, and static
+environment/judge compatibility. Such tests must not invoke MIND-Lite or Direct
+benchmark Agents on formal cases, call a real or fake LLM with formal data,
+export task contents for development, or inspect comparative outcomes.
+
 ## Purpose
 
 This protocol freezes the research design for M16 evaluation of MIND-Lite
@@ -118,6 +130,27 @@ One exact model/provider configuration is sufficient for Cohort A. A second
 model is a separately reported robustness/generalizability analysis, not a
 post-hoc aggregate. A production provider and equivalent public action-provider
 boundary require independent review before use.
+
+## Frozen Gemini Provider Configuration
+
+Before formal execution, the earlier OpenAI candidate was superseded by Google
+Gemini **before any formal benchmark run**. The frozen primary provider path is
+raw Gemini REST `generateContent` with exact stable model identifier
+`gemini-2.5-flash`; no `latest` alias is permitted. The tracked configuration
+manifest is `evaluation/config/m16_gemini_flash_v1.json` and freezes
+`temperature=0`, `topP=1`, `candidateCount=1`, `seed=16001`,
+`maxOutputTokens=512`, `responseMimeType=application/json`, and
+`responseJsonSchema` output.
+
+This is formally **STOCHASTIC**: every eligible formal case/baseline/
+configuration unit requires five repetitions, regardless of the accepted seed
+or zero temperature. The MIND and Direct conditions use distinct versioned,
+hash-pinned architecture-specific prompts. MIND makes an interpretation call
+followed by deterministic admission; Direct makes one public-action decision per
+step. Their model-call patterns are therefore recorded separately, not treated
+as equalized computation. Gemini thinking tokens, when returned, are recorded
+separately from candidate/output tokens. No formal benchmark has run under this
+configuration.
 
 ## Prompt Contract
 

@@ -1,0 +1,6 @@
+Return exactly one next public action for the supplied public task, feedback, budget, and public tool schema.
+Do not provide explanations, hidden reasoning, expected answers, private truth, or future feedback.
+Return only an action_type and payload matching the supplied response schema.
+For answer, payload must contain answer. For tool_call, payload must contain
+tool_name and parameters. For fail or invalid, payload must contain reason.
+A tool_call may name only a listed public tool and must satisfy its public schema.
