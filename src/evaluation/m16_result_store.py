@@ -4,6 +4,12 @@ import json
 from pathlib import Path
 from src.evaluation.m16_benchmark_contracts import M16FormalExecutionManifest, M16RunAttemptRecord, M16FailureCategory
 
+
+_RESUMABLE_CATEGORIES = frozenset({
+    M16FailureCategory.PROVIDER_INFRASTRUCTURE_INVALID_RUN,
+    M16FailureCategory.INTERRUPTED_INCOMPLETE,
+})
+
 class M16ResultStore:
     def __init__(self, directory: str | Path, manifest: M16FormalExecutionManifest) -> None:
         self.directory = Path(directory); self.manifest = manifest
@@ -39,4 +45,9 @@ class M16ResultStore:
             handle.write(json.dumps(record.to_dict(), sort_keys=True, separators=(",",":"), ensure_ascii=False) + "\n")
 
     def completed_run_ids(self) -> frozenset[str]:
-        return frozenset(r.run_id for r in self.load_records() if r.failure_category is not M16FailureCategory.PROVIDER_INFRASTRUCTURE_INVALID_RUN)
+        """Return only run IDs with at least one immutable terminal attempt."""
+        return frozenset(
+            record.run_id
+            for record in self.load_records()
+            if record.failure_category not in _RESUMABLE_CATEGORIES
+        )
