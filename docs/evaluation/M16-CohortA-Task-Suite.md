@@ -7,7 +7,8 @@ structure and reproducibility identifiers only; no benchmark was executed.
 
 ## Protocol Version
 
-M16 protocol version: `1.1.0`.
+Suite-generation protocol provenance: `1.1.0`. Formal execution is governed
+by completion-semantics protocol `1.2.0`; this does not alter the frozen suite.
 
 ## Suite Version
 
@@ -35,6 +36,14 @@ Public input is exactly `{"operation": "add" | "multiply", "operands":
 integers with absolute magnitude 10–999; hard uses mixed-sign or
 negative-negative integers with absolute magnitude at least 1,000. Each case
 permits one deterministic calculator call only.
+
+## Family-Specific Execution Completion
+
+`direct_answer` uses `agent_final_answer`: the Agent emits the public answer.
+`calculator` uses `evaluator_tool_outcome`: after the Agent explicitly submits
+a valid calculator request, the evaluator executes exactly that request and
+judges its public deterministic outcome. No second Agent answer is required.
+This measures tool selection and argument formation, not post-tool synthesis.
 
 ## Difficulty Definitions
 

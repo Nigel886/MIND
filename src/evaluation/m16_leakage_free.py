@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+from enum import Enum
 from math import isfinite
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -264,6 +265,27 @@ class M16PrivateEvaluationEnvironment:
         )
 
 
+M16_COMPLETION_SEMANTICS_VERSION = "m16_completion_v2"
+
+
+class M16CompletionMode(str, Enum):
+    """Frozen family-specific M16 benchmark completion modes."""
+
+    AGENT_FINAL_ANSWER = "agent_final_answer"
+    EVALUATOR_TOOL_OUTCOME = "evaluator_tool_outcome"
+
+
+def m16_completion_mode(case: EvaluationCase) -> M16CompletionMode:
+    """Resolve the evaluator-owned completion mode from frozen public family metadata."""
+
+    family = case.task.metadata["m16_cohort_a"]["task_family"]
+    if family == "direct_answer":
+        return M16CompletionMode.AGENT_FINAL_ANSWER
+    if family == "controlled_single_tool":
+        return M16CompletionMode.EVALUATOR_TOOL_OUTCOME
+    raise ValueError("unsupported M16 task family")
+
+
 class M16ExactCompletionJudge:
     """Evaluator-owned exact judge using only private injected truth."""
 
@@ -292,16 +314,41 @@ class M16ExactCompletionJudge:
             return EvaluationOutcome(EvaluationOutcomeType.TIMEOUT, {"failure_category": "timeout"})
         if last_feedback is not None and last_feedback.feedback_type is EvaluationFeedbackType.BUDGET:
             return EvaluationOutcome(EvaluationOutcomeType.FAILURE, {"failure_category": "budget_exhaustion"})
-        if terminal_action is None:
+        if terminal_action is None and m16_completion_mode(case) is M16CompletionMode.AGENT_FINAL_ANSWER:
             return EvaluationOutcome(EvaluationOutcomeType.FAILURE, {"failure_category": "budget_exhaustion"})
-        if terminal_action.action_type is EvaluationActionType.INVALID:
+        if terminal_action is not None and terminal_action.action_type is EvaluationActionType.INVALID:
             return EvaluationOutcome(EvaluationOutcomeType.INVALID_EXECUTION, {"failure_category": "invalid_execution"})
-        if terminal_action.action_type is EvaluationActionType.FAIL:
+        if terminal_action is not None and terminal_action.action_type is EvaluationActionType.FAIL:
             return EvaluationOutcome(EvaluationOutcomeType.FAILURE, {"failure_category": "explicit_agent_failure"})
-        if terminal_action.action_type is not EvaluationActionType.ANSWER:
+        mode = m16_completion_mode(case)
+        if mode is M16CompletionMode.EVALUATOR_TOOL_OUTCOME:
+            return self._evaluate_calculator_outcome(case, interactions)
+        if terminal_action is None or terminal_action.action_type is not EvaluationActionType.ANSWER:
             return EvaluationOutcome(EvaluationOutcomeType.INVALID_EXECUTION, {"failure_category": "invalid_execution"})
         answer = terminal_action.payload.get("answer")
         if self._is_correct(case, answer):
+            return EvaluationOutcome(EvaluationOutcomeType.SUCCESS, {})
+        return EvaluationOutcome(EvaluationOutcomeType.FAILURE, {"failure_category": "incorrect_answer"})
+
+    def _evaluate_calculator_outcome(
+        self, case: EvaluationCase, interactions: tuple[EnvironmentInteraction, ...]
+    ) -> EvaluationOutcome:
+        """Judge only an environment result caused by the submitted public action."""
+
+        if len(interactions) != 1:
+            return EvaluationOutcome(EvaluationOutcomeType.FAILURE, {"failure_category": "incorrect_answer"})
+        interaction = interactions[0]
+        action, feedback = interaction.action, interaction.feedback
+        if action.action_type is not EvaluationActionType.TOOL_CALL:
+            return EvaluationOutcome(EvaluationOutcomeType.INVALID_EXECUTION, {"failure_category": "invalid_execution"})
+        if feedback.feedback_type is not EvaluationFeedbackType.TOOL_RESPONSE:
+            return EvaluationOutcome(EvaluationOutcomeType.FAILURE, {"failure_category": "incorrect_answer"})
+        parameters = action.payload.get("parameters")
+        feedback_parameters = feedback.payload.get("parameters")
+        response = feedback.payload.get("response")
+        if action.payload.get("tool_name") != "calculator" or parameters != feedback_parameters or not isinstance(response, Mapping):
+            return EvaluationOutcome(EvaluationOutcomeType.FAILURE, {"failure_category": "incorrect_answer"})
+        if self._is_correct(case, response.get("output")):
             return EvaluationOutcome(EvaluationOutcomeType.SUCCESS, {})
         return EvaluationOutcome(EvaluationOutcomeType.FAILURE, {"failure_category": "incorrect_answer"})
 

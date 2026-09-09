@@ -1,9 +1,17 @@
 # M16 Agent Quality Evaluation Protocol
 
-**Protocol version:** 1.1.0
+**Execution protocol version:** 1.2.0
 **Status:** Pre-execution correction; benchmark not executed
 
-## Pre-Execution Protocol Correction (v1.1.0)
+## Pre-Execution Completion-Semantics Revision (v1.2.0)
+
+Protocol 1.1.0 froze and generated the Cohort A suite. Protocol 1.2.0 changes
+only execution and judging semantics before any formal run: `direct_answer`
+uses `agent_final_answer`, while `calculator` uses
+`evaluator_tool_outcome`. The latter measures correct calculator selection,
+operation, and operands; it does not measure post-tool answer synthesis. Both
+MIND-Lite and Direct terminate after the same correct evaluator-owned tool
+outcome. Suite content, membership, suite hash, and split hash remain frozen.
 
 Version 1.1.0 corrects a benchmark-validity boundary discovered before any
 formal suite, provider integration, or benchmark execution. MIND-Lite v1.0.0
@@ -187,6 +195,12 @@ Agents may request termination but may not define benchmark success. Semantic or
 LLM judging is allowed only after a separate judge-validity review; it must be
 versioned, blinded to baseline, and reported separately from deterministic
 primary judging.
+
+The execution-side completion semantics version is `m16_completion_v2`.
+The environment executes only an explicit Agent calculator request; the judge
+does not execute, select, repair, or synthesize an action. No private truth is
+returned to either Agent. The earlier development execution-manifest identity
+is superseded before formal execution.
 
 ## Metrics
 

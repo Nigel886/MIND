@@ -20,6 +20,9 @@ from src.evaluation.m16_leakage_free import (
     M16PrivateEvaluationEnvironment,
     M16PrivateEnvironmentSpecification,
     M16PrivateTruth,
+    M16_COMPLETION_SEMANTICS_VERSION,
+    M16CompletionMode,
+    m16_completion_mode,
     project_m16_legacy_task,
 )
 
@@ -111,14 +114,22 @@ class JudgeTests(unittest.TestCase):
         self.assertNotIn("expected_answer", str(trace.to_dict()))
         self.assertNotIn("m16.direct.v1", str(trace.to_dict()))
 
-    def test_exact_judge_calculator_integer_and_no_provider_dependency(self) -> None:
+    def test_exact_judge_calculator_tool_outcome_and_no_provider_dependency(self) -> None:
         task = Task(Goal("calc", ("calc",)), {"operation": "add", "operands": [2, 3]}, metadata=_metadata("controlled_single_tool", 1))
         case = _case(task)
         judge = M16ExactCompletionJudge(M16PrivateTruth(5, "m16.calculator.v1"))
-        correct = judge.evaluate(case, (), EvaluationBudgetState(EvaluationBudget(2, 1)), EvaluationAction(EvaluationActionType.ANSWER, {"answer": 5}))
-        wrong = judge.evaluate(case, (), EvaluationBudgetState(EvaluationBudget(2, 1)), EvaluationAction(EvaluationActionType.ANSWER, {"answer": 5.0}))
+        action = EvaluationAction(EvaluationActionType.TOOL_CALL, {"tool_name": "calculator", "parameters": {"operation": "add", "operands": [2, 3]}})
+        feedback = M16PrivateEvaluationEnvironment(M16PrivateEnvironmentSpecification("m16.env")).reset(case)
+        environment = M16PrivateEvaluationEnvironment(M16PrivateEnvironmentSpecification("m16.env")); environment.reset(case)
+        correct_feedback = environment.apply(action, EvaluationBudgetState(EvaluationBudget(2, 1), steps_used=1))
+        correct = judge.evaluate(case, (EnvironmentInteraction(action, correct_feedback),), EvaluationBudgetState(EvaluationBudget(2, 1)), None)
+        wrong_action = EvaluationAction(EvaluationActionType.TOOL_CALL, {"tool_name": "calculator", "parameters": {"operation": "multiply", "operands": [2, 3]}})
+        wrong_feedback = environment.apply(wrong_action, EvaluationBudgetState(EvaluationBudget(2, 1), steps_used=1))
+        wrong = judge.evaluate(case, (EnvironmentInteraction(wrong_action, wrong_feedback),), EvaluationBudgetState(EvaluationBudget(2, 1)), None)
         self.assertEqual(correct.outcome_type.value, "success")
         self.assertEqual(wrong.outcome_type.value, "failure")
+        self.assertEqual(M16_COMPLETION_SEMANTICS_VERSION, "m16_completion_v2")
+        self.assertEqual(m16_completion_mode(case), M16CompletionMode.EVALUATOR_TOOL_OUTCOME)
         source = inspect.getsource(M16ExactCompletionJudge)
         self.assertNotIn("LLM", source)
         self.assertNotIn("Provider", source)
