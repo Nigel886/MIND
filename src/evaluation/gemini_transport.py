@@ -19,6 +19,11 @@ GEMINI_ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "gemini-2.5-flash:generateContent"
 )
+GEMINI_FLASH_LITE_MODEL = "gemini-3.1-flash-lite"
+GEMINI_FLASH_LITE_ENDPOINT = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    "gemini-3.1-flash-lite:generateContent"
+)
 
 
 class GeminiTransportFailureCategory(str, Enum):
@@ -51,6 +56,32 @@ class GeminiGenerationConfig:
             raise ValueError("M16 Gemini generation settings are frozen")
         if self.seed != 16001 or self.max_output_tokens != 512:
             raise ValueError("M16 Gemini seed and output cap are frozen")
+        if self.response_mime_type != "application/json":
+            raise ValueError("response_mime_type must be application/json")
+        if self.max_attempts != 3 or self.timeout_seconds <= 0:
+            raise ValueError("retry and timeout configuration is invalid")
+
+
+@dataclass(frozen=True)
+class GeminiFlashLiteGenerationConfig:
+    """Frozen Gemini 3.1 Flash-Lite configuration for a distinct M16 run."""
+
+    model: str = GEMINI_FLASH_LITE_MODEL
+    thinking_level: str = "minimal"
+    include_thoughts: bool = False
+    candidate_count: int = 1
+    max_output_tokens: int = 512
+    response_mime_type: str = "application/json"
+    max_attempts: int = 3
+    timeout_seconds: int = 30
+
+    def __post_init__(self) -> None:
+        if self.model != GEMINI_FLASH_LITE_MODEL:
+            raise ValueError("model must be gemini-3.1-flash-lite")
+        if self.thinking_level != "minimal" or self.include_thoughts is not False:
+            raise ValueError("M16 Flash-Lite thinking settings are frozen")
+        if self.candidate_count != 1 or self.max_output_tokens != 512:
+            raise ValueError("M16 Flash-Lite output settings are frozen")
         if self.response_mime_type != "application/json":
             raise ValueError("response_mime_type must be application/json")
         if self.max_attempts != 3 or self.timeout_seconds <= 0:
@@ -96,15 +127,15 @@ class GeminiRestTransport:
 
     def __init__(
         self,
-        configuration: GeminiGenerationConfig = GeminiGenerationConfig(),
+        configuration: GeminiGenerationConfig | GeminiFlashLiteGenerationConfig = GeminiGenerationConfig(),
         *,
         http_post: HttpPost = _post_json,
         environment: Mapping[str, str] | None = None,
         sleeper: Callable[[float], None] = time.sleep,
         clock_ns: Callable[[], int] = time.monotonic_ns,
     ) -> None:
-        if not isinstance(configuration, GeminiGenerationConfig):
-            raise TypeError("configuration must be GeminiGenerationConfig")
+        if not isinstance(configuration, (GeminiGenerationConfig, GeminiFlashLiteGenerationConfig)):
+            raise TypeError("configuration must be a supported Gemini generation configuration")
         self._configuration = configuration
         self._http_post = http_post
         self._environment = os.environ if environment is None else environment
@@ -112,7 +143,7 @@ class GeminiRestTransport:
         self._clock_ns = clock_ns
 
     @property
-    def configuration(self) -> GeminiGenerationConfig:
+    def configuration(self) -> GeminiGenerationConfig | GeminiFlashLiteGenerationConfig:
         return self._configuration
 
     def generate(self, instruction: str, response_schema: dict[str, Any]) -> GeminiTransportResult:
@@ -129,17 +160,26 @@ class GeminiRestTransport:
                 ProviderCallObservation(0, 0, 0),
                 "missing_gemini_api_key",
             )
-        body = {
-            "contents": [{"role": "user", "parts": [{"text": instruction}]}],
-            "generationConfig": {
-                "responseMimeType": self._configuration.response_mime_type,
-                "responseJsonSchema": response_schema,
+        generation_config = {
+            "responseMimeType": self._configuration.response_mime_type,
+            "responseJsonSchema": response_schema,
+            "candidateCount": self._configuration.candidate_count,
+            "maxOutputTokens": self._configuration.max_output_tokens,
+        }
+        if isinstance(self._configuration, GeminiGenerationConfig):
+            generation_config.update({
                 "temperature": self._configuration.temperature,
                 "topP": self._configuration.top_p,
-                "candidateCount": self._configuration.candidate_count,
                 "seed": self._configuration.seed,
-                "maxOutputTokens": self._configuration.max_output_tokens,
-            },
+            })
+        else:
+            generation_config["thinkingConfig"] = {
+                "thinkingLevel": self._configuration.thinking_level,
+                "includeThoughts": self._configuration.include_thoughts,
+            }
+        body = {
+            "contents": [{"role": "user", "parts": [{"text": instruction}]}],
+            "generationConfig": generation_config,
         }
         encoded = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
         started = self._clock_ns()
@@ -148,7 +188,7 @@ class GeminiRestTransport:
             attempts += 1
             try:
                 response = self._http_post(
-                    GEMINI_ENDPOINT,
+                    self._endpoint,
                     {"Content-Type": "application/json", "x-goog-api-key": key},
                     encoded,
                     self._configuration.timeout_seconds,
@@ -167,6 +207,10 @@ class GeminiRestTransport:
             if attempt < self._configuration.max_attempts:
                 self._sleeper(float(2 ** (attempt - 1)))
         return self._failure(GeminiTransportFailureCategory.UNAVAILABLE, attempts, started, "retry_exhausted")
+
+    @property
+    def _endpoint(self) -> str:
+        return GEMINI_FLASH_LITE_ENDPOINT if isinstance(self._configuration, GeminiFlashLiteGenerationConfig) else GEMINI_ENDPOINT
 
     def _decode_success(
         self, response: dict[str, Any], attempts: int, started: int

@@ -108,10 +108,10 @@ class M16FormalExecutionManifest:
         return cls(**data)
 
 
-def load_frozen_m16_manifest() -> M16FormalExecutionManifest:
-    """Construct the formal manifest from the tracked Issue #77 configuration."""
+def _load_manifest_from_config(config_name: str) -> M16FormalExecutionManifest:
+    """Construct a formal manifest from one explicit tracked provider config."""
     root = Path(__file__).resolve().parents[2]
-    config_bytes = (root / "evaluation" / "config" / "m16_gemini_flash_v1.json").read_bytes()
+    config_bytes = (root / "evaluation" / "config" / config_name).read_bytes()
     config = json.loads(config_bytes.decode("utf-8"))
     tool = config["tool"]
     return M16FormalExecutionManifest(
@@ -125,6 +125,16 @@ def load_frozen_m16_manifest() -> M16FormalExecutionManifest:
         direct_schema_hash=config["Direct"]["schema_hash"], calculator_schema_hash=tool["tool_schema_hash"],
         suite_generation_protocol_version=config["protocol"], completion_semantics_version="m16_completion_v2",
     )
+
+
+def load_frozen_m16_manifest() -> M16FormalExecutionManifest:
+    """Construct the historical Gemini 2.5 Flash formal manifest for audit."""
+    return _load_manifest_from_config("m16_gemini_flash_v1.json")
+
+
+def load_frozen_m16_flash_lite_manifest() -> M16FormalExecutionManifest:
+    """Construct the isolated Gemini 3.1 Flash-Lite replacement manifest."""
+    return _load_manifest_from_config("m16_gemini_31_flash_lite_v1.json")
 
 
 @dataclass(frozen=True)
