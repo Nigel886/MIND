@@ -125,7 +125,7 @@ def _load_manifest_from_config(config_name: str) -> M16FormalExecutionManifest:
         suite_hash=config["suite"]["hash"], split_hash=config["split_hash"],
         provider_config_version=config["configuration_version"],
         provider_config_hash=hashlib.sha256(config_bytes).hexdigest(),
-        provider="Google Gemini API", model=config["model"], formal_classification=config["formal_classification"],
+        provider=config.get("formal_provider_identity", "Google Gemini API"), model=config["model"], formal_classification=config["formal_classification"],
         repetition_count=config["formal_repetitions"], mind_prompt_hash=config["MIND"]["prompt_hash"],
         direct_prompt_hash=config["Direct"]["prompt_hash"], mind_schema_hash=config["MIND"]["schema_hash"],
         direct_schema_hash=config["Direct"]["schema_hash"], calculator_schema_hash=tool["tool_schema_hash"],
