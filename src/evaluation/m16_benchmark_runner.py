@@ -7,6 +7,7 @@ from src.evaluation.contracts import EvaluationAction, EvaluationActionType, Eva
 from src.evaluation.execution import AgentStepInput, EvaluationBudget, EvaluationBudgetState, EnvironmentInteraction
 from src.evaluation.m16_benchmark_contracts import M16BaselineID, M16FailureCategory, M16FormalExecutionManifest, M16FormalRunDefinition, M16RunAttemptRecord, counterbalanced_schedule
 from src.evaluation.m16_leakage_free import M16ExactCompletionJudge, M16PrivateEvaluationEnvironment, m16_completion_mode
+from src.evaluation.m16_diagnostic_telemetry import M16DiagnosticStage, M16DiagnosticTelemetry
 
 class M16StepAgent(Protocol):
     def step(self, step_input: AgentStepInput): ...
@@ -15,6 +16,7 @@ class M16StepAgent(Protocol):
 class M16RunActor:
     agent: M16StepAgent
     observations: list[Any]
+    telemetry: M16DiagnosticTelemetry | None = None
 
 class M16BenchmarkRunner:
     def __init__(self, manifest: M16FormalExecutionManifest, factories: dict[M16BaselineID, Callable[[], M16RunActor]], clock: Callable[[], float] = monotonic) -> None:
@@ -37,11 +39,14 @@ class M16BenchmarkRunner:
             if result.request_termination: break
             if terminal.action_type is not EvaluationActionType.TOOL_CALL: break
             if state.tool_calls_used >= budget.max_tool_calls: break
+            if actor.telemetry is not None: actor.telemetry.emit(M16DiagnosticStage.TOOL_INVOKED, action_type="tool_call", tool_name=terminal.payload.get("tool_name"))
             feedback=environment.apply(terminal,state); interactions.append(EnvironmentInteraction(terminal,feedback))
             state=EvaluationBudgetState(budget, state.steps_used, state.tool_calls_used+1)
             if feedback.feedback_type.value in {"budget","timeout","invalid_action"}: break
+        if actor.telemetry is not None: actor.telemetry.emit(M16DiagnosticStage.EVALUATOR_INVOKED)
         outcome=judge.evaluate(development_case.case, tuple(interactions), state, terminal if terminal and terminal.action_type is not EvaluationActionType.TOOL_CALL else None)
         category=self._category(outcome.outcome_type.value, outcome.payload, terminal, state, actor.observations)
+        if actor.telemetry is not None: actor.telemetry.emit(M16DiagnosticStage.TERMINAL_ADAPTER_ACTION, action_type=terminal.action_type.value if terminal else None, terminal_category=category.value)
         return M16RunAttemptRecord("m16-attempt-record-v1",definition.run_id,definition.attempt_id(attempt_number),attempt_number,definition.evaluation_id,definition.baseline_id,definition.repetition,development_case.task_family,development_case.difficulty,development_case.eligibility,m16_completion_mode(development_case.case).value,category is M16FailureCategory.SUCCESS,category,state.steps_used,state.tool_calls_used,provider_request_attempts=sum(getattr(x,"request_attempts",0) for x in actor.observations),model_calls=sum(getattr(x,"model_calls",0) for x in actor.observations),manifest_hash=self.manifest.manifest_hash)
 
     @staticmethod
