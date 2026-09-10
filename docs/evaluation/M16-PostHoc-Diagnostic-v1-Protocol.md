@@ -19,8 +19,9 @@ At this freeze point:
 | Field | Value |
 | --- | --- |
 | Diagnostic protocol | `m16-post-hoc-diagnostic-v1` |
-| Diagnostic manifest hash | `4fdaa47b47f621662953531af3a0dc703d6ac46550152b49cf8d421800144c74` |
-| Instrumentation commit | `cfbcdf2` |
+| Diagnostic manifest hash | `6890298b0e8f2f89a74faa59a33cd73d56a83a793e0195a26e3279bf77d7f0cb` |
+| Instrumentation commit | `ed9d474` |
+| Execution-safety revision | `m16-diagnostic-execution-safety-v1` |
 | Telemetry schema | `m16-mind-diagnostic-stage-v1` (24 stages) |
 | Reason taxonomy | `m16-mind-diagnostic-reason-v1` (13 reasons) |
 | Provider behavior hash | `c074c0e08e6b7be9a93b955a5c5f85da52bb7e9cf83601477ab2e18dad4bc780` |
@@ -75,9 +76,17 @@ attempt ID; a resumed attempt receives a new ID and never merges its events
 with a partial attempt.
 
 One process-level lock is acquired before store initialization, schedule
-traversal, Agent/provider construction, or any diagnostic execution. A second
+traversal, Agent/provider construction, or any diagnostic execution. Standalone
+preflight acquires and releases that same lock while using read-only store
+inspection: it never creates the result directory, manifest, attempt, or event
+file, including when an empty or resumable namespace already exists. A second
 owner performs zero work. Stale-lock recovery is explicit and verified; it is
 never automatic.
+
+Local/mock end-to-end validation uses invented direct-answer and calculator
+fixtures through the actual M16 adapter, deterministic environment, runner,
+and evaluator. It verifies genuine `tool_invoked`, `evaluator_invoked`, and
+terminal telemetry boundaries without a network provider or held-out case.
 
 ## Guarded future execution
 

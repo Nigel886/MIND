@@ -24,9 +24,10 @@ from src.evaluation.m16_diagnostic_telemetry import (
 
 DIAGNOSTIC_PROTOCOL_VERSION = "m16-post-hoc-diagnostic-v1"
 DIAGNOSTIC_RESULT_SCHEMA_VERSION = "m16-post-hoc-diagnostic-result-v1"
-INSTRUMENTATION_COMMIT = "cfbcdf2"
+INSTRUMENTATION_COMMIT = "ed9d474"
+EXECUTION_SAFETY_REVISION = "m16-diagnostic-execution-safety-v1"
 DIAGNOSTIC_BASELINE = "mind_lite_v1"
-EXPECTED_DIAGNOSTIC_MANIFEST_HASH = "4fdaa47b47f621662953531af3a0dc703d6ac46550152b49cf8d421800144c74"
+EXPECTED_DIAGNOSTIC_MANIFEST_HASH = "6890298b0e8f2f89a74faa59a33cd73d56a83a793e0195a26e3279bf77d7f0cb"
 HISTORICAL_RESULT_DIRECTORIES = (
     "evaluation/results/m16",
     "evaluation/results/m16_flash_lite",
@@ -62,6 +63,7 @@ class M16MindFailureDiagnosticManifest:
     post_hoc: bool
     purpose: str
     instrumentation_commit: str
+    execution_safety_revision: str
     telemetry_schema_version: str
     reason_taxonomy_version: str
     provider_identity: str
@@ -125,6 +127,7 @@ def load_frozen_m16_mind_failure_diagnostic_manifest() -> M16MindFailureDiagnost
         post_hoc=True,
         purpose="failure_mechanism_localization",
         instrumentation_commit=INSTRUMENTATION_COMMIT,
+        execution_safety_revision=EXECUTION_SAFETY_REVISION,
         telemetry_schema_version=DIAGNOSTIC_SCHEMA_VERSION,
         reason_taxonomy_version=DIAGNOSTIC_REASON_TAXONOMY_VERSION,
         provider_identity=config["formal_provider_identity"],
@@ -235,6 +238,26 @@ class M16MindFailureDiagnosticStore:
                 raise ValueError("diagnostic records require a manifest")
             self.manifest_path.write_text(canonical_json(self.manifest.to_dict()), encoding="utf-8")
         self.load_attempts(); self.load_events()
+
+    def inspect(self) -> tuple[M16DiagnosticAttemptRecord, ...]:
+        """Read and validate existing state without creating or changing files."""
+        if not self.directory.exists():
+            return ()
+        if not self.directory.is_dir():
+            raise ValueError("diagnostic result namespace is not a directory")
+        allowed = {self.manifest_path.name, self.attempts_path.name, self.events_path.name}
+        unknown = {item.name for item in self.directory.iterdir()} - allowed
+        if unknown:
+            raise ValueError("diagnostic result directory contains unrelated files")
+        has_records = any(path.exists() and path.stat().st_size for path in (self.attempts_path, self.events_path))
+        if not self.manifest_path.exists():
+            if has_records:
+                raise ValueError("diagnostic records require a manifest")
+            return ()
+        existing = M16MindFailureDiagnosticManifest.from_dict(json.loads(self.manifest_path.read_text(encoding="utf-8")))
+        if existing.manifest_hash != self.manifest.manifest_hash:
+            raise ValueError("foreign diagnostic manifest")
+        return self.load_attempts()
 
     def load_attempts(self) -> tuple[M16DiagnosticAttemptRecord, ...]:
         if not self.attempts_path.exists():

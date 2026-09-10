@@ -46,7 +46,9 @@ class M16BenchmarkRunner:
         if actor.telemetry is not None: actor.telemetry.emit(M16DiagnosticStage.EVALUATOR_INVOKED)
         outcome=judge.evaluate(development_case.case, tuple(interactions), state, terminal if terminal and terminal.action_type is not EvaluationActionType.TOOL_CALL else None)
         category=self._category(outcome.outcome_type.value, outcome.payload, terminal, state, actor.observations)
-        if actor.telemetry is not None: actor.telemetry.emit(M16DiagnosticStage.TERMINAL_ADAPTER_ACTION, action_type=terminal.action_type.value if terminal else None, terminal_category=category.value)
+        if actor.telemetry is not None:
+            actor.telemetry.emit(M16DiagnosticStage.TERMINAL_ADAPTER_ACTION, action_type=terminal.action_type.value if terminal else None, terminal_category=category.value)
+            actor.telemetry.emit(M16DiagnosticStage.TERMINAL_REASON, success=category is M16FailureCategory.SUCCESS, terminal_category=category.value)
         return M16RunAttemptRecord("m16-attempt-record-v1",definition.run_id,definition.attempt_id(attempt_number),attempt_number,definition.evaluation_id,definition.baseline_id,definition.repetition,development_case.task_family,development_case.difficulty,development_case.eligibility,m16_completion_mode(development_case.case).value,category is M16FailureCategory.SUCCESS,category,state.steps_used,state.tool_calls_used,provider_request_attempts=sum(getattr(x,"request_attempts",0) for x in actor.observations),model_calls=sum(getattr(x,"model_calls",0) for x in actor.observations),manifest_hash=self.manifest.manifest_hash)
 
     @staticmethod

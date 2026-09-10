@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import importlib
 import io
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
@@ -19,7 +20,21 @@ from src.evaluation.m16_mind_failure_diagnostic_v1 import (
     diagnostic_schedule,
     load_frozen_m16_mind_failure_diagnostic_manifest,
 )
-from src.evaluation.m16_mind_failure_diagnostic_v1_execution import main, validate_diagnostic_v1_preflight
+from src.evaluation.m16_mind_failure_diagnostic_v1_execution import execute_m16_mind_failure_diagnostic_v1, main, validate_diagnostic_v1_preflight
+from src.core.inference_registry import InferenceStrategyRegistry
+from src.core.inference_strategy import InferenceStrategy
+from src.evaluation.m16_benchmark_contracts import M16BaselineID, M16FormalExecutionManifest
+from src.evaluation.m16_benchmark_runner import M16BenchmarkRunner, M16RunActor
+from src.evaluation.m16_mind_session_adapter import M16MINDSessionEvaluationAdapter
+from src.evaluation.m16_failure_mechanism_audit import CountingSyntheticProvider, _IdentityInference
+from src.integration.llm_provider import ProviderResponse
+from src.integration.llm_session_admission import M13SessionAdmissionResolver
+from src.integration.task_interpreter import TaskInterpreter
+from evaluation.tasks.m16_benchmark_dry_run_fixtures import get_m16_benchmark_dry_run_cases
+from evaluation.tasks.m16_cohort_a_held_out import get_m16_cohort_a_held_out_suite
+import src.evaluation.m16_diagnostic_telemetry as telemetry_module
+import src.evaluation.m16_mind_failure_diagnostic_v1 as diagnostic_module
+import src.evaluation.m16_mind_failure_diagnostic_v1_execution as execution_module
 
 
 class M16MindFailureDiagnosticV1Tests(unittest.TestCase):
@@ -42,16 +57,119 @@ class M16MindFailureDiagnosticV1Tests(unittest.TestCase):
                 main([])
 
     def test_preflight_mismatch_stops_before_provider_or_agent_construction(self) -> None:
-        from dataclasses import replace
         mismatched = replace(self.manifest, source_suite_hash="wrong")
         provider_calls = 0
         with self.assertRaises(RuntimeError):
             validate_diagnostic_v1_preflight(manifest=mismatched)
         self.assertEqual(provider_calls, 0)
 
+    def _temporary_manifest(self, directory: Path):
+        with patch.object(diagnostic_module, "DIAGNOSTIC_RESULT_DIRECTORY", directory):
+            return replace(self.manifest, result_directory=str(directory).replace("\\", "/"))
+
+    def _preflight(self, directory: Path, manifest):
+        with patch.object(telemetry_module, "DIAGNOSTIC_RESULT_DIRECTORY", directory), patch.object(diagnostic_module, "DIAGNOSTIC_RESULT_DIRECTORY", directory), patch.object(execution_module, "EXPECTED_DIAGNOSTIC_MANIFEST_HASH", manifest.manifest_hash):
+            return validate_diagnostic_v1_preflight(directory, manifest)
+
+    def test_preflight_is_zero_write_for_absent_empty_and_valid_namespaces(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ("absent", "empty", "valid", "terminal"):
+                with self.subTest(name=name):
+                    directory = root / name
+                    if name != "absent":
+                        directory.mkdir()
+                    manifest = self._temporary_manifest(directory)
+                    if name in {"valid", "terminal"}:
+                        with patch.object(telemetry_module, "DIAGNOSTIC_RESULT_DIRECTORY", directory):
+                            store = M16MindFailureDiagnosticStore(directory, manifest)
+                            store.initialize()
+                            definition = diagnostic_schedule(manifest, tuple(item.evaluation_id for item in get_m16_cohort_a_held_out_suite().cases))[0]
+                            store.append_attempt(M16DiagnosticAttemptRecord(
+                                DIAGNOSTIC_RESULT_SCHEMA_VERSION, manifest.manifest_hash, definition.run_id,
+                                definition.attempt_id(1), 1, definition.public_case_id, 1,
+                                M16DiagnosticAttemptStatus.INTERRUPTED_INCOMPLETE if name == "valid" else M16DiagnosticAttemptStatus.TERMINAL_VALID,
+                                "interrupted" if name == "valid" else "agent_fail", 0,
+                            ))
+                    before = {item.relative_to(root): item.read_bytes() for item in directory.rglob("*") if item.is_file()} if directory.exists() else {}
+                    self._preflight(directory, manifest)
+                    after = {item.relative_to(root): item.read_bytes() for item in directory.rglob("*") if item.is_file()} if directory.exists() else {}
+                    self.assertEqual(before, after)
+                    self.assertFalse(M16FormalExecutionLock(directory, manifest.manifest_hash).path.exists())
+
+    def test_preflight_rejects_foreign_state_and_active_owner_before_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "diagnostic"
+            directory.mkdir()
+            manifest = self._temporary_manifest(directory)
+            (directory / "diagnostic_manifest_v1.json").write_text("{}", encoding="utf-8")
+            with self.assertRaises(Exception):
+                self._preflight(directory, manifest)
+            (directory / "diagnostic_manifest_v1.json").unlink()
+            provider_calls = agent_runs = 0
+            with M16FormalExecutionLock(directory, manifest.manifest_hash):
+                with self.assertRaises(FormalExecutionAlreadyActiveError):
+                    self._preflight(directory, manifest)
+            self._preflight(directory, manifest)
+            with M16FormalExecutionLock(directory, manifest.manifest_hash):
+                pass
+            self.assertEqual((provider_calls, agent_runs), (0, 0))
+
+    def test_active_execution_owner_rejects_execute_before_provider_construction(self) -> None:
+        directory = Path("evaluation/results/m16_mind_failure_diagnostic_v1")
+        with M16FormalExecutionLock(directory, self.manifest.manifest_hash):
+            with self.assertRaises(FormalExecutionAlreadyActiveError):
+                execute_m16_mind_failure_diagnostic_v1(directory)
+
     def test_import_is_inert(self) -> None:
         module = importlib.import_module("src.evaluation.m16_mind_failure_diagnostic_v1_execution")
         self.assertTrue(callable(module.main))
+
+    def _run_e2e(self, case_index: int, telemetry_enabled: bool):
+        """Run actual M16 adapter/environment/judge wiring with no network."""
+        case = get_m16_benchmark_dry_run_cases()[case_index]
+        manifest = M16FormalExecutionManifest("1.1.0", "1.0.0", "suite", "split", "1", "config", repetition_count=1)
+        events = []
+        provider = CountingSyntheticProvider(ProviderResponse({
+            "intent": "synthetic", "required_capabilities": ["calculator"], "constraints": {}, "evidence": {},
+        }))
+        from src.evaluation.m16_diagnostic_telemetry import M16DiagnosticTelemetry
+        telemetry = M16DiagnosticTelemetry(events.append if telemetry_enabled else None)
+        registry = InferenceStrategyRegistry()
+        registry.register(InferenceStrategy("synthetic_calculator", "Synthetic capability", ("calculator",)), _IdentityInference())
+
+        def actor():
+            resolver = M13SessionAdmissionResolver(TaskInterpreter(provider), registry, telemetry)
+            return M16RunActor(M16MINDSessionEvaluationAdapter(resolver, telemetry=telemetry), [], telemetry)
+
+        runner = M16BenchmarkRunner(manifest, {M16BaselineID.MIND_LITE_V1: actor, M16BaselineID.DIRECT_TOOL_CALLING: actor})
+        definition = next(item for item in runner.schedule((case,)) if item.baseline_id is M16BaselineID.MIND_LITE_V1)
+        return runner.execute(case, definition), provider.calls, [event.stage_name for event in events]
+
+    def test_e2e_calculator_runner_observes_real_tool_evaluator_and_terminal_boundaries(self) -> None:
+        off, off_calls, _ = self._run_e2e(1, False)
+        on, on_calls, stages = self._run_e2e(1, True)
+        self.assertEqual((off.to_dict(), off_calls), (on.to_dict(), on_calls))
+        self.assertTrue(on.success)
+        for stage in (
+            M16DiagnosticStage.PROJECTED_TOOL_ACTION,
+            M16DiagnosticStage.TOOL_INVOKED,
+            M16DiagnosticStage.EVALUATOR_INVOKED,
+            M16DiagnosticStage.TERMINAL_ADAPTER_ACTION,
+            M16DiagnosticStage.TERMINAL_REASON,
+        ):
+            self.assertIn(stage, stages)
+
+    def test_e2e_direct_runner_observes_answer_evaluator_and_no_tool(self) -> None:
+        off, off_calls, _ = self._run_e2e(0, False)
+        on, on_calls, stages = self._run_e2e(0, True)
+        self.assertEqual((off.to_dict(), off_calls), (on.to_dict(), on_calls))
+        self.assertTrue(on.success)
+        self.assertIn(M16DiagnosticStage.PROJECTED_ANSWER_ACTION, stages)
+        self.assertIn(M16DiagnosticStage.EVALUATOR_INVOKED, stages)
+        self.assertIn(M16DiagnosticStage.TERMINAL_ADAPTER_ACTION, stages)
+        self.assertIn(M16DiagnosticStage.TERMINAL_REASON, stages)
+        self.assertNotIn(M16DiagnosticStage.TOOL_INVOKED, stages)
 
     def test_exactly_96_unique_manifest_bound_ids_do_not_overlap_formal_namespace(self) -> None:
         cases = tuple(f"public.case.{index:03d}" for index in range(96))

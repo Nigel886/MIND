@@ -36,6 +36,15 @@ def validate_diagnostic_v1_preflight(
     """Verify frozen identity and schedule before any provider/Agent work."""
     directory = validate_diagnostic_result_directory(result_dir)
     active_manifest = manifest or load_frozen_m16_mind_failure_diagnostic_manifest()
+    with M16FormalExecutionLock(directory, active_manifest.manifest_hash):
+        return _validate_diagnostic_v1_preflight_under_lock(directory, active_manifest)
+
+
+def _validate_diagnostic_v1_preflight_under_lock(
+    directory: Path,
+    active_manifest: M16MindFailureDiagnosticManifest,
+) -> tuple[M16MindFailureDiagnosticManifest, tuple[Any, ...], tuple[Any, ...]]:
+    """Read-only preflight while the caller owns the namespace lock."""
     if active_manifest.manifest_hash != EXPECTED_DIAGNOSTIC_MANIFEST_HASH:
         raise RuntimeError("diagnostic manifest hash mismatch")
     if active_manifest.result_directory != str(directory).replace("\\", "/"):
@@ -51,14 +60,14 @@ def validate_diagnostic_v1_preflight(
         raise RuntimeError("diagnostic run identity isolation failure")
     if active_manifest.baseline != DIAGNOSTIC_BASELINE or active_manifest.repetitions != 1:
         raise RuntimeError("diagnostic baseline/repetition contract mismatch")
-    # Reading an existing store is permitted only after namespace and manifest
-    # validation; it never reads, resumes, or counts historical result sets.
-    if directory.exists():
-        store = M16MindFailureDiagnosticStore(directory, active_manifest)
-        store.initialize()
-        unknown = {item.run_id for item in store.completed_run_ids()} - {item.run_id for item in definitions}
-        if unknown:
-            raise RuntimeError("diagnostic resume state contains foreign run IDs")
+    # Inspection is deliberately distinct from initialization: preflight never
+    # creates a directory, manifest, attempt, or telemetry file.
+    store = M16MindFailureDiagnosticStore(directory, active_manifest)
+    records = store.inspect()
+    known = {item.run_id for item in definitions}
+    unknown = {item.run_id for item in records} - known
+    if unknown:
+        raise RuntimeError("diagnostic resume state contains foreign run IDs")
     return active_manifest, cases, definitions
 
 
@@ -67,7 +76,7 @@ def execute_m16_mind_failure_diagnostic_v1(result_dir: str | Path = DEFAULT_RESU
     manifest = load_frozen_m16_mind_failure_diagnostic_manifest()
     directory = validate_diagnostic_result_directory(result_dir)
     with M16FormalExecutionLock(directory, manifest.manifest_hash):
-        _, cases, definitions = validate_diagnostic_v1_preflight(directory, manifest)
+        _, cases, definitions = _validate_diagnostic_v1_preflight_under_lock(directory, manifest)
         store = M16MindFailureDiagnosticStore(directory, manifest)
         store.initialize()
         completed = store.completed_run_ids()
