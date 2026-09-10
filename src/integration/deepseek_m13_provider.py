@@ -18,8 +18,26 @@ class DeepSeekM13InterpretationProvider:
         self._transport,self._vocabulary,self._sink=transport,vocabulary,observation_sink
     def interpret(self,task:Task)->ProviderResponse|ProviderFailure:
         if not isinstance(task,Task): raise TypeError("task must be Task")
-        request=json.dumps({"public_task":_public_task_view(task),"capability_vocabulary":list(self._vocabulary)},sort_keys=True,separators=(",",":"),ensure_ascii=False)
+        schema=load_schema("m16_mind_interpretation_v1.json")
+        request=json.dumps({"public_task":_public_task_view(task),"capability_vocabulary":list(self._vocabulary),"response_schema":schema},sort_keys=True,separators=(",",":"),ensure_ascii=False)
         result=self._transport.generate(f"{read_prompt('m16_mind_interpretation_v1.txt')}\n{request}")
         if self._sink: self._sink(result.observation)
-        if isinstance(result,DeepSeekTransportSuccess): return ProviderResponse(result.payload)
+        if isinstance(result,DeepSeekTransportSuccess):
+            if _matches_schema(result.payload,schema): return ProviderResponse(result.payload)
+            return ProviderFailure(ProviderFailureCategory.INVALID_OUTPUT_FORMAT,{"reason":"schema_nonconforming_response"})
         return ProviderFailure(ProviderFailureCategory.TIMEOUT if result.category is DeepSeekTransportFailureCategory.TIMEOUT else ProviderFailureCategory.MALFORMED_RESPONSE if result.category is DeepSeekTransportFailureCategory.MALFORMED_RESPONSE else ProviderFailureCategory.UNAVAILABLE,{"reason":result.reason})
+
+def _matches_schema(value:object,schema:object)->bool:
+    """Validate only the existing canonical JSON-schema subset at this boundary."""
+    if not isinstance(schema,dict): return False
+    if "enum" in schema and value not in schema["enum"]: return False
+    kind=schema.get("type")
+    if kind=="string": return isinstance(value,str)
+    if kind=="array": return isinstance(value,list) and all(_matches_schema(item,schema.get("items",{})) for item in value)
+    if kind!="object" or not isinstance(value,dict): return False
+    properties=schema.get("properties",{})
+    if not isinstance(properties,dict): return False
+    required=schema.get("required",())
+    if not isinstance(required,(list,tuple)) or any(key not in value for key in required): return False
+    if schema.get("additionalProperties") is False and set(value)-set(properties): return False
+    return all(key not in properties or _matches_schema(item,properties[key]) for key,item in value.items())
