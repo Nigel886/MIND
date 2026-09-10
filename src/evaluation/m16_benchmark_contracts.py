@@ -6,7 +6,7 @@ formally authorized run.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import hashlib
 import json
@@ -87,6 +87,7 @@ class M16FormalExecutionManifest:
     provider_request_model_id: str | None = None
     official_documented_model_version: str | None = None
     returned_model_observation_policy: str | None = None
+    execution_attempt_identity: str | None = None
 
     def __post_init__(self) -> None:
         if self.repetition_count < 1 or len(self.baseline_ids) != 2 or set(self.baseline_ids) != set(M16BaselineID):
@@ -98,7 +99,7 @@ class M16FormalExecutionManifest:
         data = dict(self.__dict__)
         data["baseline_ids"] = [x.value for x in self.baseline_ids]
         data["budget_contract"] = self.budget_contract.to_dict()
-        for name in ("provider_request_model_id", "official_documented_model_version", "returned_model_observation_policy"):
+        for name in ("provider_request_model_id", "official_documented_model_version", "returned_model_observation_policy", "execution_attempt_identity"):
             if data[name] is None:
                 del data[name]
         return data
@@ -149,6 +150,11 @@ def load_frozen_m16_flash_lite_manifest() -> M16FormalExecutionManifest:
 def load_frozen_m16_deepseek_manifest() -> M16FormalExecutionManifest:
     """Construct the isolated DeepSeek V4 Flash formal manifest."""
     return _load_manifest_from_config("m16_deepseek_v4_flash_v1.json")
+
+
+def load_frozen_m16_deepseek_restart1_manifest() -> M16FormalExecutionManifest:
+    """Construct the clean replacement identity for the invalidated DeepSeek run."""
+    return replace(load_frozen_m16_deepseek_manifest(), execution_attempt_identity="restart1")
 
 
 @dataclass(frozen=True)
