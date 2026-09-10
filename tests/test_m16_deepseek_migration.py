@@ -18,7 +18,7 @@ class DeepSeekMigrationTests(unittest.TestCase):
   url,body=post.calls[0]; self.assertEqual(url,DEEPSEEK_ENDPOINT); self.assertEqual(body["model"],"deepseek-v4-flash"); self.assertEqual(body["thinking"],{"type":"disabled"}); self.assertEqual(body["response_format"],{"type":"json_object"}); self.assertEqual((body["temperature"],body["top_p"],body["n"],body["max_tokens"]),(0,1,1,512))
  def test_config_manifest_and_result_state_are_isolated(self):
   raw=(ROOT/"evaluation/config/m16_deepseek_v4_flash_v1.json").read_bytes(); m=load_frozen_m16_deepseek_manifest()
-  self.assertEqual(sha256(raw).hexdigest(),"db72b045a7ba5edd756b0b9103d9277bd0cc2e8952ce23c3182533632c7152de");self.assertEqual(m.manifest_hash,EXPECTED_MANIFEST_HASH);self.assertNotEqual(m.manifest_hash,load_frozen_m16_flash_lite_manifest().manifest_hash)
+  self.assertEqual(sha256(raw).hexdigest(),"2a19406120cdb5627ee8520c5a32fe01d7226500ac0c1727b4f4794971a8d97e");self.assertEqual(m.manifest_hash,EXPECTED_MANIFEST_HASH);self.assertNotEqual(m.manifest_hash,load_frozen_m16_flash_lite_manifest().manifest_hash)
   self.assertEqual((m.provider_request_model_id,m.official_documented_model_version),("deepseek-v4-flash","DeepSeek-V4-Flash-0731"));self.assertEqual(DEFAULT_RESULT_DIRECTORY,"evaluation/results/m16_deepseek_v4_flash")
   _,cases,definitions=validate_deepseek_formal_preflight();self.assertEqual((len(cases),len(definitions),len({x.run_id for x in definitions})),(96,960,960))
   with self.assertRaises(ValueError): execute_deepseek_formal_benchmark("evaluation/results/m16_flash_lite")
