@@ -4,7 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable
+from types import MappingProxyType
+from typing import Any, Callable, Mapping
 
 
 DIAGNOSTIC_SCHEMA_VERSION = "m16-mind-diagnostic-stage-v1"
@@ -14,6 +15,20 @@ _HISTORICAL = frozenset(Path(item) for item in (
     "evaluation/results/m16", "evaluation/results/m16_flash_lite",
     "evaluation/results/m16_deepseek_v4_flash", "evaluation/results/m16_deepseek_v4_flash_restart1",
 ))
+_ALLOWED_EVENT_METADATA_KEYS = frozenset({"attempt_number", "diagnostic_run_id", "resume_attempt"})
+
+
+def _safe_event_metadata(value: object) -> Mapping[str, str | int | bool | None]:
+    """Accept only a compact, non-sensitive event metadata allow-list.
+
+    Raw provider text, prompts, credentials, private truth, and runtime state
+    cannot be represented by this telemetry contract.
+    """
+    if not isinstance(value, dict) or set(value) - _ALLOWED_EVENT_METADATA_KEYS:
+        raise ValueError("diagnostic metadata is not permitted")
+    if any(not isinstance(item, (str, int, bool, type(None))) for item in value.values()):
+        raise TypeError("diagnostic metadata must be scalar")
+    return MappingProxyType(dict(value))
 
 
 class M16DiagnosticStage(str, Enum):
@@ -55,7 +70,7 @@ class M16DiagnosticEvent:
     session_phase: str | None = None
     terminal_category: str | None = None
     schema_version: str = DIAGNOSTIC_SCHEMA_VERSION
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, str | int | bool | None] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.stage_name, M16DiagnosticStage) or not isinstance(self.stage_ordinal, int) or self.stage_ordinal < 1:
@@ -64,7 +79,7 @@ class M16DiagnosticEvent:
             raise TypeError("normalized_reason must be a diagnostic reason")
         if self.schema_version != DIAGNOSTIC_SCHEMA_VERSION:
             raise ValueError("unexpected diagnostic schema version")
-        if not isinstance(self.metadata, dict): raise TypeError("metadata must be a dict")
+        object.__setattr__(self, "metadata", _safe_event_metadata(self.metadata))
 
     def to_dict(self) -> dict[str, Any]:
         return {"schema_version": self.schema_version, "stage_name": self.stage_name.value, "stage_ordinal": self.stage_ordinal, "success": self.success, "normalized_reason": self.normalized_reason.value if self.normalized_reason else None, "selected_capability": self.selected_capability, "selected_strategy": self.selected_strategy, "action_type": self.action_type, "tool_name": self.tool_name, "provider_request_count": self.provider_request_count, "model_call_count": self.model_call_count, "session_phase": self.session_phase, "terminal_category": self.terminal_category, "metadata": dict(self.metadata)}

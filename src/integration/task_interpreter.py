@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from math import isfinite
 from types import MappingProxyType
-from typing import Any, Mapping, TypeAlias
+from typing import Any, Callable, Mapping, TypeAlias
 
 from src.core.task import Task
 from src.core.task_interpretation import TaskInterpretationProposal
@@ -108,11 +108,19 @@ class TaskInterpreter:
             raise TypeError("provider must satisfy LLMProvider")
         self._provider = provider
 
-    def interpret(self, task: Task) -> InterpreterResult:
+    def interpret(
+        self,
+        task: Task,
+        *,
+        response_observer: Callable[[], object] | None = None,
+    ) -> InterpreterResult:
         """Return a proposal, pass through provider failure, or report parser failure."""
 
         if not isinstance(task, Task):
             raise TypeError("task must be a Task")
+
+        if response_observer is not None and not callable(response_observer):
+            raise TypeError("response_observer must be callable or None")
 
         result = self._provider.interpret(task)
         if isinstance(result, ProviderFailure):
@@ -122,6 +130,15 @@ class TaskInterpreter:
                 InterpreterFailureCategory.INVALID_OUTPUT_FORMAT,
                 {"reason": "provider_result_type"},
             )
+
+        # A provider response is observable before deterministic decoding.  The
+        # optional observer is deliberately best-effort: it must never alter a
+        # provider, parser, or proposal result.
+        if response_observer is not None:
+            try:
+                response_observer()
+            except Exception:
+                pass
 
         payload = result.to_dict()["payload"]
         if not isinstance(payload, dict) or "intent" not in payload:

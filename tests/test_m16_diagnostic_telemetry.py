@@ -57,6 +57,21 @@ class M16DiagnosticTelemetryTests(unittest.TestCase):
             self.assertEqual((step.action.action_type, calls), (EvaluationActionType.FAIL, 1))
             self.assertIn(M16DiagnosticStage.ADMISSION_FAILED, [event.stage_name for event in events])
 
+    def test_malformed_response_preserves_behavior_and_records_received_before_decode_failure(self):
+        malformed = ProviderResponse({"missing": "intent"})
+        off, off_calls, _ = self._run("direct_answer", malformed, sink=lambda event: None)
+        on, on_calls, events = self._run("direct_answer", malformed)
+        self.assertEqual((off.to_dict(), off_calls), (on.to_dict(), on_calls))
+        stages = [event.stage_name for event in events]
+        self.assertEqual(
+            stages[:3],
+            [
+                M16DiagnosticStage.PROVIDER_REQUEST_STARTED,
+                M16DiagnosticStage.PROVIDER_RESPONSE_RECEIVED,
+                M16DiagnosticStage.PROVIDER_DECODE_FAILURE,
+            ],
+        )
+
     def test_nonselection_and_max_cycle_failures_are_distinct_event_paths(self):
         step, _, events = self._run("direct_answer", ProviderResponse({"intent": "synthetic", "required_capabilities": [], "constraints": {}, "evidence": {}}), selected=False)
         self.assertEqual(step.action.action_type, EvaluationActionType.FAIL)

@@ -56,13 +56,18 @@ class M13SessionAdmissionResolver:
             raise TypeError("runtime_state must be a RuntimeState")
 
         self._emit(M16DiagnosticStage.PROVIDER_REQUEST_STARTED)
-        interpretation = self._interpreter.interpret(task)
+        interpretation = self._interpreter.interpret(
+            task,
+            response_observer=lambda: self._emit(
+                M16DiagnosticStage.PROVIDER_RESPONSE_RECEIVED,
+                success=True,
+            ),
+        )
         if not isinstance(interpretation, TaskInterpretationProposal):
             reason = M16DiagnosticReason.PROVIDER_TRANSPORT_FAILURE if isinstance(interpretation, ProviderFailure) else M16DiagnosticReason.MALFORMED_STRUCTURED_OUTPUT if isinstance(interpretation, InterpreterFailure) else M16DiagnosticReason.UNKNOWN
             self._emit(M16DiagnosticStage.PROVIDER_DECODE_FAILURE, success=False, normalized_reason=reason)
             return interpretation
 
-        self._emit(M16DiagnosticStage.PROVIDER_RESPONSE_RECEIVED, success=True)
         self._emit(M16DiagnosticStage.PROVIDER_DECODE_SUCCESS, success=True)
         self._emit(M16DiagnosticStage.PROPOSAL_CONSTRUCTED, success=True)
 
