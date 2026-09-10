@@ -1,0 +1,9 @@
+candidate,provider_calls,admission_outcome,integration_selected,private_session_reached,policy_reached,action_type,tool_calls,terminal_adapter_action,runner_category_if_terminal,evaluator_boundary
+provider_interpreter_failure,1,non_selected_or_failed,false,false,false,fail,0,fail,agent_fail,
+malformed_structured_proposal,1,non_selected_or_failed,false,false,false,fail,0,fail,agent_fail,
+proposal_validation_failure,1,non_selected_or_failed,false,false,false,fail,0,fail,agent_fail,
+meta_inference_nonselection,1,non_selected_or_failed,false,false,false,fail,0,fail,agent_fail,
+valid_direct_answer,1,selected,true,true,true,answer,0,answer,not_agent_fail,
+valid_calculator,1,selected,true,true,true,tool_call,1,tool_call,not_agent_fail,tool_response
+private_session_max_cycles,1,non_selected_or_failed,false,true,false,fail,0,fail,agent_fail,
+private_policy_failure_not_m16_eligible,0,preselected_synthetic_context,true,true,true,fail,0,fail,agent_fail,not_reached

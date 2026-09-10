@@ -1,0 +1,7 @@
+stage,mind_lite,direct_tool_calling
+M13 interpretation,used,bypassed
+deterministic validation,used,bypassed
+Meta-Inference admission,used,bypassed
+private compatibility projection,used,bypassed
+CognitiveAgentSession,used after admission,bypassed
+evaluator boundary,used,used

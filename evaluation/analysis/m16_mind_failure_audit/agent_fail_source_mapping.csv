@@ -1,0 +1,7 @@
+source_branch,adapter_action,terminal_reason,runner_category
+provider/interpreter failure → non-IntegrationSelected,fail:m13_admission_failed,not persisted,agent_fail
+proposal validation failure → non-IntegrationSelected,fail:m13_admission_failed,not persisted,agent_fail
+Meta-Inference unavailable/rejected → non-IntegrationSelected,fail:m13_admission_failed,not persisted,agent_fail
+private session terminated non-completed,fail:<termination_reason>,session-specific; not persisted,agent_fail
+GoalAwarePolicy fail_task,fail:failed,failed; not persisted,agent_fail
+unsupported policy projection,fail:failed,failed; not persisted,agent_fail

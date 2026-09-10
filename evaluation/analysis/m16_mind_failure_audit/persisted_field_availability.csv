@@ -1,0 +1,10 @@
+field,persisted
+failure_category,yes
+family/difficulty/repetition,yes
+agent_steps/tool_calls,yes
+provider request/model call counters,yes
+terminal action/reason,no
+M13/interpreter/validation/decision result,no
+provider payload/error/status,no
+session/policy/action trace,no
+evaluator payload,no
