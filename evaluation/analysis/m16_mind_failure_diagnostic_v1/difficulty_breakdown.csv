@@ -1,0 +1,4 @@
+difficulty,run_count,malformed_structured_output,admission_failure,agent_fail
+easy,32,32,32,32
+hard,32,32,32,32
+medium,32,32,32,32

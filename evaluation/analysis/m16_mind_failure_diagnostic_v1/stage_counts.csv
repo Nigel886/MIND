@@ -1,0 +1,8 @@
+stage,count
+admission_failed,96
+evaluator_invoked,96
+provider_decode_failure,96
+provider_request_started,96
+provider_response_received,96
+terminal_adapter_action,192
+terminal_reason,96
