@@ -84,6 +84,9 @@ class M16FormalExecutionManifest:
     mind_schema_hash: str = "development-unset"
     direct_schema_hash: str = "development-unset"
     calculator_schema_hash: str = "development-unset"
+    provider_request_model_id: str | None = None
+    official_documented_model_version: str | None = None
+    returned_model_observation_policy: str | None = None
 
     def __post_init__(self) -> None:
         if self.repetition_count < 1 or len(self.baseline_ids) != 2 or set(self.baseline_ids) != set(M16BaselineID):
@@ -95,6 +98,9 @@ class M16FormalExecutionManifest:
         data = dict(self.__dict__)
         data["baseline_ids"] = [x.value for x in self.baseline_ids]
         data["budget_contract"] = self.budget_contract.to_dict()
+        for name in ("provider_request_model_id", "official_documented_model_version", "returned_model_observation_policy"):
+            if data[name] is None:
+                del data[name]
         return data
 
     @property
@@ -124,6 +130,9 @@ def _load_manifest_from_config(config_name: str) -> M16FormalExecutionManifest:
         direct_prompt_hash=config["Direct"]["prompt_hash"], mind_schema_hash=config["MIND"]["schema_hash"],
         direct_schema_hash=config["Direct"]["schema_hash"], calculator_schema_hash=tool["tool_schema_hash"],
         suite_generation_protocol_version=config["protocol"], completion_semantics_version="m16_completion_v2",
+        provider_request_model_id=config.get("request_model_id"),
+        official_documented_model_version=config.get("official_documented_model_version"),
+        returned_model_observation_policy=config.get("returned_model_observation_policy"),
     )
 
 
@@ -135,6 +144,11 @@ def load_frozen_m16_manifest() -> M16FormalExecutionManifest:
 def load_frozen_m16_flash_lite_manifest() -> M16FormalExecutionManifest:
     """Construct the isolated Gemini 3.1 Flash-Lite replacement manifest."""
     return _load_manifest_from_config("m16_gemini_31_flash_lite_v1.json")
+
+
+def load_frozen_m16_deepseek_manifest() -> M16FormalExecutionManifest:
+    """Construct the isolated DeepSeek V4 Flash formal manifest."""
+    return _load_manifest_from_config("m16_deepseek_v4_flash_v1.json")
 
 
 @dataclass(frozen=True)
