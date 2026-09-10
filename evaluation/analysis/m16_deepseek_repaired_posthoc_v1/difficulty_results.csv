@@ -1,0 +1,4 @@
+stratum,analysis_label,case_count,mind_rate,direct_rate,paired_difference,mind_ci_low,mind_ci_high,direct_ci_low,direct_ci_high,difference_ci_low,difference_ci_high
+easy,EXPLORATORY,32,1.0,1.0,0.0,1.0,1.0,1.0,1.0,0.0,0.0
+medium,EXPLORATORY,32,1.0,1.0,0.0,1.0,1.0,1.0,1.0,0.0,0.0
+hard,EXPLORATORY,32,1.0,0.7,0.30000000000000004,1.0,1.0,0.54375,0.84375,0.15625,0.45625000000000004

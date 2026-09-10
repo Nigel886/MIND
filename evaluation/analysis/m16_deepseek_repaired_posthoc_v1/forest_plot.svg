@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="498" viewBox="0 0 900 498">
+<style>text{font-family:Arial,sans-serif;font-size:13px}.primary{font-weight:bold}.explore{fill:#444}.line{stroke:#276fbf;stroke-width:2}.zero{stroke:#777;stroke-dasharray:4 4}.point{fill:#276fbf}</style>
+<line class="zero" x1="550.0" y1="50" x2="550.0" y2="478"/>
+<text class="explore" x="10" y="74">Overall</text>
+<line class="line" x1="567.1" y1="70" x2="608.0" y2="70"/>
+<circle class="point" cx="585.7" cy="70" r="4"/>
+<text x="845" y="74">10.0%</text>
+<text class="explore" x="10" y="108">calculator</text>
+<line class="line" x1="550.0" y1="104" x2="550.0" y2="104"/>
+<circle class="point" cx="550.0" cy="104" r="4"/>
+<text x="845" y="108">0.0%</text>
+<text class="explore" x="10" y="142">direct_answer</text>
+<line class="line" x1="584.2" y1="138" x2="660.1" y2="138"/>
+<circle class="point" cx="621.4" cy="138" r="4"/>
+<text x="845" y="142">20.0%</text>
+<text class="explore" x="10" y="176">easy</text>
+<line class="line" x1="550.0" y1="172" x2="550.0" y2="172"/>
+<circle class="point" cx="550.0" cy="172" r="4"/>
+<text x="845" y="176">0.0%</text>
+<text class="explore" x="10" y="210">medium</text>
+<line class="line" x1="550.0" y1="206" x2="550.0" y2="206"/>
+<circle class="point" cx="550.0" cy="206" r="4"/>
+<text x="845" y="210">0.0%</text>
+<text class="explore" x="10" y="244">hard</text>
+<line class="line" x1="605.8" y1="240" x2="712.8" y2="240"/>
+<circle class="point" cx="657.1" cy="240" r="4"/>
+<text x="845" y="244">30.0%</text>
+<text class="explore" x="10" y="278">calculator × easy</text>
+<line class="line" x1="550.0" y1="274" x2="550.0" y2="274"/>
+<circle class="point" cx="550.0" cy="274" r="4"/>
+<text x="845" y="278">0.0%</text>
+<text class="explore" x="10" y="312">calculator × medium</text>
+<line class="line" x1="550.0" y1="308" x2="550.0" y2="308"/>
+<circle class="point" cx="550.0" cy="308" r="4"/>
+<text x="845" y="312">0.0%</text>
+<text class="explore" x="10" y="346">calculator × hard</text>
+<line class="line" x1="550.0" y1="342" x2="550.0" y2="342"/>
+<circle class="point" cx="550.0" cy="342" r="4"/>
+<text x="845" y="346">0.0%</text>
+<text class="explore" x="10" y="380">direct_answer × easy</text>
+<line class="line" x1="550.0" y1="376" x2="550.0" y2="376"/>
+<circle class="point" cx="550.0" cy="376" r="4"/>
+<text x="845" y="380">0.0%</text>
+<text class="explore" x="10" y="414">direct_answer × medium</text>
+<line class="line" x1="550.0" y1="410" x2="550.0" y2="410"/>
+<circle class="point" cx="550.0" cy="410" r="4"/>
+<text x="845" y="414">0.0%</text>
+<text class="explore" x="10" y="448">direct_answer × hard</text>
+<line class="line" x1="683.8" y1="444" x2="840.0" y2="444"/>
+<circle class="point" cx="764.2" cy="444" r="4"/>
+<text x="845" y="448">60.0%</text>
+</svg>

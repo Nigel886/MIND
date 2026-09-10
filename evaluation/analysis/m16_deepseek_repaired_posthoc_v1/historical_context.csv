@@ -1,0 +1,3 @@
+context,experiment,mind_rate,direct_rate
+DESCRIPTIVE CROSS-EXPERIMENT CONTEXT ONLY,original_formal,0.0,0.892
+DESCRIPTIVE CROSS-EXPERIMENT CONTEXT ONLY,repaired_posthoc,1.0,0.9

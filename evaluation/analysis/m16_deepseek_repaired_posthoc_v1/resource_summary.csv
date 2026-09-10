@@ -1,0 +1,17 @@
+grouping_level,group_id,runs,provider_request_attempts,logical_model_calls,requests_per_run,calls_per_run,token_latency_cache_model_telemetry
+baseline,mind_lite_v1,480,480,480,1.0,1.0,UNAVAILABLE
+baseline,direct_tool_calling,480,720,720,1.5,1.5,UNAVAILABLE
+baseline_family,mind_lite_v1:calculator,240,240,240,1.0,1.0,UNAVAILABLE
+baseline_family,mind_lite_v1:direct_answer,240,240,240,1.0,1.0,UNAVAILABLE
+baseline_family,direct_tool_calling:calculator,240,480,480,2.0,2.0,UNAVAILABLE
+baseline_family,direct_tool_calling:direct_answer,240,240,240,1.0,1.0,UNAVAILABLE
+baseline_repetition,mind_lite_v1:r1,96,96,96,1.0,1.0,UNAVAILABLE
+baseline_repetition,mind_lite_v1:r2,96,96,96,1.0,1.0,UNAVAILABLE
+baseline_repetition,mind_lite_v1:r3,96,96,96,1.0,1.0,UNAVAILABLE
+baseline_repetition,mind_lite_v1:r4,96,96,96,1.0,1.0,UNAVAILABLE
+baseline_repetition,mind_lite_v1:r5,96,96,96,1.0,1.0,UNAVAILABLE
+baseline_repetition,direct_tool_calling:r1,96,144,144,1.5,1.5,UNAVAILABLE
+baseline_repetition,direct_tool_calling:r2,96,144,144,1.5,1.5,UNAVAILABLE
+baseline_repetition,direct_tool_calling:r3,96,144,144,1.5,1.5,UNAVAILABLE
+baseline_repetition,direct_tool_calling:r4,96,144,144,1.5,1.5,UNAVAILABLE
+baseline_repetition,direct_tool_calling:r5,96,144,144,1.5,1.5,UNAVAILABLE
