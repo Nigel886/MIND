@@ -19,9 +19,9 @@ At this freeze point:
 | Field | Value |
 | --- | --- |
 | Diagnostic protocol | `m16-post-hoc-diagnostic-v1` |
-| Diagnostic manifest hash | `6890298b0e8f2f89a74faa59a33cd73d56a83a793e0195a26e3279bf77d7f0cb` |
-| Instrumentation commit | `ed9d474` |
-| Execution-safety revision | `m16-diagnostic-execution-safety-v1` |
+| Diagnostic manifest hash | `2170633e05dd51c0ffd899e8ee9913b8d95e127b29ac2f05abcd93417bbd4899` |
+| Instrumentation commit | `d30e8a6` |
+| Execution-safety revision | `m16-diagnostic-telemetry-ordering-v1` |
 | Telemetry schema | `m16-mind-diagnostic-stage-v1` (24 stages) |
 | Reason taxonomy | `m16-mind-diagnostic-reason-v1` (13 reasons) |
 | Provider behavior hash | `c074c0e08e6b7be9a93b955a5c5f85da52bb7e9cf83601477ab2e18dad4bc780` |
@@ -65,6 +65,17 @@ fails, the frozen observation sequence is:
 
 `provider_request_started` → `provider_response_received` →
 `provider_decode_failure`.
+
+Before the first diagnostic execution, implementation conformance was corrected
+so that successful admission telemetry is causal: `integration_selected` is
+observed only after an actual selected outcome exists and before the actual
+private-task projection; nonterminal projected actions do not emit terminal
+telemetry. The runner emits terminal telemetry after evaluator classification.
+This changes no event names, fields, provider request, runtime behavior, or
+schema semantics. The prior manifest
+`6890298b0e8f2f89a74faa59a33cd73d56a83a793e0195a26e3279bf77d7f0cb` and
+its 96 IDs are superseded before execution; the current manifest rebinds 96
+new unique diagnostic IDs.
 
 ## Storage, resume, and ownership
 

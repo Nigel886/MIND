@@ -151,6 +151,11 @@ class M16MindFailureDiagnosticV1Tests(unittest.TestCase):
         on, on_calls, stages = self._run_e2e(1, True)
         self.assertEqual((off.to_dict(), off_calls), (on.to_dict(), on_calls))
         self.assertTrue(on.success)
+        self.assertLess(stages.index(M16DiagnosticStage.INTEGRATION_SELECTED), stages.index(M16DiagnosticStage.PRIVATE_TASK_PROJECTED))
+        self.assertLess(stages.index(M16DiagnosticStage.PRIVATE_TASK_PROJECTED), stages.index(M16DiagnosticStage.PRIVATE_SESSION_CREATED))
+        self.assertLess(stages.index(M16DiagnosticStage.PROJECTED_TOOL_ACTION), stages.index(M16DiagnosticStage.TOOL_INVOKED))
+        self.assertLess(stages.index(M16DiagnosticStage.TOOL_INVOKED), stages.index(M16DiagnosticStage.EVALUATOR_INVOKED))
+        self.assertLess(stages.index(M16DiagnosticStage.EVALUATOR_INVOKED), stages.index(M16DiagnosticStage.TERMINAL_ADAPTER_ACTION))
         for stage in (
             M16DiagnosticStage.PROJECTED_TOOL_ACTION,
             M16DiagnosticStage.TOOL_INVOKED,
@@ -165,6 +170,10 @@ class M16MindFailureDiagnosticV1Tests(unittest.TestCase):
         on, on_calls, stages = self._run_e2e(0, True)
         self.assertEqual((off.to_dict(), off_calls), (on.to_dict(), on_calls))
         self.assertTrue(on.success)
+        self.assertLess(stages.index(M16DiagnosticStage.INTEGRATION_SELECTED), stages.index(M16DiagnosticStage.PRIVATE_TASK_PROJECTED))
+        self.assertLess(stages.index(M16DiagnosticStage.PRIVATE_TASK_PROJECTED), stages.index(M16DiagnosticStage.PRIVATE_SESSION_CREATED))
+        self.assertLess(stages.index(M16DiagnosticStage.PROJECTED_ANSWER_ACTION), stages.index(M16DiagnosticStage.EVALUATOR_INVOKED))
+        self.assertLess(stages.index(M16DiagnosticStage.EVALUATOR_INVOKED), stages.index(M16DiagnosticStage.TERMINAL_ADAPTER_ACTION))
         self.assertIn(M16DiagnosticStage.PROJECTED_ANSWER_ACTION, stages)
         self.assertIn(M16DiagnosticStage.EVALUATOR_INVOKED, stages)
         self.assertIn(M16DiagnosticStage.TERMINAL_ADAPTER_ACTION, stages)

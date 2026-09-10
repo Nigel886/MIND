@@ -56,6 +56,8 @@ class M16DiagnosticTelemetryTests(unittest.TestCase):
             step, calls, events = self._run("direct_answer", result)
             self.assertEqual((step.action.action_type, calls), (EvaluationActionType.FAIL, 1))
             self.assertIn(M16DiagnosticStage.ADMISSION_FAILED, [event.stage_name for event in events])
+            self.assertNotIn(M16DiagnosticStage.INTEGRATION_SELECTED, [event.stage_name for event in events])
+            self.assertNotIn(M16DiagnosticStage.PRIVATE_TASK_PROJECTED, [event.stage_name for event in events])
 
     def test_malformed_response_preserves_behavior_and_records_received_before_decode_failure(self):
         malformed = ProviderResponse({"missing": "intent"})
@@ -76,6 +78,8 @@ class M16DiagnosticTelemetryTests(unittest.TestCase):
         step, _, events = self._run("direct_answer", ProviderResponse({"intent": "synthetic", "required_capabilities": [], "constraints": {}, "evidence": {}}), selected=False)
         self.assertEqual(step.action.action_type, EvaluationActionType.FAIL)
         self.assertIn(M16DiagnosticStage.META_INFERENCE_NOT_SELECTED, [event.stage_name for event in events])
+        self.assertNotIn(M16DiagnosticStage.INTEGRATION_SELECTED, [event.stage_name for event in events])
+        self.assertNotIn(M16DiagnosticStage.PRIVATE_TASK_PROJECTED, [event.stage_name for event in events])
         step, _, events = self._run("direct_answer", max_cycles=0)
         self.assertEqual(step.action.action_type, EvaluationActionType.FAIL)
         self.assertIn(M16DiagnosticStage.PRIVATE_SESSION_TERMINATED, [event.stage_name for event in events])

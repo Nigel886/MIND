@@ -27,16 +27,17 @@ class M16MINDSessionEvaluationAdapter:
                 return result
             admission_session=CognitiveAgentSession(max_cycles=self._max_cycles)
             admission_session.start(step_input.case.task, admission_resolver=capture)
-            # Resolution succeeded: run the private frozen compatibility session only now.
-            projected=project_m16_legacy_task(step_input.case.task)
-            self._emit(M16DiagnosticStage.PRIVATE_TASK_PROJECTED, success=True)
-            self._session=CognitiveAgentSession(max_cycles=self._max_cycles)
             if not admitted or not isinstance(admitted[0], IntegrationSelected):
                 self._emit(M16DiagnosticStage.ADMISSION_FAILED, success=False, normalized_reason=M16DiagnosticReason.ADMISSION_FAILURE)
                 self._emit(M16DiagnosticStage.TERMINAL_ADAPTER_ACTION, action_type="fail", terminal_category="agent_fail")
                 return AgentStepResult(EvaluationAction(EvaluationActionType.FAIL,{"reason":"m13_admission_failed"}),True)
-            self._session.start(projected, validated_context=admitted[0])
+            # Selection exists before the private compatibility task is built;
+            # publish the corresponding observations at their causal boundary.
             self._emit(M16DiagnosticStage.INTEGRATION_SELECTED, success=True, selected_strategy=admitted[0].decision.selected_strategy)
+            projected=project_m16_legacy_task(step_input.case.task)
+            self._emit(M16DiagnosticStage.PRIVATE_TASK_PROJECTED, success=True)
+            self._session=CognitiveAgentSession(max_cycles=self._max_cycles)
+            self._session.start(projected, validated_context=admitted[0])
             self._emit(M16DiagnosticStage.PRIVATE_SESSION_CREATED, success=True, session_phase=self._session.phase.value)
             self._emit(M16DiagnosticStage.POLICY_INVOKED)
             return self._project(self._session.step(), self._telemetry)
@@ -79,7 +80,9 @@ class M16MINDSessionEvaluationAdapter:
         else:
             emit(M16DiagnosticStage.PROJECTED_TOOL_ACTION, action_type="tool_call", tool_name=parameters.get("tool_name"))
             action=AgentStepResult(EvaluationAction(EvaluationActionType.TOOL_CALL,parameters),False)
-        emit(M16DiagnosticStage.TERMINAL_ADAPTER_ACTION, action_type=action.action.action_type.value, terminal_category=None if action.action.action_type is EvaluationActionType.TOOL_CALL else "pending_evaluator")
+        # A projected answer or tool request is not itself a terminal outcome.
+        # The evaluation runner emits terminal telemetry after the evaluator has
+        # classified the actual interaction.
         return action
 
     def _emit(self, stage: M16DiagnosticStage, **data) -> None:

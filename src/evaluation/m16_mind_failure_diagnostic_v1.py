@@ -24,10 +24,10 @@ from src.evaluation.m16_diagnostic_telemetry import (
 
 DIAGNOSTIC_PROTOCOL_VERSION = "m16-post-hoc-diagnostic-v1"
 DIAGNOSTIC_RESULT_SCHEMA_VERSION = "m16-post-hoc-diagnostic-result-v1"
-INSTRUMENTATION_COMMIT = "ed9d474"
-EXECUTION_SAFETY_REVISION = "m16-diagnostic-execution-safety-v1"
+INSTRUMENTATION_COMMIT = "d30e8a6"
+EXECUTION_SAFETY_REVISION = "m16-diagnostic-telemetry-ordering-v1"
 DIAGNOSTIC_BASELINE = "mind_lite_v1"
-EXPECTED_DIAGNOSTIC_MANIFEST_HASH = "6890298b0e8f2f89a74faa59a33cd73d56a83a793e0195a26e3279bf77d7f0cb"
+EXPECTED_DIAGNOSTIC_MANIFEST_HASH = "2170633e05dd51c0ffd899e8ee9913b8d95e127b29ac2f05abcd93417bbd4899"
 HISTORICAL_RESULT_DIRECTORIES = (
     "evaluation/results/m16",
     "evaluation/results/m16_flash_lite",
