@@ -47,11 +47,13 @@ class M16MindFailureDiagnosticV1Tests(unittest.TestCase):
         self.assertEqual(self.manifest.provider_config_hash, "c074c0e08e6b7be9a93b955a5c5f85da52bb7e9cf83601477ab2e18dad4bc780")
 
     def test_preflight_is_read_only_and_execute_gate_is_required(self) -> None:
-        result_directory = Path("evaluation/results/m16_mind_failure_diagnostic_v1")
-        self.assertFalse(result_directory.exists())
-        manifest, cases, schedule = validate_diagnostic_v1_preflight()
-        self.assertEqual((manifest.expected_run_count, len(cases), len(schedule)), (96, 96, 96))
-        self.assertFalse(result_directory.exists())
+        with tempfile.TemporaryDirectory() as temporary:
+            result_directory = Path(temporary) / "diagnostic"
+            manifest = self._temporary_manifest(result_directory)
+            self.assertFalse(result_directory.exists())
+            active, cases, schedule = self._preflight(result_directory, manifest)
+            self.assertEqual((active.expected_run_count, len(cases), len(schedule)), (96, 96, 96))
+            self.assertFalse(result_directory.exists())
         with redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
                 main([])
