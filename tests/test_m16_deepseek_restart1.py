@@ -37,12 +37,13 @@ class DeepSeekRestart1Tests(unittest.TestCase):
         self.assertFalse({item.run_id for item in definitions} & {item.run_id for item in old_definitions})
         self.assertEqual((suite.suite_hash, suite.held_out_split_hash), ("a450c6fa2955136da5d4db08b892af442ab7be66034412739d91e7cbf076445c", "a41ca5a326da4f722de1fcca4c7a4b85fcf860767ba1bb0311aa6cc4176aefe3"))
 
-    def test_replacement_preflight_preserves_contract_and_is_zero_state(self) -> None:
+    def test_replacement_preflight_preserves_frozen_contract(self) -> None:
         manifest, cases, definitions = validate_restart1_formal_preflight()
         self.assertEqual((manifest.protocol_version, manifest.completion_semantics_version, manifest.repetition_count), ("1.2.0", "m16_completion_v2", 5))
         self.assertEqual((len(cases), len(definitions)), (96, 960))
         self.assertEqual(DEFAULT_RESULT_DIRECTORY, "evaluation/results/m16_deepseek_v4_flash_restart1")
-        self.assertFalse((ROOT / DEFAULT_RESULT_DIRECTORY).exists())
+        # Result-directory state is intentionally not a preflight invariant:
+        # the completed append-only restart1 experiment may legitimately exist.
 
     def test_held_lock_rejects_before_preflight_or_provider_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"DEEPSEEK_API_KEY": "development"}):

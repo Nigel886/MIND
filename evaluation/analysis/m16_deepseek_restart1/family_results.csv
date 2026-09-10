@@ -1,0 +1,3 @@
+stratum,analysis_label,case_count,mind_rate,direct_rate,paired_difference,mind_ci_low,mind_ci_high,direct_ci_low,direct_ci_high,difference_ci_low,difference_ci_high
+calculator,EXPLORATORY,48,0.0,1.0,-1.0,0.0,0.0,1.0,1.0,-1.0,-1.0
+direct_answer,EXPLORATORY,48,0.0,0.7833333333333333,-0.7833333333333333,0.0,0.0,0.6708333333333334,0.8833333333333333,-0.8833333333333333,-0.6708333333333334
