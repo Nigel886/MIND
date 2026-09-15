@@ -4,8 +4,9 @@
 
 The M18 shared harness is architecture-neutral orchestration infrastructure.
 It does not choose agent actions or normalize an architecture's private state.
-It has been validated only through scripted synthetic dry runs. **NO REAL
-PROVIDER PILOT OR FORMAL EXECUTION PERFORMED.**
+It has been validated only through scripted synthetic dry runs and a
+provider-free pilot dry-run. **NO REAL PROVIDER PILOT OR FORMAL EXECUTION
+PERFORMED.**
 
 ## Flow and Firewall
 
@@ -42,7 +43,7 @@ full canonical configuration and recomputed hash match the frozen provider
 condition. Its single client is then bound to MIND, Direct, ReAct, and both
 Plan-and-Execute roles.
 
-The v2 harness also validates every record against the active manifest before
+The #120 remediation validates every new record against the active manifest before
 atomic persistence: run membership/ID, suite, provider hash, system artifact,
 repetition, harness identity, result schema, and experiment namespace must all
 match. The MIND binding now creates one `CognitiveAgentSession` per run and
@@ -63,10 +64,43 @@ tool calls, invalid actions, recoverable failures, and replans. Plan-and-
 Execute retains its frozen maximum of one replan. Token, latency, and returned
 model telemetry remain nullable when a provider does not expose them.
 
+## Frozen Pilot Entry Point and Provenance-Safe Resume
+
+Issue #121 adds `M18FrozenPilotExecution`, the only M18 entry point capable of
+starting a future real-provider run. It constructs a dedicated
+`m18_pilot_v1` run manifest from only the frozen pilot fixture namespace:
+
+`18 pilot cases × 4 systems × 5 repetitions = 360 pilot run identities`.
+
+The manifest records the pilot suite/split identities, canonical provider hash,
+four system artifact identities, five-repetition interleaved schedule, budgets,
+harness identity, result schema, experiment namespace, and every canonical run
+ID. It cannot accept a formal case ID, a formal fixture path, an external case
+list, a synthetic case, or a caller-supplied arbitrary provider object. Every
+real run creates a canonical #118 client/binding and fresh per-run adapters;
+MIND therefore retains one continuous session within a run but no runtime,
+belief, observation, policy, or provider-call history crosses runs.
+
+`dry_run()` is explicitly **PILOT DRY-RUN**: it validates the frozen pilot
+plan, schedule, namespace, identities, and optional temporary result storage
+without making provider calls or executing any case. `execute()` is explicitly
+**REAL PILOT EXECUTION** and is not invoked by import, tests, or dry-run.
+
+Resume is fail-closed. A JSON filename is only an index hint: every persisted
+record is parsed and checked against the active manifest and allowed schedule
+before it can count as complete. Filename/run-ID disagreement, malformed
+records, duplicate claimed run IDs, non-manifest runs, or any suite/provider/
+system-artifact/repetition/harness/schema/namespace mismatch halt resume as
+provenance corruption. Only provenance-valid records are subtracted from the
+active schedule.
+
+**FORMAL EXECUTION REMAINS DISABLED/GATED.** There is no formal entry point in
+this module or its pilot execution surface.
+
 ## Scheduling, Identity, and Results
 
 Run IDs hash suite version, case ID, system condition, repetition, provider
-configuration hash, and harness version. The formal schedule uses exactly five
+configuration hash, and harness version. The formal schedule definition uses exactly five
 independent repetitions and a deterministic balanced per-case/repetition
 rotation, preventing a system-blocked order. The frozen maximum manifest is:
 
@@ -75,8 +109,9 @@ rotation, preventing a system-blocked order. The frozen maximum manifest is:
 The tracked execution-harness manifest freezes suite, provider, scheduler,
 failure-mapping, result-schema, persistence, and harness identities. Per-run
 JSON persistence is atomic; a second completed ID is rejected. Resume validates
-the stored manifest and schedules only missing IDs. Any identity mismatch is
-configuration drift and stops execution.
+the stored manifest and every stored record before scheduling only missing IDs.
+Any identity mismatch is configuration drift or provenance corruption and stops
+execution.
 
 ## Raw Artifact Policy and Synthetic Validation
 

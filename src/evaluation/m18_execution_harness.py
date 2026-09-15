@@ -1,7 +1,7 @@
-"""Architecture-neutral M18 execution harness; synthetic validation only.
+"""Architecture-neutral M18 execution harness.
 
 The harness owns private case/evaluator access.  Adapter inputs are derived
-public projections only.  This module never starts real provider execution.
+public projections only.  Importing this module never starts provider execution.
 """
 from __future__ import annotations
 
@@ -30,10 +30,10 @@ from src.evaluation.m18_shared_provider import M18SharedProviderClient, M18Share
 from src.evaluation.m18_task_generation import M18Case, M18DeterministicEnvironment, M18EnvironmentCategory, M18EvaluationCategory, M18Evaluator, M18Namespace, canonical_hash, canonical_json
 
 
-M18_HARNESS_VERSION = "m18_shared_execution_harness_v2"
+M18_HARNESS_VERSION = "m18_shared_execution_harness_v3"
 M18_RESULT_SCHEMA_VERSION = "m18_result_record_v1"
 M18_SCHEDULE_POLICY = "balanced_case_repetition_rotation_v1"
-M18_RESUME_POLICY = "atomic_per_run_duplicate_reject_v1"
+M18_RESUME_POLICY = "atomic_per_run_provenance_validate_v2"
 M18_FORMAL_REPETITIONS = 5
 M18_SCHEDULE_SEED = "m18_schedule_seed_v1"
 M18_SYSTEMS = ("mind_lite_v11", "direct_tool_calling", "react", "plan_and_execute")
@@ -114,6 +114,36 @@ class M18RunRecord:
                 "result_schema_version": self.result_schema_version, "experiment_namespace": self.experiment_namespace,
                 "system_artifact_identity": self.system_artifact_identity}
 
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "M18RunRecord":
+        """Parse a persisted record before it can participate in resume."""
+        if not isinstance(value, Mapping):
+            raise ValueError("stored record must be an object")
+        expected = {
+            "run_id", "suite_version", "case_id", "cohort", "difficulty", "system_condition", "repetition",
+            "provider_config_hash", "harness_identity", "runtime_terminal_outcome", "evaluator_outcome",
+            "neutral_failure_category", "budget", "infrastructure_valid", "provider_model", "token_telemetry",
+            "latency_ms", "raw_artifact_references", "result_schema_version", "experiment_namespace",
+            "system_artifact_identity",
+        }
+        if set(value) != expected or not isinstance(value["budget"], Mapping):
+            raise ValueError("stored record schema mismatch")
+        budget = M18BudgetCounters(**dict(value["budget"]))
+        telemetry = value["token_telemetry"]
+        if telemetry is not None and not isinstance(telemetry, Mapping):
+            raise ValueError("stored token telemetry must be an object or null")
+        references = value["raw_artifact_references"]
+        if not isinstance(references, list) or any(not isinstance(item, str) for item in references):
+            raise ValueError("stored raw artifact references must be a string list")
+        return cls(
+            value["run_id"], value["suite_version"], value["case_id"], value["cohort"], value["difficulty"],
+            value["system_condition"], value["repetition"], value["provider_config_hash"],
+            value["harness_identity"], value["runtime_terminal_outcome"], value["evaluator_outcome"],
+            value["neutral_failure_category"], budget, value["infrastructure_valid"], value["provider_model"],
+            dict(telemetry) if telemetry is not None else None, value["latency_ms"], tuple(references),
+            value["result_schema_version"], value["experiment_namespace"], value["system_artifact_identity"],
+        )
+
 
 @dataclass(frozen=True)
 class M18HarnessManifest:
@@ -154,8 +184,9 @@ def formal_manifest(provider_config_hash: str, suite_manifest: Mapping[str, Any]
 
 class M18ResultStore:
     """Atomic per-run JSON storage with duplicate rejection and resume reconciliation."""
-    def __init__(self, root: Path, manifest: M18HarnessManifest, allowed_specs: tuple[M18RunSpec, ...] = ()) -> None:
+    def __init__(self, root: Path, manifest: M18HarnessManifest, allowed_specs: tuple[M18RunSpec, ...] = (), *, metadata_filenames: tuple[str, ...] = ()) -> None:
         self.root, self.manifest, self._allowed = root, manifest, {item.run_id: item for item in allowed_specs}
+        self._metadata_filenames = frozenset(("manifest.json",) + metadata_filenames)
         self.root.mkdir(parents=True, exist_ok=True)
         self._manifest_path = self.root / "manifest.json"
         if self._manifest_path.exists():
@@ -170,7 +201,28 @@ class M18ResultStore:
         path = self.root / (record.run_id + ".json")
         if path.exists(): raise FileExistsError("duplicate completed run id")
         self._atomic(path, record.to_dict())
-    def completed_ids(self) -> frozenset[str]: return frozenset(path.stem for path in self.root.glob("*.json") if path.name != "manifest.json")
+    def completed_ids(self) -> frozenset[str]:
+        """Return only provenance-valid completed identities, or fail closed."""
+        stored: list[tuple[Path, M18RunRecord]] = []
+        claimed: set[str] = set()
+        for path in sorted(self.root.glob("*.json")):
+            if path.name in self._metadata_filenames:
+                continue
+            try:
+                record = M18RunRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, json.JSONDecodeError, TypeError, ValueError) as error:
+                raise ValueError(f"stored record provenance corruption: {path.name}") from error
+            if record.run_id in claimed:
+                raise ValueError("duplicate stored record run id")
+            claimed.add(record.run_id)
+            stored.append((path, record))
+        completed: set[str] = set()
+        for path, record in stored:
+            if path.stem != record.run_id:
+                raise ValueError("stored record filename/run-id mismatch")
+            self._validate_record(record)
+            completed.add(record.run_id)
+        return frozenset(completed)
     def missing(self, specs: tuple[M18RunSpec, ...]) -> tuple[M18RunSpec, ...]: return tuple(item for item in specs if item.run_id not in self.completed_ids())
     def _validate_record(self, record: M18RunRecord) -> None:
         if record.suite_version != self.manifest.suite_version or record.provider_config_hash != self.manifest.provider_config_hash or record.harness_identity != self.manifest.harness_identity or record.result_schema_version != self.manifest.result_schema_version or record.experiment_namespace != self.manifest.experiment_namespace:
@@ -180,6 +232,10 @@ class M18ResultStore:
         if self._allowed:
             spec = self._allowed.get(record.run_id)
             if spec is None or (record.case_id, record.system_condition, record.repetition, record.provider_config_hash) != (spec.case_id, spec.system_condition, spec.repetition, spec.provider_config_hash): raise ValueError("record is not an allowed manifest run")
+        else:
+            canonical = M18RunSpec(record.suite_version, record.case_id, record.system_condition, record.repetition, record.provider_config_hash, self.manifest.schedule_seed)
+            if record.run_id != canonical.run_id:
+                raise ValueError("record run id is not canonical")
 
 
 def _capabilities(case: M18Case) -> tuple[CapabilityDescriptor, ...]:
@@ -292,6 +348,20 @@ class M18SharedExecutionHarness:
         self.environment, self.evaluator = M18DeterministicEnvironment(), M18Evaluator()
     def run_synthetic(self, spec: M18RunSpec, case: M18Case, adapter: M18Adapter) -> M18RunRecord:
         if self.mode is not M18ExecutionMode.SYNTHETIC: raise RuntimeError("synthetic runner is unavailable in frozen mode")
+        return self._run(spec, case, adapter, "m18_synthetic_v1")
+
+    def run_frozen_pilot(self, spec: M18RunSpec, case: M18Case) -> M18RunRecord:
+        """Execute one already-admitted frozen-pilot run; formal execution is absent."""
+        if self.mode is not M18ExecutionMode.FROZEN or self.frozen_binding is None:
+            raise RuntimeError("frozen pilot execution requires canonical frozen mode")
+        if case.namespace is not M18Namespace.PILOT or not spec.case_id.startswith("pilot."):
+            raise ValueError("frozen pilot execution accepts pilot cases only")
+        if spec.provider_config_hash != self.provider_config_hash:
+            raise ValueError("frozen pilot provider hash mismatch")
+        adapters = self.frozen_binding.adapters()
+        return self._run(spec, case, adapters[spec.system_condition], "m18_pilot_v1")
+
+    def _run(self, spec: M18RunSpec, case: M18Case, adapter: M18Adapter, experiment_namespace: str) -> M18RunRecord:
         if spec.case_id != case.case_id or spec.system_condition != adapter.system_condition: raise ValueError("run/adaptor mismatch")
         adapter.initialize(case); feedback = EvaluationFeedback(EvaluationFeedbackType.INITIAL_INPUT); state = EvaluationBudgetState(self.budget); runtime = None; evaluator = None; invalid = 0; decisions = 0; submitted_tools = 0
         try:
@@ -318,4 +388,4 @@ class M18SharedExecutionHarness:
             runtime = M18RuntimeTerminal.PROVIDER_FAILURE if "provider" in type(error).__name__.lower() else M18RuntimeTerminal.AGENT_INTERNAL_FAILURE
         telemetry = adapter.telemetry_snapshot(); counters = M18BudgetCounters(decision_cycles=decisions, logical_provider_calls=int(telemetry.get("logical_provider_calls", 0)), transport_attempts=int(telemetry.get("transport_attempts", 0)), tool_calls=submitted_tools, invalid_actions=invalid, recoverable_failures=int(telemetry.get("recoverable_failures", 0)), replans=int(telemetry.get("replans", 0)))
         category = neutral_failure(runtime, evaluator.category if evaluator else None)
-        return M18RunRecord(spec.run_id, spec.suite_version, case.case_id, case.cohort.value, case.difficulty.value, spec.system_condition, spec.repetition, spec.provider_config_hash, harness_identity(), runtime.value, evaluator.category.value if evaluator else None, category.value, counters, runtime is not M18RuntimeTerminal.INFRASTRUCTURE_INVALID, result_schema_version=M18_RESULT_SCHEMA_VERSION, experiment_namespace="m18_synthetic_v1", system_artifact_identity=M18_SYSTEM_ARTIFACTS[spec.system_condition])
+        return M18RunRecord(spec.run_id, spec.suite_version, case.case_id, case.cohort.value, case.difficulty.value, spec.system_condition, spec.repetition, spec.provider_config_hash, harness_identity(), runtime.value, evaluator.category.value if evaluator else None, category.value, counters, runtime is not M18RuntimeTerminal.INFRASTRUCTURE_INVALID, result_schema_version=M18_RESULT_SCHEMA_VERSION, experiment_namespace=experiment_namespace, system_artifact_identity=M18_SYSTEM_ARTIFACTS[spec.system_condition])
