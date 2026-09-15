@@ -106,6 +106,26 @@ execution owns the canonical result root
 `evaluation/m18/results/pilot/m18_pilot_v1/`; callers cannot redirect real
 pilot output to formal, M16, or arbitrary paths.
 
+The tracked `pilot_tranche_v1.json` is the authoritative operational-tranche
+admission artifact.  It freezes a deterministic manifest hash, its 12 selected
+pilot case IDs, all 240 canonical run IDs, provider and harness identities, and
+the predeclared stop conditions.  `M18FrozenPilotExecution.execute()` validates
+that tracked artifact before it creates a result store or a provider client and
+then admits exactly those 240 identities.  Result records carry the tranche ID;
+tranche resume accepts only records that match both the full pilot provenance
+and that tranche identity.  A valid pilot record outside the 12 selected cases
+does not count as a completed tranche record.
+
+The tranche is a first operational diagnostic stage, not a new suite or a
+comparative result.  Its runner is distinct from the later 360-identity full
+pilot surface, which remains unapproved.  The canonical result namespace stays
+`evaluation/m18/results/pilot/m18_pilot_v1/`; the tranche is distinguished by
+provenance rather than a second scientific result namespace.  Stop conditions
+for provider/config or model drift, truth/invariant failure, provenance or
+persistence failure, artifact drift, and systematic provider/decoder contract
+incompatibility are part of tranche admission.  Poor task success is not a stop
+condition, and formal execution remains unauthorized.
+
 The tracked `pilot_tranche_v1.json` freezes a 12-case structural subset:
 one canonical multi-step and distractor case per difficulty, plus both recovery
 subtypes per difficulty. It covers all cohorts/difficulties and both recovery

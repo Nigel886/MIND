@@ -13,6 +13,7 @@ from src.evaluation.m18_execution_harness import (
     M18FrozenProviderBinding,
     M18ResultStore,
     M18RunRecord,
+    M18_RESULT_SCHEMA_VERSION,
     M18RunSpec,
     M18SharedExecutionHarness,
     harness_identity,
@@ -23,8 +24,10 @@ from src.evaluation.m18_pilot_execution import (
     M18_PILOT_RUN_MANIFEST_FILENAME,
     M18FrozenPilotExecution,
     M18FrozenPilotPlan,
-    M18_PILOT_TRANCHE_CASE_IDS,
+    M18OperationalTrancheManifest,
+    M18OperationalTranchePlan,
     operational_tranche_specs,
+    operational_tranche_manifest,
 )
 from src.evaluation.m18_shared_provider import M18SharedProviderClient, M18SharedProviderConfiguration
 from src.evaluation.m18_task_generation import M18Cohort, M18Difficulty, M18Namespace, generate_m18_case
@@ -38,13 +41,14 @@ def plan() -> M18FrozenPilotPlan:
     return M18FrozenPilotPlan.from_repository(ROOT)
 
 
-def record(spec: M18RunSpec) -> M18RunRecord:
+def record(spec: M18RunSpec, tranche_id: str | None = None) -> M18RunRecord:
     return M18RunRecord(
         spec.run_id, spec.suite_version, spec.case_id, "multi_step", "easy", spec.system_condition,
         spec.repetition, spec.provider_config_hash, harness_identity(), "budget_exhausted", None,
-        "budget_exhausted", M18BudgetCounters(), True, result_schema_version="m18_result_record_v1",
+        "budget_exhausted", M18BudgetCounters(), True, result_schema_version=M18_RESULT_SCHEMA_VERSION,
         experiment_namespace=M18_PILOT_EXPERIMENT_NAMESPACE,
         system_artifact_identity=plan().manifest.harness_manifest.system_artifact_identities[spec.system_condition],
+        tranche_id=tranche_id,
     )
 
 
@@ -63,7 +67,7 @@ class FrozenPilotPlanTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             execution = M18FrozenPilotExecution.from_repository(ROOT, environment={"DEEPSEEK_API_KEY": "test-only"})
             dry_run = execution.dry_run()
-            self.assertEqual((dry_run.mode, dry_run.expected_run_count, dry_run.missing_run_count), ("pilot_dry_run", 360, 360))
+            self.assertEqual((dry_run.mode, dry_run.expected_run_count, dry_run.missing_run_count), ("operational_tranche_dry_run", 240, 240))
             self.assertFalse((Path(directory) / M18_PILOT_RUN_MANIFEST_FILENAME).exists())
             self.assertEqual(list(execution.manifest.run_ids), list(dry_run.manifest.run_ids))
 
@@ -93,10 +97,47 @@ class FrozenPilotPlanTests(unittest.TestCase):
     def test_structural_tranche_is_deterministic_and_covers_recovery_subtypes(self):
         value = plan(); first, second = operational_tranche_specs(value), operational_tranche_specs(value)
         selected = {case.case_id: case for case in value.cases}
-        self.assertEqual(first, second); self.assertEqual((len(M18_PILOT_TRANCHE_CASE_IDS), len(first), len({item.run_id for item in first})), (12, 240, 240))
-        self.assertEqual({selected[item].cohort.value for item in M18_PILOT_TRANCHE_CASE_IDS}, {"multi_step", "distractor_selection", "recovery_correction"})
-        self.assertEqual({selected[item].difficulty.value for item in M18_PILOT_TRANCHE_CASE_IDS}, {"easy", "medium", "hard"})
-        self.assertEqual({selected[item].evaluator.failure_schedule.get("subtype") for item in M18_PILOT_TRANCHE_CASE_IDS if selected[item].cohort.value == "recovery_correction"}, {"recoverable_failure", "invalid_action"})
+        manifest = operational_tranche_manifest(value); ids = tuple(manifest["case_ids"])
+        self.assertEqual(first, second); self.assertEqual((len(ids), len(first), len({item.run_id for item in first})), (12, 240, 240))
+        self.assertEqual(tuple(item.run_id for item in first), tuple(manifest["run_ids"]))
+        self.assertEqual({selected[item].cohort.value for item in ids}, {"multi_step", "distractor_selection", "recovery_correction"})
+        self.assertEqual({selected[item].difficulty.value for item in ids}, {"easy", "medium", "hard"})
+        self.assertEqual({selected[item].evaluator.failure_schedule.get("subtype") for item in ids if selected[item].cohort.value == "recovery_correction"}, {"recoverable_failure", "invalid_action"})
+
+    def test_tracked_manifest_is_authoritative_and_full_plan_remains_separate(self):
+        value = plan(); tranche = M18OperationalTranchePlan.from_pilot_plan(value)
+        self.assertEqual((len(value.specs), len(tranche.specs)), (360, 240))
+        self.assertEqual(tranche.manifest.manifest_hash, operational_tranche_manifest(value)["manifest_hash"])
+        self.assertEqual(M18FrozenPilotExecution(value).full_pilot_dry_run().expected_run_count, 360)
+
+    def test_manifest_hash_and_identity_tampering_fail_before_schedule(self):
+        raw = operational_tranche_manifest(plan())
+        for field, changed in (("manifest_hash", "0" * 64), ("provider_config_hash", "0" * 64), ("harness_identity", "wrong")):
+            with self.subTest(field=field):
+                value = dict(raw); value[field] = changed
+                with self.assertRaises(ValueError):
+                    M18OperationalTrancheManifest.from_dict(value)
+
+    def test_real_entry_point_admits_only_tranche_schedule_before_provider_creation(self):
+        execution = M18FrozenPilotExecution.from_repository(ROOT, environment={"DEEPSEEK_API_KEY": "test-only"})
+        captured: dict[str, object] = {}
+        class Store:
+            def missing(self, specs):
+                captured["store_specs"] = specs
+                return specs
+        def initialize(root, specs, *, tranche_id=None):
+            captured["root"], captured["init_specs"], captured["tranche_id"] = root, specs, tranche_id
+            return Store()
+        def execute_specs(store, specs, cases, *, tranche_id=None):
+            captured["execute_specs"], captured["cases"], captured["execute_tranche"] = specs, cases, tranche_id
+            return ()
+        execution._initialize_store = initialize  # type: ignore[method-assign]
+        execution._execute_specs = execute_specs  # type: ignore[method-assign]
+        self.assertEqual(execution.execute(), ())
+        self.assertEqual(len(captured["init_specs"]), 240)
+        self.assertEqual(len(captured["execute_specs"]), 240)
+        self.assertEqual(captured["tranche_id"], execution.tranche_manifest.tranche_id)
+        self.assertEqual(set(captured["cases"]), set(execution.tranche_manifest.case_ids))
 
 
 class ProvenanceSafeResumeTests(unittest.TestCase):
@@ -155,6 +196,19 @@ class ProvenanceSafeResumeTests(unittest.TestCase):
             altered = replace(store.manifest, provider_config_hash="b" * 64)
             with self.assertRaisesRegex(ValueError, "configuration drift"):
                 M18ResultStore(Path(directory), altered, plan().specs)
+
+    def test_tranche_resume_accepts_only_manifest_member_records(self):
+        value = plan(); tranche = M18OperationalTranchePlan.from_pilot_plan(value)
+        with TemporaryDirectory() as directory:
+            store = M18ResultStore(Path(directory), value.manifest.harness_manifest, tranche.specs, required_tranche_id=tranche.manifest.tranche_id)
+            valid = record(tranche.specs[0], tranche.manifest.tranche_id)
+            store.persist(valid)
+            self.assertEqual(store.completed_ids(), frozenset({valid.run_id}))
+            non_tranche = next(item for item in value.specs if item.case_id not in tranche.manifest.case_ids)
+            with self.assertRaises(ValueError):
+                store.persist(record(non_tranche, tranche.manifest.tranche_id))
+            with self.assertRaises(ValueError):
+                store.persist(record(tranche.specs[1], "wrong-tranche"))
 
 
 if __name__ == "__main__":
