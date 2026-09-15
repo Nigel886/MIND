@@ -23,6 +23,8 @@ from src.evaluation.m18_pilot_execution import (
     M18_PILOT_RUN_MANIFEST_FILENAME,
     M18FrozenPilotExecution,
     M18FrozenPilotPlan,
+    M18_PILOT_TRANCHE_CASE_IDS,
+    operational_tranche_specs,
 )
 from src.evaluation.m18_shared_provider import M18SharedProviderClient, M18SharedProviderConfiguration
 from src.evaluation.m18_task_generation import M18Cohort, M18Difficulty, M18Namespace, generate_m18_case
@@ -60,17 +62,16 @@ class FrozenPilotPlanTests(unittest.TestCase):
     def test_dry_run_is_provider_free_and_writes_no_run_records(self):
         with TemporaryDirectory() as directory:
             execution = M18FrozenPilotExecution.from_repository(ROOT, environment={"DEEPSEEK_API_KEY": "test-only"})
-            dry_run = execution.dry_run(Path(directory))
+            dry_run = execution.dry_run()
             self.assertEqual((dry_run.mode, dry_run.expected_run_count, dry_run.missing_run_count), ("pilot_dry_run", 360, 360))
-            files = {item.name for item in Path(directory).glob("*.json")}
-            self.assertEqual(files, {"manifest.json", M18_PILOT_RUN_MANIFEST_FILENAME})
-            self.assertEqual(json.loads((Path(directory) / M18_PILOT_RUN_MANIFEST_FILENAME).read_text())["run_ids"], list(execution.manifest.run_ids))
+            self.assertFalse((Path(directory) / M18_PILOT_RUN_MANIFEST_FILENAME).exists())
+            self.assertEqual(list(execution.manifest.run_ids), list(dry_run.manifest.run_ids))
 
     def test_manual_or_formal_plan_substitution_is_rejected(self):
         value = plan()
         formal = generate_m18_case(M18Cohort.A, M18Difficulty.EASY, 123456, M18Namespace.FORMAL)
         with self.assertRaises(ValueError):
-            M18FrozenPilotPlan((formal,) + value.cases[1:], value.specs, value.manifest)
+            M18FrozenPilotPlan(value.repository_root, (formal,) + value.cases[1:], value.specs, value.manifest)
 
     def test_formal_case_is_rejected_before_provider_invocation(self):
         calls: list[object] = []
@@ -88,6 +89,14 @@ class FrozenPilotPlanTests(unittest.TestCase):
             M18FrozenProviderBinding(object())
         with self.assertRaises(ValueError):
             M18SharedExecutionHarness(HASH, mode=M18ExecutionMode.FROZEN)
+
+    def test_structural_tranche_is_deterministic_and_covers_recovery_subtypes(self):
+        value = plan(); first, second = operational_tranche_specs(value), operational_tranche_specs(value)
+        selected = {case.case_id: case for case in value.cases}
+        self.assertEqual(first, second); self.assertEqual((len(M18_PILOT_TRANCHE_CASE_IDS), len(first), len({item.run_id for item in first})), (12, 240, 240))
+        self.assertEqual({selected[item].cohort.value for item in M18_PILOT_TRANCHE_CASE_IDS}, {"multi_step", "distractor_selection", "recovery_correction"})
+        self.assertEqual({selected[item].difficulty.value for item in M18_PILOT_TRANCHE_CASE_IDS}, {"easy", "medium", "hard"})
+        self.assertEqual({selected[item].evaluator.failure_schedule.get("subtype") for item in M18_PILOT_TRANCHE_CASE_IDS if selected[item].cohort.value == "recovery_correction"}, {"recoverable_failure", "invalid_action"})
 
 
 class ProvenanceSafeResumeTests(unittest.TestCase):

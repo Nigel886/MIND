@@ -97,6 +97,24 @@ active schedule.
 **FORMAL EXECUTION REMAINS DISABLED/GATED.** There is no formal entry point in
 this module or its pilot execution surface.
 
+## #122 Result Integrity and Operational Tranche
+
+MIND now reads logical-call and transport-attempt accounting from the same
+canonical shared provider client used by the comparator bindings; records also
+project returned-model, token, and latency telemetry when exposed. Frozen pilot
+execution owns the canonical result root
+`evaluation/m18/results/pilot/m18_pilot_v1/`; callers cannot redirect real
+pilot output to formal, M16, or arbitrary paths.
+
+The tracked `pilot_tranche_v1.json` freezes a 12-case structural subset:
+one canonical multi-step and distractor case per difficulty, plus both recovery
+subtypes per difficulty. It covers all cohorts/difficulties and both recovery
+subtypes, yielding `12 × 4 × 5 = 240` operational-diagnostic identities. It is
+not a new suite or comparative result. Stop on provider/config drift, truth
+leakage, environment/evaluator failures, provenance/persistence failure,
+artifact drift, or systematic provider/decoder incompatibility—not poor task
+success. The complete 360-run pilot remains frozen for a later stage.
+
 ## Scheduling, Identity, and Results
 
 Run IDs hash suite version, case ID, system condition, repetition, provider

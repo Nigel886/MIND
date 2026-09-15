@@ -13,6 +13,8 @@ from src.evaluation.m18_execution_harness import (
 )
 from src.evaluation.m18_task_generation import M18Cohort, M18Difficulty, M18EvaluationCategory, M18Namespace, generate_m18_case
 from src.evaluation.m18_shared_provider import M18SharedProviderClient, M18SharedProviderConfiguration
+from src.evaluation.m18_shared_provider import M18SharedMINDProvider
+from urllib.error import HTTPError
 
 HASH = "0f251e14722603e6e39416374467a3598cd72e1d28673e60daf8440dd6115ee2"
 
@@ -168,6 +170,14 @@ class FrozenProviderBindingTests(unittest.TestCase):
         tool = case.public.tools[0]["tool_id"]
         infrastructure = harness.run_synthetic(spec, case, direct_adapter(OneActionProvider(f'{{"action":"tool_call","tool_name":"{tool}","parameters":{{}}}}')))
         self.assertEqual(infrastructure.neutral_failure_category, "infrastructure_invalid")
+
+    def test_mind_shared_client_transport_accounting_reaches_record(self):
+        response = {"model":"deepseek-flash","choices":[{"message":{"content":'{"action":"answer","answer":"x"}'}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+        client = M18SharedProviderClient(http_post=lambda *args: response, environment={"DEEPSEEK_API_KEY":"test"})
+        case = synthetic_case(); spec = M18RunSpec("m18_suite_v1", case.case_id, "mind_lite_v11", 1, HASH)
+        result = M18SharedExecutionHarness(HASH).run_synthetic(spec, case, M18MINDAdapter(M18SharedMINDProvider(client)))
+        self.assertEqual((result.budget.logical_provider_calls, result.budget.transport_attempts), (1, 1))
+        self.assertEqual(result.provider_model, "deepseek-flash")
 
 class PersistenceTests(unittest.TestCase):
     def manifest(self, hash=HASH): return M18HarnessManifest("m18_suite_v1", "suite", "split", hash, 5, "seed", 2, M18_SYSTEMS, harness_identity())

@@ -7,6 +7,7 @@ provider or execute a case.  Formal execution is deliberately not implemented.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 import json
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -54,6 +55,14 @@ M18_FROZEN_SUITE_MANIFEST_HASH = "4eb3c8a1a4da0a17297bf26937db28b7d9fb33b9174e2f
 M18_FROZEN_SPLIT_HASH = "88c0a88063f0e50f1f396f4e01fc2ce6bd53bb4858ac895b8e1fae5e1c911e67"
 M18_FROZEN_PILOT_PRIVATE_HASH = "811d3bd92d016d36efcd147770d8f97b0211fb7c652093c4b00d13a81fb8da1d"
 M18_FROZEN_PILOT_PUBLIC_HASH = "2515eb193492d0423dfd1b32b5207106ddb4c53088c4572158db94a6119b081d"
+M18_PILOT_TRANCHE_ID = "m18_pilot_operational_tranche_v1"
+M18_PILOT_TRANCHE_CASE_IDS = (
+    "pilot.multi_step.easy.21000.0", "pilot.multi_step.medium.21002.0", "pilot.multi_step.hard.21004.0",
+    "pilot.distractor_selection.easy.21006.0", "pilot.distractor_selection.medium.21008.0", "pilot.distractor_selection.hard.21010.0",
+    "pilot.recovery_correction.easy.21012.0", "pilot.recovery_correction.easy.21013.1",
+    "pilot.recovery_correction.medium.21014.0", "pilot.recovery_correction.medium.21015.1",
+    "pilot.recovery_correction.hard.21016.0", "pilot.recovery_correction.hard.21017.1",
+)
 
 
 def _read_json(path: Path) -> Any:
@@ -108,6 +117,7 @@ class M18PilotRunManifest:
 class M18FrozenPilotPlan:
     """Validated frozen pilot namespace and its deterministic run schedule."""
 
+    repository_root: Path
     cases: tuple[M18Case, ...]
     specs: tuple[M18RunSpec, ...]
     manifest: M18PilotRunManifest
@@ -171,7 +181,7 @@ class M18FrozenPilotPlan:
             system_artifact_identities=M18_SYSTEM_ARTIFACTS,
         )
         manifest = M18PilotRunManifest(harness, tuple(pilot_ids), tuple(spec.run_id for spec in specs))
-        return cls(cases, specs, manifest)
+        return cls(root, cases, specs, manifest)
 
     @property
     def cases_by_id(self) -> Mapping[str, M18Case]:
@@ -184,6 +194,33 @@ class M18PilotDryRun:
     expected_run_count: int
     missing_run_count: int
     manifest: M18PilotRunManifest
+
+
+def operational_tranche_specs(plan: M18FrozenPilotPlan) -> tuple[M18RunSpec, ...]:
+    """Frozen structural subset: A/B first canonical case per difficulty; both C subtypes."""
+    if tuple(sorted(M18_PILOT_TRANCHE_CASE_IDS)) != tuple(sorted(set(M18_PILOT_TRANCHE_CASE_IDS))):
+        raise ValueError("tranche case ids must be unique")
+    available = {case.case_id for case in plan.cases}
+    if not set(M18_PILOT_TRANCHE_CASE_IDS) <= available:
+        raise ValueError("tranche includes a non-pilot case")
+    specs = tuple(spec for spec in plan.specs if spec.case_id in M18_PILOT_TRANCHE_CASE_IDS)
+    if len(specs) != 240:
+        raise ValueError("frozen tranche must contain 240 identities")
+    return specs
+
+
+def operational_tranche_manifest(plan: M18FrozenPilotPlan) -> dict[str, Any]:
+    specs = operational_tranche_specs(plan)
+    core = {"tranche_id": M18_PILOT_TRANCHE_ID, "source_experiment_namespace": M18_PILOT_EXPERIMENT_NAMESPACE,
+            "source_suite_version": M18_SUITE_VERSION, "source_suite_manifest_hash": plan.manifest.harness_manifest.suite_manifest_hash,
+            "selection_rule": "first_canonical_multi_step_and_distractor_per_difficulty_plus_both_recovery_subtypes_per_difficulty_v1",
+            "case_ids": list(M18_PILOT_TRANCHE_CASE_IDS), "systems": list(M18_SYSTEMS), "repetitions": 5,
+            "expected_run_count": len(specs), "provider_config_hash": plan.manifest.harness_manifest.provider_config_hash,
+            "harness_identity": plan.manifest.harness_manifest.harness_identity,
+            "run_ids": [spec.run_id for spec in specs],
+            "stop_conditions": ["provider_model_or_config_drift", "truth_leakage", "evaluator_or_environment_invariant_failure", "result_provenance_or_persistence_failure", "frozen_artifact_drift", "systematic_provider_or_decoder_contract_incompatibility"],
+            "interpretation": "operational_diagnostic_not_powered_comparative_result"}
+    return {**core, "manifest_hash": sha256(canonical_json(core).encode("utf-8")).hexdigest()}
 
 
 class M18FrozenPilotExecution:
@@ -204,6 +241,10 @@ class M18FrozenPilotExecution:
     def manifest(self) -> M18PilotRunManifest:
         return self._plan.manifest
 
+    @property
+    def result_root(self) -> Path:
+        return self._plan.repository_root / M18_PILOT_RESULT_DIRECTORY / M18_PILOT_EXPERIMENT_NAMESPACE
+
     def _initialize_store(self, result_root: Path) -> M18ResultStore:
         result_root.mkdir(parents=True, exist_ok=True)
         pilot_manifest_path = result_root / M18_PILOT_RUN_MANIFEST_FILENAME
@@ -219,17 +260,13 @@ class M18FrozenPilotExecution:
             temporary.replace(pilot_manifest_path)
         return M18ResultStore(result_root, self._plan.manifest.harness_manifest, self._plan.specs, metadata_filenames=(M18_PILOT_RUN_MANIFEST_FILENAME,))
 
-    def dry_run(self, result_root: Path | None = None) -> M18PilotDryRun:
+    def dry_run(self) -> M18PilotDryRun:
         """PILOT DRY-RUN: validates identities and optional resume storage only."""
-        if result_root is None:
-            missing = len(self._plan.specs)
-        else:
-            missing = len(self._initialize_store(result_root).missing(self._plan.specs))
-        return M18PilotDryRun("pilot_dry_run", len(self._plan.specs), missing, self._plan.manifest)
+        return M18PilotDryRun("pilot_dry_run", len(self._plan.specs), len(self._plan.specs), self._plan.manifest)
 
-    def execute(self, result_root: Path) -> tuple[M18RunRecord, ...]:
+    def execute(self) -> tuple[M18RunRecord, ...]:
         """REAL PILOT EXECUTION.  It has no formal-suite input or formal mode."""
-        store = self._initialize_store(result_root)
+        store = self._initialize_store(self.result_root)
         missing = store.missing(self._plan.specs)
         records: list[M18RunRecord] = []
         cases = self._plan.cases_by_id

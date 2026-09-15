@@ -265,7 +265,23 @@ class M18Adapter(Protocol):
     def initialize(self, case: M18Case) -> None: ...
     def next_decision(self, feedback: EvaluationFeedback, budget: EvaluationBudgetState) -> EvaluationAction: ...
     def accept_observation(self, feedback: EvaluationFeedback) -> None: ...
-    def telemetry_snapshot(self) -> Mapping[str, int | str | None]: ...
+    def telemetry_snapshot(self) -> Mapping[str, Any]: ...
+
+
+def _shared_telemetry(client: Any, fallback_calls: int) -> Mapping[str, Any]:
+    """Use the canonical client counters; never infer attempts from decisions."""
+    if not isinstance(client, M18SharedProviderClient):
+        return {"logical_provider_calls": fallback_calls, "transport_attempts": 0}
+    responses = tuple(client.responses)
+    token_names = ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")
+    tokens = {name: sum(getattr(item, name) or 0 for item in responses) for name in token_names} if responses else None
+    return {
+        "logical_provider_calls": client.logical_provider_calls,
+        "transport_attempts": client.transport_attempts,
+        "provider_model": responses[-1].returned_model if responses else None,
+        "token_telemetry": tokens,
+        "latency_ms": sum(item.latency_ms for item in responses) if responses else None,
+    }
 
 
 class _BaselineAdapter:
@@ -278,11 +294,12 @@ class _BaselineAdapter:
         result = self._baseline.step(AgentStepInput(EvaluationCase(self._case.case_id, task), feedback, budget))
         return result.action
     def accept_observation(self, feedback: EvaluationFeedback) -> None: return None
-    def telemetry_snapshot(self) -> Mapping[str, int | str | None]:
+    def telemetry_snapshot(self) -> Mapping[str, Any]:
         value = self._baseline
         calls = getattr(value, "logical_provider_calls", getattr(value, "planner_calls", 0) + getattr(value, "executor_calls", 0) + getattr(value, "replan_calls", 0))
-        return {"logical_provider_calls": calls, "transport_attempts": getattr(getattr(value, "_provider", None), "client", None).transport_attempts if getattr(getattr(value, "_provider", None), "client", None) else 0,
-                "tool_calls": getattr(value, "tool_calls", 0), "invalid_actions": getattr(value, "invalid_action_feedbacks", 0), "recoverable_failures": getattr(value, "recovery_feedbacks", 0), "replans": getattr(value, "replan_calls", 0)}
+        data = dict(_shared_telemetry(getattr(getattr(value, "_provider", None), "client", None), calls))
+        data.update({"tool_calls": getattr(value, "tool_calls", 0), "invalid_actions": getattr(value, "invalid_action_feedbacks", 0), "recoverable_failures": getattr(value, "recovery_feedbacks", 0), "replans": getattr(value, "replan_calls", 0)})
+        return data
 
 
 class M18MINDAdapter:
@@ -313,7 +330,10 @@ class M18MINDAdapter:
         else:
             outcome = EnvironmentOutcome(EnvironmentOutcomeCategory.UNRECOVERABLE_FAILURE, EnvironmentOutcomeReason.ENVIRONMENT_REJECTED, payload)
         self._session.observe(outcome.to_observation())
-    def telemetry_snapshot(self) -> Mapping[str, int | str | None]: return {"logical_provider_calls": self._condition.logical_provider_calls, "transport_attempts": 0, "tool_calls": 0, "invalid_actions": 0, "recoverable_failures": 0, "replans": 0}
+    def telemetry_snapshot(self) -> Mapping[str, Any]:
+        data = dict(_shared_telemetry(getattr(self._condition._provider, "client", None), self._condition.logical_provider_calls))
+        data.update({"tool_calls": 0, "invalid_actions": 0, "recoverable_failures": 0, "replans": 0})
+        return data
 
 
 def direct_adapter(provider: Any) -> _BaselineAdapter:
@@ -388,4 +408,4 @@ class M18SharedExecutionHarness:
             runtime = M18RuntimeTerminal.PROVIDER_FAILURE if "provider" in type(error).__name__.lower() else M18RuntimeTerminal.AGENT_INTERNAL_FAILURE
         telemetry = adapter.telemetry_snapshot(); counters = M18BudgetCounters(decision_cycles=decisions, logical_provider_calls=int(telemetry.get("logical_provider_calls", 0)), transport_attempts=int(telemetry.get("transport_attempts", 0)), tool_calls=submitted_tools, invalid_actions=invalid, recoverable_failures=int(telemetry.get("recoverable_failures", 0)), replans=int(telemetry.get("replans", 0)))
         category = neutral_failure(runtime, evaluator.category if evaluator else None)
-        return M18RunRecord(spec.run_id, spec.suite_version, case.case_id, case.cohort.value, case.difficulty.value, spec.system_condition, spec.repetition, spec.provider_config_hash, harness_identity(), runtime.value, evaluator.category.value if evaluator else None, category.value, counters, runtime is not M18RuntimeTerminal.INFRASTRUCTURE_INVALID, result_schema_version=M18_RESULT_SCHEMA_VERSION, experiment_namespace=experiment_namespace, system_artifact_identity=M18_SYSTEM_ARTIFACTS[spec.system_condition])
+        return M18RunRecord(spec.run_id, spec.suite_version, case.case_id, case.cohort.value, case.difficulty.value, spec.system_condition, spec.repetition, spec.provider_config_hash, harness_identity(), runtime.value, evaluator.category.value if evaluator else None, category.value, counters, runtime is not M18RuntimeTerminal.INFRASTRUCTURE_INVALID, provider_model=telemetry.get("provider_model"), token_telemetry=telemetry.get("token_telemetry"), latency_ms=telemetry.get("latency_ms"), result_schema_version=M18_RESULT_SCHEMA_VERSION, experiment_namespace=experiment_namespace, system_artifact_identity=M18_SYSTEM_ARTIFACTS[spec.system_condition])
