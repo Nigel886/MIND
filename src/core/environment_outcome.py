@@ -66,6 +66,8 @@ _FORBIDDEN_PUBLIC_KEYS = frozenset(
         "evaluator_success",
         "judge_metadata",
         "private_judge_metadata",
+        "difficulty",
+        "benchmark_completion_state",
         "chain_of_thought",
         "hidden_reasoning",
         "private_prompt",

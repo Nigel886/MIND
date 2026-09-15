@@ -69,7 +69,7 @@ class EnvironmentOutcomeTest(unittest.TestCase):
             EnvironmentOutcome(EnvironmentOutcomeCategory.SUCCESS, "benchmark_reason")
 
     def test_outcome_rejects_private_truth_and_raw_exception_data(self) -> None:
-        for key in ("expected_answer", "ground_truth", "correct_tool", "evaluator_success", "traceback", "exception"):
+        for key in ("expected_answer", "ground_truth", "correct_tool", "evaluator_success", "difficulty", "traceback", "exception"):
             with self.subTest(key=key):
                 with self.assertRaises(ValueError):
                     EnvironmentOutcome(
