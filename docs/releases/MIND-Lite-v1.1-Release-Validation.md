@@ -8,7 +8,11 @@
 - Original blocked candidate: `4c13920e5fdd4107a059f2670727503bb3916302`.
 - Original independent readiness verdict: **BLOCKED ON TRUTH LEAKAGE**.
 - Original candidate status: **NEVER TAGGED OR RELEASED**.
-- Replacement candidate: this truth-firewall remediation commit supersedes the original candidate; its exact immutable identity is recorded after commit creation.
+- Replacement remediation candidate: `b94eab043b6048d5b2634623e1796766188ececc`.
+- Replacement candidate status: superseded the original candidate after #106 CapabilityDescriptor truth-firewall remediation.
+- Replacement technical validation: passed; the independent readiness rerun was **BLOCKED ON RELEASE COMMIT** solely because this document did not then record the replacement candidate hash.
+- Final candidate status: this documentation-provenance correction creates the new final v1.1.0 release candidate.  The future `v1.1.0` tag must point to that final correction commit, not directly to `b94eab043b6048d5b2634623e1796766188ececc`.
+- Release gate: a final independent readiness review of the final correction commit is required before tagging.
 
 ## Scope
 
