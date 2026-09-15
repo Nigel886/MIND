@@ -20,8 +20,10 @@ from src.core.meta_engine import MetaInferenceEngine
 from src.core.meta_inference import MetaInferenceDecisionStatus
 from src.core.observation import Observation
 from src.core.policy import Policy
+from src.core.policy_context import PolicyDecisionEngine
 from src.core.runtime import RuntimeController, RuntimeState
 from src.core.task import Task
+from src.core.tool import CapabilityDescriptor
 from src.integration.meta_inference_adapter import IntegrationSelected
 
 
@@ -247,6 +249,8 @@ class CognitiveAgentSession:
         max_cycles: int,
         *,
         meta_inference_engine: MetaInferenceEngine | None = None,
+        policy_engine: PolicyDecisionEngine | None = None,
+        capabilities: tuple[CapabilityDescriptor, ...] = (),
     ) -> None:
         if isinstance(max_cycles, bool) or not isinstance(max_cycles, int):
             raise TypeError("max_cycles must be an int, not bool")
@@ -257,8 +261,16 @@ class CognitiveAgentSession:
             MetaInferenceEngine,
         ):
             raise TypeError("meta_inference_engine must be a MetaInferenceEngine or None")
+        if policy_engine is not None and not callable(getattr(policy_engine, "decide", None)):
+            raise TypeError("policy_engine must provide decide(context) or be None")
+        if isinstance(capabilities, list) or not isinstance(capabilities, tuple):
+            raise TypeError("capabilities must be an ordered tuple")
+        if any(not isinstance(item, CapabilityDescriptor) for item in capabilities):
+            raise TypeError("capabilities must contain CapabilityDescriptor values")
         self._max_cycles = max_cycles
         self._meta_inference_engine = meta_inference_engine
+        self._policy_engine = policy_engine
+        self._capabilities = capabilities
         self._started = False
         self._phase = CognitiveSessionPhase.READY
         self._task: Task | None = None
@@ -357,6 +369,8 @@ class CognitiveAgentSession:
                 self._pending_observation,
                 self._pending_feedback,
                 request_policy=self._cycles_completed < self._max_cycles,
+                policy_engine=self._policy_engine,
+                capabilities=self._capabilities,
             )
             self._pending_observation = None
             self._pending_feedback = None
@@ -380,6 +394,8 @@ class CognitiveAgentSession:
             transition = CognitiveExecutionLoopController.advance(
                 self._task,
                 self._runtime_state,
+                policy_engine=self._policy_engine,
+                capabilities=self._capabilities,
             )
             self._runtime_state = transition.runtime_state
 

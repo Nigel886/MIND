@@ -15,8 +15,13 @@ from src.core.completion import CompletionEvaluator
 from src.core.goal_policy import GoalAwarePolicyEngine
 from src.core.observation import Observation
 from src.core.policy import Policy
+from src.core.policy_context import (
+    PolicyDecisionContext,
+    PolicyDecisionEngine,
+)
 from src.core.runtime import RuntimeController, RuntimeState
 from src.core.task import Task
+from src.core.tool import CapabilityDescriptor
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,8 @@ class CognitiveExecutionLoopController:
         feedback: Mapping[str, Any] | None = None,
         *,
         request_policy: bool = True,
+        policy_engine: PolicyDecisionEngine | None = None,
+        capabilities: tuple[CapabilityDescriptor, ...] = (),
     ) -> _CognitiveCycleTransition:
         """Run one internal feedback-to-state-to-policy transition.
 
@@ -79,6 +86,12 @@ class CognitiveExecutionLoopController:
             raise TypeError("feedback must be a mapping or None")
         if not isinstance(request_policy, bool):
             raise TypeError("request_policy must be a bool")
+        if policy_engine is not None and not callable(getattr(policy_engine, "decide", None)):
+            raise TypeError("policy_engine must provide decide(context) or be None")
+        if isinstance(capabilities, list) or not isinstance(capabilities, tuple):
+            raise TypeError("capabilities must be an ordered tuple")
+        if any(not isinstance(item, CapabilityDescriptor) for item in capabilities):
+            raise TypeError("capabilities must contain CapabilityDescriptor values")
         if observation is None and feedback is not None:
             raise ValueError("feedback requires an observation")
 
@@ -108,7 +121,17 @@ class CognitiveExecutionLoopController:
         if not request_policy:
             return _CognitiveCycleTransition(runtime_state=next_state)
 
-        return _CognitiveCycleTransition(
-            runtime_state=next_state,
-            policy=GoalAwarePolicyEngine.generate(task, next_state),
-        )
+        if policy_engine is None:
+            policy = GoalAwarePolicyEngine.generate(task, next_state)
+        else:
+            policy = policy_engine.decide(
+                PolicyDecisionContext.from_runtime(
+                    task,
+                    next_state,
+                    observation,
+                    capabilities,
+                ),
+            )
+            if not isinstance(policy, Policy):
+                raise TypeError("policy_engine must return a Policy")
+        return _CognitiveCycleTransition(runtime_state=next_state, policy=policy)
