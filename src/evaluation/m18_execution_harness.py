@@ -26,14 +26,14 @@ from src.evaluation.m18_direct_tool_calling import M18DirectToolCallingBaseline
 from src.evaluation.m18_mind_policy_condition import M18MINDPolicyCondition
 from src.evaluation.m18_plan_and_execute import M18PlanAndExecuteBaseline
 from src.evaluation.m18_react import M18ReActBaseline
-from src.evaluation.m18_shared_provider import M18SharedProviderClient, M18SharedProviderConfiguration, M18SharedMINDProvider, M18SharedDirectProvider, M18SharedReActProvider, M18SharedPlanProvider
+from src.evaluation.m18_shared_provider import M18ProviderTransportError, M18SharedProviderClient, M18SharedProviderConfiguration, M18SharedMINDProvider, M18SharedDirectProvider, M18SharedReActProvider, M18SharedPlanProvider
 from src.evaluation.m18_task_generation import M18Case, M18DeterministicEnvironment, M18EnvironmentCategory, M18EvaluationCategory, M18Evaluator, M18Namespace, canonical_hash, canonical_json
 
 
-M18_HARNESS_VERSION = "m18_shared_execution_harness_v4"
-M18_RESULT_SCHEMA_VERSION = "m18_result_record_v2"
+M18_HARNESS_VERSION = "m18_shared_execution_harness_v5"
+M18_RESULT_SCHEMA_VERSION = "m18_result_record_v3"
 M18_SCHEDULE_POLICY = "balanced_case_repetition_rotation_v1"
-M18_RESUME_POLICY = "atomic_per_run_provenance_validate_v3"
+M18_RESUME_POLICY = "atomic_per_run_provenance_validate_v4"
 M18_FORMAL_REPETITIONS = 5
 M18_SCHEDULE_SEED = "m18_schedule_seed_v1"
 M18_SYSTEMS = ("mind_lite_v11", "direct_tool_calling", "react", "plan_and_execute")
@@ -55,6 +55,14 @@ class M18RuntimeTerminal(str, Enum):
 class M18ExecutionMode(str, Enum):
     SYNTHETIC = "synthetic"
     FROZEN = "frozen"
+
+
+class M18ExecutionIntegrityError(RuntimeError):
+    """Frozen-execution invariant breach; never an ordinary benchmark outcome."""
+
+    def __init__(self, category: str, stage: str, detail: str) -> None:
+        super().__init__(detail)
+        self.category, self.stage, self.detail = category, stage, detail
 
 
 def neutral_failure(runtime: M18RuntimeTerminal, evaluator: M18EvaluationCategory | None) -> M18EvaluationCategory:
@@ -395,13 +403,23 @@ class M18SharedExecutionHarness:
                 action = adapter.next_decision(feedback, EvaluationBudgetState(self.budget, used, min(used, self.budget.max_tool_calls)))
                 decisions += 1
                 if action.action_type is EvaluationActionType.ANSWER:
-                    runtime = M18RuntimeTerminal.ANSWER_SUBMITTED; evaluator = self.evaluator.evaluate(case, _action_dict(action)["answer"]); break
+                    try:
+                        evaluator = self.evaluator.evaluate(case, _action_dict(action)["answer"])
+                    except Exception as error:
+                        if self.mode is M18ExecutionMode.FROZEN:
+                            raise M18ExecutionIntegrityError("evaluator_invariant_failure", "evaluator", type(error).__name__) from error
+                        runtime = M18RuntimeTerminal.INFRASTRUCTURE_INVALID
+                        break
+                    runtime = M18RuntimeTerminal.ANSWER_SUBMITTED
+                    break
                 if action.action_type is not EvaluationActionType.TOOL_CALL:
                     runtime = M18RuntimeTerminal.AGENT_INTERNAL_FAILURE; break
                 submitted_tools += 1
                 try:
                     outcome = self.environment.apply(case, _action_dict(action))
-                except Exception:
+                except Exception as error:
+                    if self.mode is M18ExecutionMode.FROZEN:
+                        raise M18ExecutionIntegrityError("environment_invariant_failure", "environment", type(error).__name__) from error
                     runtime = M18RuntimeTerminal.INFRASTRUCTURE_INVALID; break
                 feedback = _feedback(outcome)
                 adapter.accept_observation(feedback)
@@ -410,6 +428,13 @@ class M18SharedExecutionHarness:
                     if invalid >= self.budget.max_tool_calls: runtime = M18RuntimeTerminal.INVALID_ACTION_EXHAUSTED; break
                 elif outcome.category is M18EnvironmentCategory.UNRECOVERABLE_FAILURE: runtime = M18RuntimeTerminal.UNRECOVERABLE_ENVIRONMENT_FAILURE; break
             runtime = runtime or M18RuntimeTerminal.BUDGET_EXHAUSTED
+        except M18ExecutionIntegrityError:
+            raise
+        except M18ProviderTransportError as error:
+            if self.mode is M18ExecutionMode.FROZEN and error.category in {"model_identity_mismatch", "malformed_json"}:
+                category = "provider_identity_drift" if error.category == "model_identity_mismatch" else "provider_decoder_incompatibility"
+                raise M18ExecutionIntegrityError(category, "provider_decode", error.category) from error
+            runtime = M18RuntimeTerminal.PROVIDER_FAILURE
         except Exception as error:
             runtime = M18RuntimeTerminal.PROVIDER_FAILURE if "provider" in type(error).__name__.lower() else M18RuntimeTerminal.AGENT_INTERNAL_FAILURE
         telemetry = adapter.telemetry_snapshot(); counters = M18BudgetCounters(decision_cycles=decisions, logical_provider_calls=int(telemetry.get("logical_provider_calls", 0)), transport_attempts=int(telemetry.get("transport_attempts", 0)), tool_calls=submitted_tools, invalid_actions=invalid, recoverable_failures=int(telemetry.get("recoverable_failures", 0)), replans=int(telemetry.get("replans", 0)))

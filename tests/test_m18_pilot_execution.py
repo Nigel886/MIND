@@ -16,6 +16,7 @@ from src.evaluation.m18_execution_harness import (
     M18_RESULT_SCHEMA_VERSION,
     M18RunSpec,
     M18SharedExecutionHarness,
+    M18ExecutionIntegrityError,
     harness_identity,
 )
 from src.evaluation.m18_pilot_execution import (
@@ -26,6 +27,8 @@ from src.evaluation.m18_pilot_execution import (
     M18FrozenPilotPlan,
     M18OperationalTrancheManifest,
     M18OperationalTranchePlan,
+    M18OperationalStopCategory,
+    M18OperationalStopCondition,
     operational_tranche_specs,
     operational_tranche_manifest,
 )
@@ -209,6 +212,52 @@ class ProvenanceSafeResumeTests(unittest.TestCase):
                 store.persist(record(non_tranche, tranche.manifest.tranche_id))
             with self.assertRaises(ValueError):
                 store.persist(record(tranche.specs[1], "wrong-tranche"))
+
+
+class OperationalStopTests(unittest.TestCase):
+    def _stop_without_persistence(self, execution, events):
+        def stop(category, stage, reason, detail, *, run_id=None, result_persisted=False, persist=True):
+            event = __import__("src.evaluation.m18_pilot_execution", fromlist=["M18OperationalStopEvent"]).M18OperationalStopEvent(category, stage, reason, detail, run_id, result_persisted)
+            events.append(event)
+            raise M18OperationalStopCondition(event)
+        execution._raise_stop = stop  # type: ignore[method-assign]
+
+    def test_integrity_signal_stops_before_later_identity_or_persistence(self):
+        execution = M18FrozenPilotExecution.from_repository(ROOT, environment={"DEEPSEEK_API_KEY": "test-only"})
+        tranche = M18OperationalTranchePlan.from_pilot_plan(plan())
+        events, persisted = [], []
+        self._stop_without_persistence(execution, events)
+        class Store:
+            def persist(self, record): persisted.append(record)
+        original = M18SharedExecutionHarness.run_frozen_pilot
+        def failing(*args, **kwargs):
+            raise M18ExecutionIntegrityError("provider_identity_drift", "provider_decode", "model_identity_mismatch")
+        M18SharedExecutionHarness.run_frozen_pilot = failing
+        try:
+            with self.assertRaises(M18OperationalStopCondition):
+                execution._execute_specs(Store(), tranche.specs[:3], tranche.cases_by_id, tranche_id=tranche.manifest.tranche_id)
+        finally:
+            M18SharedExecutionHarness.run_frozen_pilot = original
+        self.assertEqual((len(events), len(persisted)), (1, 0))
+        self.assertEqual(events[0].category, M18OperationalStopCategory.PROVIDER_IDENTITY_DRIFT)
+        self.assertEqual(events[0].run_id, tranche.specs[0].run_id)
+
+    def test_persistence_failure_stops_and_does_not_mark_complete(self):
+        execution = M18FrozenPilotExecution.from_repository(ROOT, environment={"DEEPSEEK_API_KEY": "test-only"})
+        events = []
+        self._stop_without_persistence(execution, events)
+        with TemporaryDirectory() as directory:
+            tranche = M18OperationalTranchePlan.from_pilot_plan(plan())
+            store = M18ResultStore(Path(directory), plan().manifest.harness_manifest, tranche.specs, required_tranche_id=tranche.manifest.tranche_id)
+            store.persist = lambda record: (_ for _ in ()).throw(ValueError("atomic failure"))
+            original = M18SharedExecutionHarness.run_frozen_pilot
+            M18SharedExecutionHarness.run_frozen_pilot = lambda self, spec, case, **kwargs: record(spec, tranche.manifest.tranche_id)
+            try:
+                with self.assertRaises(M18OperationalStopCondition):
+                    execution._execute_specs(store, tranche.specs[:2], tranche.cases_by_id, tranche_id=tranche.manifest.tranche_id)
+            finally:
+                M18SharedExecutionHarness.run_frozen_pilot = original
+        self.assertEqual(events[0].category, M18OperationalStopCategory.PERSISTENCE_INTEGRITY_FAILURE)
 
 
 if __name__ == "__main__":

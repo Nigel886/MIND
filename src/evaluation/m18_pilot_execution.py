@@ -7,6 +7,7 @@ provider or execute a case.  Formal execution is deliberately not implemented.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -22,6 +23,7 @@ from src.evaluation.m18_execution_harness import (
     M18_SYSTEMS,
     M18_SYSTEM_ARTIFACTS,
     M18ExecutionMode,
+    M18ExecutionIntegrityError,
     M18FrozenProviderBinding,
     M18HarnessManifest,
     M18ResultStore,
@@ -48,6 +50,7 @@ M18_PILOT_EXPERIMENT_NAMESPACE = "m18_pilot_v1"
 M18_PILOT_RESULT_DIRECTORY = Path("evaluation") / "m18" / "results" / "pilot"
 M18_PILOT_RUN_MANIFEST_FILENAME = "pilot_run_manifest.json"
 M18_PILOT_TRANCHE_MANIFEST_FILENAME = "pilot_tranche_run_manifest.json"
+M18_PILOT_STOP_EVENT_FILENAME = "operational_stop_event.json"
 M18_TRACKED_TRANCHE_MANIFEST_PATH = Path("evaluation") / "m18" / "manifests" / "pilot_tranche_v1.json"
 M18_PILOT_MAX_STEPS = 3
 M18_PILOT_MAX_TOOL_CALLS = 1
@@ -64,6 +67,40 @@ M18_REQUIRED_TRANCHE_STOP_CONDITIONS = (
     "result_provenance_or_persistence_failure", "frozen_artifact_drift",
     "systematic_provider_or_decoder_contract_incompatibility",
 )
+
+
+class M18OperationalStopCategory(str, Enum):
+    PROVIDER_IDENTITY_DRIFT = "provider_identity_drift"
+    PROVIDER_CONFIG_DRIFT = "provider_config_drift"
+    FROZEN_ARTIFACT_DRIFT = "frozen_artifact_drift"
+    NAMESPACE_INTEGRITY_FAILURE = "namespace_integrity_failure"
+    PROVENANCE_INTEGRITY_FAILURE = "provenance_integrity_failure"
+    PERSISTENCE_INTEGRITY_FAILURE = "persistence_integrity_failure"
+    EVALUATOR_INVARIANT_FAILURE = "evaluator_invariant_failure"
+    ENVIRONMENT_INVARIANT_FAILURE = "environment_invariant_failure"
+    PROVIDER_DECODER_INCOMPATIBILITY = "provider_decoder_incompatibility"
+    TRANCHE_MANIFEST_MISMATCH = "tranche_manifest_mismatch"
+
+
+@dataclass(frozen=True)
+class M18OperationalStopEvent:
+    category: M18OperationalStopCategory
+    stage: str
+    reason: str
+    detail: str
+    run_id: str | None = None
+    result_persisted: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"category": self.category.value, "stage": self.stage, "reason": self.reason,
+                "detail": self.detail, "run_id": self.run_id,
+                "result_persisted": self.result_persisted}
+
+
+class M18OperationalStopCondition(RuntimeError):
+    def __init__(self, event: M18OperationalStopEvent) -> None:
+        super().__init__(event.reason)
+        self.event = event
 
 
 def _read_json(path: Path) -> Any:
@@ -351,7 +388,29 @@ class M18FrozenPilotExecution:
     def result_root(self) -> Path:
         return self._plan.repository_root / M18_PILOT_RESULT_DIRECTORY / M18_PILOT_EXPERIMENT_NAMESPACE
 
+    def _raise_stop(self, category: M18OperationalStopCategory, stage: str, reason: str, detail: str, *, run_id: str | None = None, result_persisted: bool = False, persist: bool = True) -> None:
+        event = M18OperationalStopEvent(category, stage, reason, detail, run_id, result_persisted)
+        if persist:
+            root = self.result_root
+            root.mkdir(parents=True, exist_ok=True)
+            path = root / M18_PILOT_STOP_EVENT_FILENAME
+            if path.exists():
+                raise M18OperationalStopCondition(event)
+            with NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=root, suffix=".tmp") as handle:
+                json.dump(event.to_dict(), handle, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+                handle.write("\n")
+                temporary = Path(handle.name)
+            temporary.replace(path)
+        raise M18OperationalStopCondition(event)
+
+    def _assert_no_prior_stop(self) -> None:
+        path = self.result_root / M18_PILOT_STOP_EVENT_FILENAME
+        if path.exists():
+            self._raise_stop(M18OperationalStopCategory.PERSISTENCE_INTEGRITY_FAILURE, "resume", "prior_integrity_stop_requires_explicit_operator_resolution", path.name, persist=False)
+
     def _initialize_store(self, result_root: Path, specs: tuple[M18RunSpec, ...], *, tranche_id: str | None = None) -> M18ResultStore:
+        if result_root.resolve() != self.result_root.resolve():
+            self._raise_stop(M18OperationalStopCategory.NAMESPACE_INTEGRITY_FAILURE, "namespace", "noncanonical_result_namespace", str(result_root), persist=False)
         result_root.mkdir(parents=True, exist_ok=True)
         pilot_manifest_path = result_root / M18_PILOT_RUN_MANIFEST_FILENAME
         value = self._plan.manifest.to_dict()
@@ -391,9 +450,19 @@ class M18FrozenPilotExecution:
 
     def execute(self) -> tuple[M18RunRecord, ...]:
         """REAL OPERATIONAL TRANCHE EXECUTION; exactly 240 admitted identities."""
-        self._tranche_plan.validate_admission()
-        store = self._initialize_store(self.result_root, self._tranche_plan.specs, tranche_id=self._tranche_plan.manifest.tranche_id)
-        return self._execute_specs(store, store.missing(self._tranche_plan.specs), self._tranche_plan.cases_by_id, tranche_id=self._tranche_plan.manifest.tranche_id)
+        self._assert_no_prior_stop()
+        try:
+            self._tranche_plan.validate_admission()
+        except ValueError as error:
+            self._raise_stop(M18OperationalStopCategory.TRANCHE_MANIFEST_MISMATCH, "preflight", "tranche_manifest_admission_failed", type(error).__name__, persist=False)
+        try:
+            store = self._initialize_store(self.result_root, self._tranche_plan.specs, tranche_id=self._tranche_plan.manifest.tranche_id)
+            missing = store.missing(self._tranche_plan.specs)
+        except M18OperationalStopCondition:
+            raise
+        except Exception as error:
+            self._raise_stop(M18OperationalStopCategory.PROVENANCE_INTEGRITY_FAILURE, "preflight", "result_store_admission_failed", type(error).__name__)
+        return self._execute_specs(store, missing, self._tranche_plan.cases_by_id, tranche_id=self._tranche_plan.manifest.tranche_id)
 
     def execute_full_pilot(self) -> tuple[M18RunRecord, ...]:
         """Later full-pilot surface; operational authorization remains external to this API."""
@@ -404,8 +473,11 @@ class M18FrozenPilotExecution:
         records: list[M18RunRecord] = []
         for spec in specs:
             # New client/binding/session adapters per run prevent cross-run state.
-            client = M18SharedProviderClient(environment=self._environment)
-            binding = M18FrozenProviderBinding(client)
+            try:
+                client = M18SharedProviderClient(environment=self._environment)
+                binding = M18FrozenProviderBinding(client)
+            except Exception as error:
+                self._raise_stop(M18OperationalStopCategory.PROVIDER_CONFIG_DRIFT, "provider_preflight", "frozen_provider_binding_failed", type(error).__name__, run_id=spec.run_id)
             harness = M18SharedExecutionHarness(
                 self._plan.manifest.harness_manifest.provider_config_hash,
                 max_steps=M18_PILOT_MAX_STEPS,
@@ -416,11 +488,18 @@ class M18FrozenPilotExecution:
             case = cases.get(spec.case_id)
             if case is None or case.namespace is not M18Namespace.PILOT:
                 raise ValueError("pilot plan contains a non-pilot case")
-            record = harness.run_frozen_pilot(spec, case, tranche_id=tranche_id)
+            try:
+                record = harness.run_frozen_pilot(spec, case, tranche_id=tranche_id)
+            except M18ExecutionIntegrityError as error:
+                category = M18OperationalStopCategory(error.category)
+                self._raise_stop(category, error.stage, error.category, error.detail, run_id=spec.run_id)
             # The caller's store already bound the active schedule and tranche provenance.
             # Revalidation happens before the atomic persist call.
             if tranche_id is not None and record.tranche_id != tranche_id:
                 raise ValueError("tranche record admission mismatch")
-            store.persist(record)
+            try:
+                store.persist(record)
+            except Exception as error:
+                self._raise_stop(M18OperationalStopCategory.PERSISTENCE_INTEGRITY_FAILURE, "persistence", "record_persistence_failed", type(error).__name__, run_id=spec.run_id)
             records.append(record)
         return tuple(records)

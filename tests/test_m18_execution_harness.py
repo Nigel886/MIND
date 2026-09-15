@@ -8,7 +8,7 @@ import unittest
 
 from src.evaluation.m18_execution_harness import (
     M18_FORMAL_REPETITIONS, M18_SYSTEMS, M18_SYSTEM_ARTIFACTS, M18ExecutionMode, M18FrozenProviderBinding, M18HarnessManifest, M18MINDAdapter, M18ResultStore,
-    M18RunSpec, M18RuntimeTerminal, M18SharedExecutionHarness, balanced_schedule, direct_adapter,
+    M18ExecutionIntegrityError, M18RunSpec, M18RuntimeTerminal, M18SharedExecutionHarness, balanced_schedule, direct_adapter,
     formal_manifest, harness_identity, neutral_failure, plan_adapter, react_adapter,
 )
 from src.evaluation.m18_task_generation import M18Cohort, M18Difficulty, M18EvaluationCategory, M18Namespace, generate_m18_case
@@ -178,6 +178,24 @@ class FrozenProviderBindingTests(unittest.TestCase):
         result = M18SharedExecutionHarness(HASH).run_synthetic(spec, case, M18MINDAdapter(M18SharedMINDProvider(client)))
         self.assertEqual((result.budget.logical_provider_calls, result.budget.transport_attempts), (1, 1))
         self.assertEqual(result.provider_model, "deepseek-flash")
+
+    def test_frozen_environment_and_evaluator_invariant_breaches_are_typed_stops(self):
+        answer = {"model":"deepseek-flash","choices":[{"message":{"content":'{"action":"answer","answer":"x"}'}}]}
+        case = synthetic_case(); spec = M18RunSpec("m18_suite_v1", case.case_id, "mind_lite_v11", 1, HASH)
+        client = M18SharedProviderClient(http_post=lambda *args: answer, environment={"DEEPSEEK_API_KEY":"test"})
+        harness = M18SharedExecutionHarness(HASH, mode=M18ExecutionMode.FROZEN, frozen_binding=M18FrozenProviderBinding(client))
+        harness.evaluator.evaluate = lambda *args: (_ for _ in ()).throw(RuntimeError("evaluator invariant"))
+        with self.assertRaises(M18ExecutionIntegrityError) as raised:
+            harness.run_frozen_pilot(spec, case)
+        self.assertEqual(raised.exception.category, "evaluator_invariant_failure")
+        tool = case.public.tools[0]["tool_id"]
+        action = {"model":"deepseek-flash","choices":[{"message":{"content":f'{{"action":"tool_call","tool_name":"{tool}","parameters":{{}}}}'}}]}
+        client = M18SharedProviderClient(http_post=lambda *args: action, environment={"DEEPSEEK_API_KEY":"test"})
+        harness = M18SharedExecutionHarness(HASH, mode=M18ExecutionMode.FROZEN, frozen_binding=M18FrozenProviderBinding(client))
+        harness.environment.apply = lambda *args: (_ for _ in ()).throw(RuntimeError("environment invariant"))
+        with self.assertRaises(M18ExecutionIntegrityError) as raised:
+            harness.run_frozen_pilot(spec, case)
+        self.assertEqual(raised.exception.category, "environment_invariant_failure")
 
 class PersistenceTests(unittest.TestCase):
     def manifest(self, hash=HASH): return M18HarnessManifest("m18_suite_v1", "suite", "split", hash, 5, "seed", 2, M18_SYSTEMS, harness_identity())

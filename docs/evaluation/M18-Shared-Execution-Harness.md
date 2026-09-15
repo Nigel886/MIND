@@ -126,6 +126,23 @@ persistence failure, artifact drift, and systematic provider/decoder contract
 incompatibility are part of tranche admission.  Poor task success is not a stop
 condition, and formal execution remains unauthorized.
 
+## Operational Integrity Stops
+
+An operational stop is distinct from a benchmark result.  Wrong answers,
+ordinary semantic output failures, invalid actions, failed recovery, and other
+validly judged task failures remain scientific data and do not halt a tranche.
+By contrast, frozen provider/model identity drift, configuration or artifact
+drift, namespace/provenance or persistence failure, evaluator/environment
+invariant failure, and provider-envelope/decoder incompatibility raise a typed
+integrity stop.  The triggering identity is not persisted as a completed run;
+no later identity is scheduled, and an `operational_stop_event.json` diagnostic
+does not satisfy resume completion or enter a benchmark denominator.
+
+Previously valid records remain intact.  A persisted stop diagnostic blocks
+automatic resume until an operator explicitly resolves the infrastructure
+condition.  This policy is independent of task success and does not authorize
+the later full pilot or formal evaluation.
+
 The tracked `pilot_tranche_v1.json` freezes a 12-case structural subset:
 one canonical multi-step and distractor case per difficulty, plus both recovery
 subtypes per difficulty. It covers all cohorts/difficulties and both recovery
