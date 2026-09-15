@@ -8,6 +8,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Mapping, Protocol, Sequence
 
 from src.core.observation import Observation
+from src.core.environment_outcome import EnvironmentOutcome
 from src.core.runtime import RuntimeState
 from src.core.task import Task
 from src.core.tool import CapabilityDescriptor
@@ -32,6 +33,9 @@ _FORBIDDEN_POLICY_KEYS = frozenset(
         "private_prompt",
         "credentials",
         "api_key",
+        "exception",
+        "traceback",
+        "stack_trace",
     },
 )
 
@@ -158,6 +162,9 @@ class PolicyObservationView:
             raise TypeError("observation must be an Observation")
         if observation.source != "agent_environment":
             raise ValueError("only agent_environment observations are policy-visible")
+        if isinstance(observation.content, dict) and "environment_outcome" in observation.content:
+            outcome = EnvironmentOutcome.from_observation(observation)
+            return cls(observation.source, {"environment_outcome": outcome.to_dict()})
         return cls(observation.source, observation.content)
 
     def to_dict(self) -> dict[str, Any]:
@@ -225,4 +232,3 @@ class PolicyDecisionEngine(Protocol):
 
     def decide(self, context: PolicyDecisionContext) -> "Policy":
         """Return one policy decision without executing or mutating anything."""
-

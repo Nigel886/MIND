@@ -16,6 +16,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Mapping, TypeAlias
 
 from src.core.cognitive_execution import CognitiveExecutionLoopController
+from src.core.environment_outcome import EnvironmentOutcome
 from src.core.meta_engine import MetaInferenceEngine
 from src.core.meta_inference import MetaInferenceDecisionStatus
 from src.core.observation import Observation
@@ -428,6 +429,8 @@ class CognitiveAgentSession:
             raise ValueError("observation source must be 'agent_environment'")
         if not isinstance(observation.content, dict):
             raise TypeError("observation content must be a JSON-compatible dictionary")
+        if "environment_outcome" in observation.content:
+            EnvironmentOutcome.from_observation(observation)
 
         feedback = _freeze_json(observation.content)
         # A fresh reconstruction prevents aliases to caller-owned nested data.
