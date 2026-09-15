@@ -103,11 +103,15 @@ class M18OperationalStopCondition(RuntimeError):
         self.event = event
 
 
+class M18FrozenArtifactValidationError(ValueError):
+    """Known frozen suite or tranche admission drift, before execution begins."""
+
+
 def _read_json(path: Path) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"invalid frozen M18 artifact: {path}") from error
+        raise M18FrozenArtifactValidationError(f"invalid frozen M18 artifact: {path.name}") from error
 
 
 def _case_from_record(value: Mapping[str, Any]) -> M18Case:
@@ -123,9 +127,9 @@ def _case_from_record(value: Mapping[str, Any]) -> M18Case:
             value["generation_seed"], value["generation_protocol_version"], value["environment_version"], value["evaluator_version"],
         )
     except (KeyError, TypeError, ValueError) as error:
-        raise ValueError("invalid frozen pilot case record") from error
+        raise M18FrozenArtifactValidationError("invalid frozen pilot case record") from error
     if canonical_json(case.to_dict()) != canonical_json(dict(value)):
-        raise ValueError("frozen pilot case canonical representation mismatch")
+        raise M18FrozenArtifactValidationError("frozen pilot case canonical representation mismatch")
     return case
 
 
@@ -172,16 +176,16 @@ class M18FrozenPilotPlan:
             or harness.harness_identity != harness_identity()
             or harness.system_artifact_identities != M18_SYSTEM_ARTIFACTS
         ):
-            raise ValueError("frozen pilot plan identity mismatch")
+            raise M18FrozenArtifactValidationError("frozen pilot plan identity mismatch")
         if any(case.namespace is not M18Namespace.PILOT for case in self.cases):
-            raise ValueError("frozen pilot plan contains a non-pilot case")
+            raise M18FrozenArtifactValidationError("frozen pilot plan contains a non-pilot case")
         audit = audit_suite(self.cases)
         if audit["private_hash"] != M18_FROZEN_PILOT_PRIVATE_HASH or audit["public_hash"] != M18_FROZEN_PILOT_PUBLIC_HASH:
-            raise ValueError("frozen pilot plan case hash mismatch")
+            raise M18FrozenArtifactValidationError("frozen pilot plan case hash mismatch")
         if tuple(case.case_id for case in self.cases) != self.manifest.pilot_case_ids:
-            raise ValueError("frozen pilot plan case identity mismatch")
+            raise M18FrozenArtifactValidationError("frozen pilot plan case identity mismatch")
         if tuple(spec.run_id for spec in self.specs) != self.manifest.run_ids:
-            raise ValueError("frozen pilot plan schedule identity mismatch")
+            raise M18FrozenArtifactValidationError("frozen pilot plan schedule identity mismatch")
 
     @classmethod
     def from_repository(cls, repository_root: Path) -> "M18FrozenPilotPlan":
@@ -191,27 +195,27 @@ class M18FrozenPilotPlan:
         split = _read_json(suite_root / "manifests" / "m18_suite_v1_split.json")
         records = _read_json(suite_root / "pilot" / "private_cases.json")
         if not isinstance(records, list) or not isinstance(split, Mapping) or not isinstance(suite_manifest, Mapping):
-            raise ValueError("frozen pilot artifacts have invalid top-level schemas")
+            raise M18FrozenArtifactValidationError("frozen pilot artifacts have invalid top-level schemas")
         if suite_manifest.get("suite_version") != M18_SUITE_VERSION or suite_manifest.get("pilot_case_count") != M18_PILOT_CASE_COUNT or suite_manifest.get("manifest_hash") != M18_FROZEN_SUITE_MANIFEST_HASH or suite_manifest.get("split_hash") != M18_FROZEN_SPLIT_HASH:
-            raise ValueError("frozen pilot suite identity mismatch")
+            raise M18FrozenArtifactValidationError("frozen pilot suite identity mismatch")
         pilot_ids, formal_ids = split.get("pilot_ids"), split.get("formal_ids")
         if not isinstance(pilot_ids, list) or not isinstance(formal_ids, list) or len(pilot_ids) != M18_PILOT_CASE_COUNT:
-            raise ValueError("frozen pilot split mismatch")
+            raise M18FrozenArtifactValidationError("frozen pilot split mismatch")
         if set(pilot_ids) & set(formal_ids) or any(not isinstance(item, str) or not item.startswith("pilot.") for item in pilot_ids):
-            raise ValueError("pilot/formal namespace overlap or invalid pilot id")
+            raise M18FrozenArtifactValidationError("pilot/formal namespace overlap or invalid pilot id")
         cases = tuple(_case_from_record(item) for item in records if isinstance(item, Mapping))
         if len(cases) != len(records) or any(case.namespace is not M18Namespace.PILOT for case in cases):
-            raise ValueError("pilot loader admitted a non-pilot case")
+            raise M18FrozenArtifactValidationError("pilot loader admitted a non-pilot case")
         if tuple(case.case_id for case in cases) != tuple(pilot_ids) or len(set(pilot_ids)) != M18_PILOT_CASE_COUNT:
-            raise ValueError("pilot fixture membership/order mismatch")
+            raise M18FrozenArtifactValidationError("pilot fixture membership/order mismatch")
         audit = audit_suite(cases)
         expected_audit = suite_manifest.get("pilot")
         if not isinstance(expected_audit, Mapping) or any(audit.get(key) != expected_audit.get(key) for key in ("case_count", "cohort_counts", "difficulty_counts", "subtype_counts", "private_hash", "public_hash")):
-            raise ValueError("pilot fixture hash or distribution mismatch")
+            raise M18FrozenArtifactValidationError("pilot fixture hash or distribution mismatch")
         provider = M18SharedProviderConfiguration()
         specs = balanced_schedule(tuple(pilot_ids), provider.config_hash)
         if len(specs) != M18_PILOT_EXPECTED_RUN_COUNT or any(not spec.case_id.startswith("pilot.") for spec in specs):
-            raise ValueError("frozen pilot schedule mismatch")
+            raise M18FrozenArtifactValidationError("frozen pilot schedule mismatch")
         harness = M18HarnessManifest(
             M18_SUITE_VERSION, suite_manifest["manifest_hash"], suite_manifest["split_hash"], provider.config_hash,
             M18_FORMAL_REPETITIONS, M18_SCHEDULE_SEED, len(specs), M18_SYSTEMS, harness_identity(),
@@ -264,13 +268,13 @@ class M18OperationalTrancheManifest:
             "manifest_hash",
         }
         if set(value) != required:
-            raise ValueError("tracked tranche manifest schema mismatch")
+            raise M18FrozenArtifactValidationError("tracked tranche manifest schema mismatch")
         for name in ("case_ids", "systems", "run_ids", "stop_conditions"):
             if not isinstance(value[name], list) or any(not isinstance(item, str) or not item for item in value[name]):
-                raise ValueError("tracked tranche manifest sequence mismatch")
+                raise M18FrozenArtifactValidationError("tracked tranche manifest sequence mismatch")
         core = {key: value[key] for key in required if key != "manifest_hash"}
         if not isinstance(value["manifest_hash"], str) or value["manifest_hash"] != sha256(canonical_json(core).encode("utf-8")).hexdigest():
-            raise ValueError("tracked tranche manifest hash mismatch")
+            raise M18FrozenArtifactValidationError("tracked tranche manifest hash mismatch")
         try:
             return cls(
                 value["tranche_id"], value["source_experiment_namespace"], value["source_suite_version"],
@@ -280,7 +284,7 @@ class M18OperationalTrancheManifest:
                 tuple(value["stop_conditions"]), value["interpretation"], value["manifest_hash"],
             )
         except TypeError as error:
-            raise ValueError("tracked tranche manifest value type mismatch") from error
+            raise M18FrozenArtifactValidationError("tracked tranche manifest value type mismatch") from error
 
     def to_dict(self) -> dict[str, Any]:
         core = {
@@ -310,7 +314,7 @@ class M18OperationalTranchePlan:
     def from_pilot_plan(cls, plan: M18FrozenPilotPlan) -> "M18OperationalTranchePlan":
         raw = _read_json(plan.repository_root / M18_TRACKED_TRANCHE_MANIFEST_PATH)
         if not isinstance(raw, Mapping):
-            raise ValueError("tracked tranche manifest must be an object")
+            raise M18FrozenArtifactValidationError("tracked tranche manifest must be an object")
         manifest = M18OperationalTrancheManifest.from_dict(raw)
         specs = tuple(spec for spec in plan.specs if spec.case_id in manifest.case_ids)
         value = cls(plan, manifest, specs)
@@ -343,7 +347,7 @@ class M18OperationalTranchePlan:
             or {spec.system_condition for spec in self.specs} != set(M18_SYSTEMS)
             or {spec.repetition for spec in self.specs} != set(range(1, M18_FORMAL_REPETITIONS + 1))
         ):
-            raise ValueError("tracked tranche manifest admission mismatch")
+            raise M18FrozenArtifactValidationError("tracked tranche manifest admission mismatch")
 
     @property
     def cases_by_id(self) -> Mapping[str, M18Case]:
@@ -374,7 +378,30 @@ class M18FrozenPilotExecution:
 
     @classmethod
     def from_repository(cls, repository_root: Path, *, environment: Mapping[str, str] | None = None) -> "M18FrozenPilotExecution":
-        return cls(M18FrozenPilotPlan.from_repository(repository_root), environment=environment)
+        root = repository_root.resolve()
+        try:
+            return cls(M18FrozenPilotPlan.from_repository(root), environment=environment)
+        except M18FrozenArtifactValidationError as error:
+            cls._raise_construction_stop(root, error)
+
+    @staticmethod
+    def _raise_construction_stop(repository_root: Path, error: M18FrozenArtifactValidationError) -> None:
+        root = repository_root / M18_PILOT_RESULT_DIRECTORY / M18_PILOT_EXPERIMENT_NAMESPACE
+        event = M18OperationalStopEvent(
+            M18OperationalStopCategory.FROZEN_ARTIFACT_DRIFT,
+            "construction",
+            "frozen_artifact_admission_failed",
+            str(error),
+        )
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / M18_PILOT_STOP_EVENT_FILENAME
+        if not path.exists():
+            with NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=root, suffix=".tmp") as handle:
+                json.dump(event.to_dict(), handle, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+                handle.write("\n")
+                temporary = Path(handle.name)
+            temporary.replace(path)
+        raise M18OperationalStopCondition(event) from error
 
     @property
     def manifest(self) -> M18PilotRunManifest:

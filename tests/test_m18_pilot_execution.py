@@ -4,8 +4,10 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 from pathlib import Path
+import shutil
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from src.evaluation.m18_execution_harness import (
     M18BudgetCounters,
@@ -23,6 +25,7 @@ from src.evaluation.m18_pilot_execution import (
     M18_PILOT_EXPERIMENT_NAMESPACE,
     M18_PILOT_EXPECTED_RUN_COUNT,
     M18_PILOT_RUN_MANIFEST_FILENAME,
+    M18_PILOT_STOP_EVENT_FILENAME,
     M18FrozenPilotExecution,
     M18FrozenPilotPlan,
     M18OperationalTrancheManifest,
@@ -215,6 +218,68 @@ class ProvenanceSafeResumeTests(unittest.TestCase):
 
 
 class OperationalStopTests(unittest.TestCase):
+    def _temporary_repository(self, directory: str) -> Path:
+        root = Path(directory)
+        shutil.copytree(ROOT / "evaluation" / "m18", root / "evaluation" / "m18")
+        return root
+
+    def _assert_construction_stop(self, root: Path) -> None:
+        with patch("src.evaluation.m18_pilot_execution.M18SharedProviderClient", side_effect=AssertionError("provider creation is forbidden")):
+            with self.assertRaises(M18OperationalStopCondition) as raised:
+                M18FrozenPilotExecution.from_repository(root, environment={"DEEPSEEK_API_KEY": "test-only"})
+        self.assertEqual(raised.exception.event.category, M18OperationalStopCategory.FROZEN_ARTIFACT_DRIFT)
+        self.assertEqual(raised.exception.event.stage, "construction")
+        stop = root / "evaluation" / "m18" / "results" / "pilot" / M18_PILOT_EXPERIMENT_NAMESPACE / M18_PILOT_STOP_EVENT_FILENAME
+        self.assertTrue(stop.exists())
+        self.assertEqual(json.loads(stop.read_text(encoding="utf-8"))["category"], "frozen_artifact_drift")
+        self.assertEqual(list(stop.parent.glob("[0-9a-f]*.json")), [])
+
+    def test_real_entry_maps_suite_artifact_drift_to_typed_stop_before_provider_creation(self):
+        with TemporaryDirectory() as directory:
+            root = self._temporary_repository(directory)
+            path = root / "evaluation" / "m18" / "suites" / "manifests" / "m18_suite_v1_manifest.json"
+            value = json.loads(path.read_text(encoding="utf-8")); value["manifest_hash"] = "0" * 64
+            path.write_text(json.dumps(value), encoding="utf-8")
+            self._assert_construction_stop(root)
+
+    def test_real_entry_maps_tranche_artifact_drift_to_typed_stop_before_provider_creation(self):
+        with TemporaryDirectory() as directory:
+            root = self._temporary_repository(directory)
+            path = root / "evaluation" / "m18" / "manifests" / "pilot_tranche_v1.json"
+            value = json.loads(path.read_text(encoding="utf-8")); value["manifest_hash"] = "0" * 64
+            path.write_text(json.dumps(value), encoding="utf-8")
+            self._assert_construction_stop(root)
+
+    def test_artifact_stop_blocks_automatic_resume_and_explicit_restart_resumes_missing_only(self):
+        with TemporaryDirectory() as directory:
+            root = self._temporary_repository(directory)
+            path = root / "evaluation" / "m18" / "suites" / "manifests" / "m18_suite_v1_manifest.json"
+            original = path.read_text(encoding="utf-8")
+            value = json.loads(original); value["split_hash"] = "0" * 64
+            path.write_text(json.dumps(value), encoding="utf-8")
+            self._assert_construction_stop(root)
+            path.write_text(original, encoding="utf-8")
+            execution = M18FrozenPilotExecution.from_repository(root, environment={"DEEPSEEK_API_KEY": "test-only"})
+            with self.assertRaises(M18OperationalStopCondition) as raised:
+                execution.execute()
+            self.assertEqual(raised.exception.event.reason, "prior_integrity_stop_requires_explicit_operator_resolution")
+            stop = execution.result_root / M18_PILOT_STOP_EVENT_FILENAME
+            stop.unlink()
+            captured: dict[str, object] = {}
+            execution._execute_specs = lambda store, specs, cases, *, tranche_id=None: captured.update(specs=specs, cases=cases, tranche_id=tranche_id) or ()  # type: ignore[method-assign]
+            self.assertEqual(execution.execute(), ())
+            self.assertEqual(len(captured["specs"]), 240)
+            self.assertEqual(captured["tranche_id"], execution.tranche_manifest.tranche_id)
+
+    def test_unrelated_entry_error_is_not_misclassified_as_artifact_drift(self):
+        with TemporaryDirectory() as directory:
+            root = self._temporary_repository(directory)
+            with patch.object(M18FrozenPilotPlan, "from_repository", side_effect=RuntimeError("programming error")):
+                with self.assertRaisesRegex(RuntimeError, "programming error"):
+                    M18FrozenPilotExecution.from_repository(root, environment={"DEEPSEEK_API_KEY": "test-only"})
+            stop = root / "evaluation" / "m18" / "results" / "pilot" / M18_PILOT_EXPERIMENT_NAMESPACE / M18_PILOT_STOP_EVENT_FILENAME
+            self.assertFalse(stop.exists())
+
     def _stop_without_persistence(self, execution, events):
         def stop(category, stage, reason, detail, *, run_id=None, result_persisted=False, persist=True):
             event = __import__("src.evaluation.m18_pilot_execution", fromlist=["M18OperationalStopEvent"]).M18OperationalStopEvent(category, stage, reason, detail, run_id, result_persisted)

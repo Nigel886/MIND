@@ -143,6 +143,15 @@ automatic resume until an operator explicitly resolves the infrastructure
 condition.  This policy is independent of task success and does not authorize
 the later full pilot or formal evaluation.
 
+Frozen suite, split, pilot-fixture, and tracked-tranche validation begins while
+the operational plan is constructed. Known failures at that stage are routed
+through the same typed `frozen_artifact_drift` operational-stop event as later
+execution integrity failures; they do not escape as a raw admission
+`ValueError`. This occurs before provider creation or invocation, writes no
+benchmark result, and still requires explicit operator resolution before a
+later restart. Unrelated programming exceptions are not reclassified as
+artifact drift.
+
 The tracked `pilot_tranche_v1.json` freezes a 12-case structural subset:
 one canonical multi-step and distractor case per difficulty, plus both recovery
 subtypes per difficulty. It covers all cohorts/difficulties and both recovery
