@@ -279,6 +279,7 @@ class CognitiveAgentSession:
         self._cycles_completed = 0
         self._pending_observation: Observation | None = None
         self._pending_feedback: Mapping[str, Any] | None = None
+        self._latest_policy_observation: Observation | None = None
         self._pending_start_failure: tuple[dict[str, Any], ...] | None = None
         self._validated_context: IntegrationSelected | None = None
         self._terminal_result: CognitiveSessionStepResult | None = None
@@ -364,6 +365,7 @@ class CognitiveAgentSession:
         assert self._task is not None
         assert self._runtime_state is not None
         if self._pending_observation is not None:
+            accepted_observation = self._pending_observation
             transition = CognitiveExecutionLoopController.advance(
                 self._task,
                 self._runtime_state,
@@ -376,6 +378,7 @@ class CognitiveAgentSession:
             self._pending_observation = None
             self._pending_feedback = None
             self._runtime_state = transition.runtime_state
+            self._latest_policy_observation = accepted_observation
             if transition.failure_category is not None:
                 return self._finish(
                     CognitiveSessionTerminationReason.FAILED,
@@ -395,6 +398,7 @@ class CognitiveAgentSession:
             transition = CognitiveExecutionLoopController.advance(
                 self._task,
                 self._runtime_state,
+                policy_observation=self._latest_policy_observation,
                 policy_engine=self._policy_engine,
                 capabilities=self._capabilities,
             )
@@ -451,6 +455,34 @@ class CognitiveAgentSession:
         if self._terminal_result is not None:
             return self._terminal_result
         return self._finish(reason, ({"type": "external_termination", "reason": reason.value},))
+
+    def _admit_pending_observation_for_controller(self) -> None:
+        """Apply one admitted observation without producing a next policy.
+
+        This private controller hook preserves the public deferred-observation
+        lifecycle while allowing an opt-in orchestrator to enforce outcome
+        termination after canonical inference and before policy re-invocation.
+        """
+
+        self._require_started()
+        self._require_not_terminated()
+        if self._phase is not CognitiveSessionPhase.READY or self._pending_observation is None:
+            raise RuntimeError("no pending observation is available for controller admission")
+        assert self._task is not None
+        assert self._runtime_state is not None
+        transition = CognitiveExecutionLoopController.advance(
+            self._task,
+            self._runtime_state,
+            self._pending_observation,
+            self._pending_feedback,
+            request_policy=False,
+            policy_engine=self._policy_engine,
+            capabilities=self._capabilities,
+        )
+        self._pending_observation = None
+        self._pending_feedback = None
+        self._latest_policy_observation = transition.runtime_state.observation
+        self._runtime_state = transition.runtime_state
 
     def _finish(
         self,

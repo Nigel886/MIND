@@ -64,6 +64,7 @@ class CognitiveExecutionLoopController:
         observation: Observation | None = None,
         feedback: Mapping[str, Any] | None = None,
         *,
+        policy_observation: Observation | None = None,
         request_policy: bool = True,
         policy_engine: PolicyDecisionEngine | None = None,
         capabilities: tuple[CapabilityDescriptor, ...] = (),
@@ -82,6 +83,8 @@ class CognitiveExecutionLoopController:
             raise TypeError("runtime_state must be a RuntimeState")
         if observation is not None and not isinstance(observation, Observation):
             raise TypeError("observation must be an Observation or None")
+        if policy_observation is not None and not isinstance(policy_observation, Observation):
+            raise TypeError("policy_observation must be an Observation or None")
         if feedback is not None and not isinstance(feedback, Mapping):
             raise TypeError("feedback must be a mapping or None")
         if not isinstance(request_policy, bool):
@@ -128,7 +131,7 @@ class CognitiveExecutionLoopController:
                 PolicyDecisionContext.from_runtime(
                     task,
                     next_state,
-                    observation,
+                    policy_observation if policy_observation is not None else observation,
                     capabilities,
                 ),
             )
