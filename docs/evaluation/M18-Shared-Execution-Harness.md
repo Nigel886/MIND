@@ -31,6 +31,24 @@ it neither retries model output nor provides a fallback model/parser. Thin
 bindings preserve MIND policy, Direct statelessness, ReAct public history, and
 Plan-and-Execute's one-replan limit.
 
+## #120 Pre-Pilot Fairness Remediation
+
+The initial #117 harness recorded the shared provider hash but permitted
+arbitrary provider injection into bindings. Independent Issue #119 therefore
+correctly returned `BLOCKED ON PROVIDER FAIRNESS`. This remediation retains
+synthetic dependency injection only in explicit `synthetic` mode. `frozen`
+mode fails closed unless supplied an exact #118 `M18SharedProviderClient` whose
+full canonical configuration and recomputed hash match the frozen provider
+condition. Its single client is then bound to MIND, Direct, ReAct, and both
+Plan-and-Execute roles.
+
+The v2 harness also validates every record against the active manifest before
+atomic persistence: run membership/ID, suite, provider hash, system artifact,
+repetition, harness identity, result schema, and experiment namespace must all
+match. The MIND binding now creates one `CognitiveAgentSession` per run and
+sends each public environment observation through `session.observe`; a second
+repetition creates a fresh session. No runtime state crosses runs.
+
 ## Runtime, Failure, and Budget Semantics
 
 Neutral runtime terminals are `answer_submitted`, `budget_exhausted`,

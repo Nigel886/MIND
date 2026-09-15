@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
 from src.evaluation.m18_execution_harness import (
-    M18_FORMAL_REPETITIONS, M18_SYSTEMS, M18HarnessManifest, M18MINDAdapter, M18ResultStore,
+    M18_FORMAL_REPETITIONS, M18_SYSTEMS, M18_SYSTEM_ARTIFACTS, M18ExecutionMode, M18FrozenProviderBinding, M18HarnessManifest, M18MINDAdapter, M18ResultStore,
     M18RunSpec, M18RuntimeTerminal, M18SharedExecutionHarness, balanced_schedule, direct_adapter,
     formal_manifest, harness_identity, neutral_failure, plan_adapter, react_adapter,
 )
 from src.evaluation.m18_task_generation import M18Cohort, M18Difficulty, M18EvaluationCategory, M18Namespace, generate_m18_case
+from src.evaluation.m18_shared_provider import M18SharedProviderClient, M18SharedProviderConfiguration
 
 HASH = "0f251e14722603e6e39416374467a3598cd72e1d28673e60daf8440dd6115ee2"
 
@@ -112,6 +114,38 @@ class HarnessAdapterTests(unittest.TestCase):
         self.assertEqual(record.runtime_terminal_outcome, "answer_submitted")
         self.assertEqual((record.budget.decision_cycles, record.budget.logical_provider_calls, record.budget.tool_calls), (2, 3, 1))
 
+    def test_mind_uses_one_continuous_session_per_run_and_fresh_session_per_repetition(self):
+        case = synthetic_case(); tool = case.public.tools[0]["tool_id"]
+        first = M18MINDAdapter(QueueActionProvider([f'{{"action":"tool_call","tool_name":"{tool}","parameters":{{}}}}', '{"action":"answer","answer":"x"}']))
+        harness = M18SharedExecutionHarness(HASH)
+        harness.run_synthetic(M18RunSpec("m18_suite_v1", case.case_id, "mind_lite_v11", 1, HASH), case, first)
+        first_session = first._session
+        self.assertEqual(first_session.cycles_completed, 2)
+        second = M18MINDAdapter(OneActionProvider())
+        harness.run_synthetic(M18RunSpec("m18_suite_v1", case.case_id, "mind_lite_v11", 2, HASH), case, second)
+        self.assertIsNot(first_session, second._session)
+
+class FrozenProviderBindingTests(unittest.TestCase):
+    def _client(self):
+        return M18SharedProviderClient(http_post=lambda *args: {}, environment={"DEEPSEEK_API_KEY": "test-only"})
+    def test_canonical_client_is_admitted_and_all_bindings_share_it(self):
+        binding = M18FrozenProviderBinding(self._client())
+        adapters = binding.adapters()
+        self.assertEqual(set(adapters), set(M18_SYSTEMS))
+        self.assertIs(adapters["mind_lite_v11"]._condition._provider.client, binding.client)
+        self.assertTrue(all(adapters[key].provider_identity is binding.client for key in ("direct_tool_calling", "react", "plan_and_execute")))
+        harness = M18SharedExecutionHarness(HASH, mode=M18ExecutionMode.FROZEN, frozen_binding=binding)
+        self.assertIs(harness.frozen_binding, binding)
+    def test_arbitrary_provider_and_every_semantic_configuration_drift_are_rejected(self):
+        with self.assertRaises(TypeError): M18FrozenProviderBinding(OneActionProvider())
+        for field, value in (("requested_model", "other"), ("temperature", 1), ("top_p", 0), ("thinking", {"type":"enabled"}), ("max_output_tokens", 513), ("response_format", {"type":"text"}), ("timeout_seconds_per_transport_attempt", 1), ("application_response_cache", "enabled"), ("base_url", "https://other")):
+            with self.subTest(field=field), self.assertRaises(ValueError): M18SharedProviderConfiguration(**{field:value})
+        with self.assertRaises(ValueError): M18SharedExecutionHarness(HASH, mode=M18ExecutionMode.FROZEN)
+    def test_synthetic_mode_rejects_live_binding_and_keeps_fake_injection_explicit(self):
+        binding = M18FrozenProviderBinding(self._client())
+        with self.assertRaises(ValueError): M18SharedExecutionHarness(HASH, frozen_binding=binding)
+        self.assertEqual(M18SharedExecutionHarness(HASH).mode, M18ExecutionMode.SYNTHETIC)
+
     def test_scripted_failure_paths_have_neutral_categories(self):
         case = generate_m18_case(M18Cohort.C, M18Difficulty.EASY, 990003, M18Namespace.PILOT, 0)
         tool = case.public.tools[0]["tool_id"]
@@ -150,6 +184,18 @@ class PersistenceTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             M18ResultStore(Path(directory), self.manifest())
             with self.assertRaises(ValueError): M18ResultStore(Path(directory), self.manifest("b" * 64))
+
+    def test_record_level_manifest_rejects_all_tampered_identity_fields_before_write(self):
+        with TemporaryDirectory() as directory:
+            record = self.record(); spec = M18RunSpec("m18_suite_v1", record.case_id, record.system_condition, record.repetition, HASH)
+            manifest = M18HarnessManifest("m18_suite_v1", "suite", "split", HASH, 5, "seed", 1, M18_SYSTEMS, harness_identity(), experiment_namespace="m18_synthetic_v1", system_artifact_identities=M18_SYSTEM_ARTIFACTS)
+            store = M18ResultStore(Path(directory), manifest, (spec,))
+            store.persist(record)
+            for changed in (replace(record, provider_config_hash="a" * 64), replace(record, system_artifact_identity="wrong"), replace(record, repetition=2), replace(record, run_id="wrong"), replace(record, harness_identity="wrong"), replace(record, result_schema_version="wrong")):
+                with self.subTest(changed=changed), self.assertRaises(ValueError): store.persist(changed)
+            foreign = replace(record, run_id="b" * 64, case_id="synthetic.nonmanifest")
+            with self.assertRaises(ValueError): store.persist(foreign)
+            self.assertEqual(store.completed_ids(), frozenset({record.run_id}))
 
 
 if __name__ == "__main__": unittest.main()

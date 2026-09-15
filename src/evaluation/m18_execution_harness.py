@@ -14,6 +14,8 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Callable, Mapping, Protocol
 
 from src.core.observation import Observation
+from src.core.cognitive_session import CognitiveAgentSession, CognitiveSessionPhase
+from src.core.environment_outcome import EnvironmentOutcome, EnvironmentOutcomeCategory, EnvironmentOutcomeReason
 from src.core.policy_context import PolicyDecisionContext
 from src.core.runtime import RuntimeController
 from src.core.task import Goal, Task
@@ -24,16 +26,18 @@ from src.evaluation.m18_direct_tool_calling import M18DirectToolCallingBaseline
 from src.evaluation.m18_mind_policy_condition import M18MINDPolicyCondition
 from src.evaluation.m18_plan_and_execute import M18PlanAndExecuteBaseline
 from src.evaluation.m18_react import M18ReActBaseline
+from src.evaluation.m18_shared_provider import M18SharedProviderClient, M18SharedProviderConfiguration, M18SharedMINDProvider, M18SharedDirectProvider, M18SharedReActProvider, M18SharedPlanProvider
 from src.evaluation.m18_task_generation import M18Case, M18DeterministicEnvironment, M18EnvironmentCategory, M18EvaluationCategory, M18Evaluator, M18Namespace, canonical_hash, canonical_json
 
 
-M18_HARNESS_VERSION = "m18_shared_execution_harness_v1"
+M18_HARNESS_VERSION = "m18_shared_execution_harness_v2"
 M18_RESULT_SCHEMA_VERSION = "m18_result_record_v1"
 M18_SCHEDULE_POLICY = "balanced_case_repetition_rotation_v1"
 M18_RESUME_POLICY = "atomic_per_run_duplicate_reject_v1"
 M18_FORMAL_REPETITIONS = 5
 M18_SCHEDULE_SEED = "m18_schedule_seed_v1"
 M18_SYSTEMS = ("mind_lite_v11", "direct_tool_calling", "react", "plan_and_execute")
+M18_SYSTEM_ARTIFACTS = {"mind_lite_v11": "99bbe96c7413024f3c76f1c3439c51593770c22e+b4f1daa5be8c4e6d4ea623e6dc61aa0321e203b0", "direct_tool_calling": "4aa402ea85fdfc8b92f5f180a6d5f3ac461a6a43", "react": "62901b2c9fcbcb79374ee30eab8a77418e9d4849", "plan_and_execute": "0c0decad89793d2b8b1b9d943febd23b9b377759"}
 
 
 def _hash(value: Any) -> str: return sha256(canonical_json(value).encode("utf-8")).hexdigest()
@@ -47,6 +51,10 @@ class M18RuntimeTerminal(str, Enum):
     AGENT_INTERNAL_FAILURE = "agent_internal_failure"
     PROVIDER_FAILURE = "provider_failure"
     INFRASTRUCTURE_INVALID = "infrastructure_invalid"
+
+class M18ExecutionMode(str, Enum):
+    SYNTHETIC = "synthetic"
+    FROZEN = "frozen"
 
 
 def neutral_failure(runtime: M18RuntimeTerminal, evaluator: M18EvaluationCategory | None) -> M18EvaluationCategory:
@@ -91,6 +99,9 @@ class M18RunRecord:
     neutral_failure_category: str; budget: M18BudgetCounters; infrastructure_valid: bool
     provider_model: str | None = None; token_telemetry: Mapping[str, int | None] | None = None; latency_ms: int | None = None
     raw_artifact_references: tuple[str, ...] = ()
+    result_schema_version: str = M18_RESULT_SCHEMA_VERSION
+    experiment_namespace: str = "m18_synthetic_v1"
+    system_artifact_identity: str = ""
     def to_dict(self) -> dict[str, Any]:
         return {"run_id": self.run_id, "suite_version": self.suite_version, "case_id": self.case_id,
                 "cohort": self.cohort, "difficulty": self.difficulty, "system_condition": self.system_condition,
@@ -99,7 +110,9 @@ class M18RunRecord:
                 "evaluator_outcome": self.evaluator_outcome, "neutral_failure_category": self.neutral_failure_category,
                 "budget": self.budget.to_dict(), "infrastructure_valid": self.infrastructure_valid,
                 "provider_model": self.provider_model, "token_telemetry": dict(self.token_telemetry) if self.token_telemetry else None,
-                "latency_ms": self.latency_ms, "raw_artifact_references": list(self.raw_artifact_references)}
+                "latency_ms": self.latency_ms, "raw_artifact_references": list(self.raw_artifact_references),
+                "result_schema_version": self.result_schema_version, "experiment_namespace": self.experiment_namespace,
+                "system_artifact_identity": self.system_artifact_identity}
 
 
 @dataclass(frozen=True)
@@ -107,7 +120,9 @@ class M18HarnessManifest:
     suite_version: str; suite_manifest_hash: str; split_hash: str; provider_config_hash: str
     repetitions: int; schedule_seed: str; expected_run_count: int; systems: tuple[str, ...]
     harness_identity: str; result_schema_version: str = M18_RESULT_SCHEMA_VERSION
-    def to_dict(self) -> dict[str, Any]: return {**asdict(self), "systems": list(self.systems)}
+    experiment_namespace: str = "m18_synthetic_v1"
+    system_artifact_identities: Mapping[str, str] | None = None
+    def to_dict(self) -> dict[str, Any]: return {**asdict(self), "systems": list(self.systems), "system_artifact_identities": dict(self.system_artifact_identities or {})}
 
 
 def harness_identity() -> str:
@@ -132,15 +147,15 @@ def formal_manifest(provider_config_hash: str, suite_manifest: Mapping[str, Any]
     case_ids = tuple(split["formal_ids"])
     specs = balanced_schedule(case_ids, provider_config_hash)
     manifest = M18HarnessManifest("m18_suite_v1", suite_manifest["manifest_hash"], suite_manifest["split_hash"], provider_config_hash,
-                                  M18_FORMAL_REPETITIONS, M18_SCHEDULE_SEED, len(specs), M18_SYSTEMS, harness_identity())
+                                  M18_FORMAL_REPETITIONS, M18_SCHEDULE_SEED, len(specs), M18_SYSTEMS, harness_identity(), experiment_namespace="m18_formal_v1", system_artifact_identities=M18_SYSTEM_ARTIFACTS)
     if len(case_ids) != 162 or len(specs) != 3240: raise ValueError("frozen formal manifest count mismatch")
     return manifest, specs
 
 
 class M18ResultStore:
     """Atomic per-run JSON storage with duplicate rejection and resume reconciliation."""
-    def __init__(self, root: Path, manifest: M18HarnessManifest) -> None:
-        self.root, self.manifest = root, manifest
+    def __init__(self, root: Path, manifest: M18HarnessManifest, allowed_specs: tuple[M18RunSpec, ...] = ()) -> None:
+        self.root, self.manifest, self._allowed = root, manifest, {item.run_id: item for item in allowed_specs}
         self.root.mkdir(parents=True, exist_ok=True)
         self._manifest_path = self.root / "manifest.json"
         if self._manifest_path.exists():
@@ -151,11 +166,20 @@ class M18ResultStore:
             json.dump(value, handle, sort_keys=True, separators=(",", ":"), ensure_ascii=False); handle.write("\n"); temporary = Path(handle.name)
         temporary.replace(path)
     def persist(self, record: M18RunRecord) -> None:
+        self._validate_record(record)
         path = self.root / (record.run_id + ".json")
         if path.exists(): raise FileExistsError("duplicate completed run id")
         self._atomic(path, record.to_dict())
     def completed_ids(self) -> frozenset[str]: return frozenset(path.stem for path in self.root.glob("*.json") if path.name != "manifest.json")
     def missing(self, specs: tuple[M18RunSpec, ...]) -> tuple[M18RunSpec, ...]: return tuple(item for item in specs if item.run_id not in self.completed_ids())
+    def _validate_record(self, record: M18RunRecord) -> None:
+        if record.suite_version != self.manifest.suite_version or record.provider_config_hash != self.manifest.provider_config_hash or record.harness_identity != self.manifest.harness_identity or record.result_schema_version != self.manifest.result_schema_version or record.experiment_namespace != self.manifest.experiment_namespace:
+            raise ValueError("record manifest identity mismatch")
+        expected_artifact = (self.manifest.system_artifact_identities or {}).get(record.system_condition)
+        if expected_artifact is not None and record.system_artifact_identity != expected_artifact: raise ValueError("record system artifact mismatch")
+        if self._allowed:
+            spec = self._allowed.get(record.run_id)
+            if spec is None or (record.case_id, record.system_condition, record.repetition, record.provider_config_hash) != (spec.case_id, spec.system_condition, spec.repetition, spec.provider_config_hash): raise ValueError("record is not an allowed manifest run")
 
 
 def _capabilities(case: M18Case) -> tuple[CapabilityDescriptor, ...]:
@@ -184,6 +208,7 @@ class M18Adapter(Protocol):
     system_condition: str
     def initialize(self, case: M18Case) -> None: ...
     def next_decision(self, feedback: EvaluationFeedback, budget: EvaluationBudgetState) -> EvaluationAction: ...
+    def accept_observation(self, feedback: EvaluationFeedback) -> None: ...
     def telemetry_snapshot(self) -> Mapping[str, int | str | None]: ...
 
 
@@ -196,6 +221,7 @@ class _BaselineAdapter:
         task = Task(Goal(self._case.public.task_text, ("act using public capability information",)), {"task_text": self._case.public.task_text})
         result = self._baseline.step(AgentStepInput(EvaluationCase(self._case.case_id, task), feedback, budget))
         return result.action
+    def accept_observation(self, feedback: EvaluationFeedback) -> None: return None
     def telemetry_snapshot(self) -> Mapping[str, int | str | None]:
         value = self._baseline
         calls = getattr(value, "logical_provider_calls", getattr(value, "planner_calls", 0) + getattr(value, "executor_calls", 0) + getattr(value, "replan_calls", 0))
@@ -205,30 +231,67 @@ class _BaselineAdapter:
 
 class M18MINDAdapter:
     system_condition = "mind_lite_v11"
-    def __init__(self, provider: Any) -> None: self._condition, self._case, self._caps = M18MINDPolicyCondition(provider), None, ()
-    def initialize(self, case: M18Case) -> None: self._case, self._caps = case, _capabilities(case)
+    def __init__(self, provider: Any) -> None: self._condition, self._case, self._caps, self._session = M18MINDPolicyCondition(provider), None, (), None
+    def initialize(self, case: M18Case) -> None:
+        self._case, self._caps = case, _capabilities(case)
+        task = Task(Goal(case.public.task_text, ("choose a public action",)), {"task_text": case.public.task_text})
+        self._session = CognitiveAgentSession(3, policy_engine=self._condition, capabilities=self._caps)
+        self._session.start(task)
     def next_decision(self, feedback: EvaluationFeedback, budget: EvaluationBudgetState) -> EvaluationAction:
-        assert self._case is not None
-        task = Task(Goal(self._case.public.task_text, ("choose a public action",)), {"task_text": self._case.public.task_text})
-        observation = Observation(source="agent_environment", content=feedback.to_dict()["payload"])
-        policy = self._condition.decide(PolicyDecisionContext.from_runtime(task, RuntimeController.initialize(), observation, self._caps))
-        if policy.action == "produce_answer": return EvaluationAction(EvaluationActionType.ANSWER, {"answer": policy.parameters["answer"]})
-        return EvaluationAction(EvaluationActionType.TOOL_CALL, {"tool_name": policy.parameters["tool_name"], "parameters": policy.parameters["tool_parameters"]})
+        assert self._session is not None
+        result = self._session.step()
+        if result.phase is not CognitiveSessionPhase.AWAITING_OBSERVATION: raise RuntimeError("MIND session terminated before public action")
+        request = result.action_request
+        assert request is not None
+        if request.action == "answer": return EvaluationAction(EvaluationActionType.ANSWER, {"answer": request.parameters["answer"]})
+        return EvaluationAction(EvaluationActionType.TOOL_CALL, {"tool_name": request.parameters["tool_name"], "parameters": request.parameters["parameters"]})
+    def accept_observation(self, feedback: EvaluationFeedback) -> None:
+        assert self._session is not None
+        payload = feedback.to_dict()["payload"]
+        if feedback.feedback_type is EvaluationFeedbackType.TOOL_RESPONSE:
+            outcome = EnvironmentOutcome(EnvironmentOutcomeCategory.SUCCESS, EnvironmentOutcomeReason.SUCCESSFUL_RESULT, payload)
+        elif feedback.feedback_type is EvaluationFeedbackType.TOOL_FAILURE and payload.get("category") == "recoverable_failure":
+            outcome = EnvironmentOutcome(EnvironmentOutcomeCategory.RECOVERABLE_FAILURE, EnvironmentOutcomeReason.TOOL_TRANSIENT_FAILURE, {k:v for k,v in payload.items() if k != "category"})
+        elif feedback.feedback_type is EvaluationFeedbackType.INVALID_ACTION:
+            outcome = EnvironmentOutcome(EnvironmentOutcomeCategory.INVALID_ACTION, EnvironmentOutcomeReason.INVALID_ARGUMENTS, payload)
+        else:
+            outcome = EnvironmentOutcome(EnvironmentOutcomeCategory.UNRECOVERABLE_FAILURE, EnvironmentOutcomeReason.ENVIRONMENT_REJECTED, payload)
+        self._session.observe(outcome.to_observation())
     def telemetry_snapshot(self) -> Mapping[str, int | str | None]: return {"logical_provider_calls": self._condition.logical_provider_calls, "transport_attempts": 0, "tool_calls": 0, "invalid_actions": 0, "recoverable_failures": 0, "replans": 0}
 
 
-def direct_adapter(provider: Any) -> _BaselineAdapter: return _BaselineAdapter("direct_tool_calling", lambda caps: M18DirectToolCallingBaseline(provider, caps))
-def react_adapter(provider: Any) -> _BaselineAdapter: return _BaselineAdapter("react", lambda caps: M18ReActBaseline(provider, caps))
-def plan_adapter(provider: Any) -> _BaselineAdapter: return _BaselineAdapter("plan_and_execute", lambda caps: M18PlanAndExecuteBaseline(provider, caps))
+def direct_adapter(provider: Any) -> _BaselineAdapter:
+    adapter = _BaselineAdapter("direct_tool_calling", lambda caps: M18DirectToolCallingBaseline(provider, caps)); adapter.provider_identity = getattr(provider, "client", None); return adapter
+def react_adapter(provider: Any) -> _BaselineAdapter:
+    adapter = _BaselineAdapter("react", lambda caps: M18ReActBaseline(provider, caps)); adapter.provider_identity = getattr(provider, "client", None); return adapter
+def plan_adapter(provider: Any) -> _BaselineAdapter:
+    adapter = _BaselineAdapter("plan_and_execute", lambda caps: M18PlanAndExecuteBaseline(provider, caps)); adapter.provider_identity = getattr(provider, "client", None); return adapter
+
+class M18FrozenProviderBinding:
+    """Fail-closed admission of the one #118 client/configuration into all adapters."""
+    def __init__(self, client: M18SharedProviderClient) -> None:
+        if type(client) is not M18SharedProviderClient: raise TypeError("frozen execution requires M18SharedProviderClient")
+        expected = M18SharedProviderConfiguration()
+        if client.configuration.to_dict() != expected.to_dict() or client.configuration.config_hash != expected.config_hash:
+            raise ValueError("frozen provider configuration drift")
+        self.client, self.provider_config_hash = client, expected.config_hash
+    def adapters(self) -> dict[str, M18Adapter]:
+        return {"mind_lite_v11": M18MINDAdapter(M18SharedMINDProvider(self.client)),
+                "direct_tool_calling": direct_adapter(M18SharedDirectProvider(self.client)),
+                "react": react_adapter(M18SharedReActProvider(self.client)),
+                "plan_and_execute": plan_adapter(M18SharedPlanProvider(self.client))}
 
 
 class M18SharedExecutionHarness:
-    def __init__(self, provider_config_hash: str, *, max_steps: int = 3, max_tool_calls: int = 1) -> None:
+    def __init__(self, provider_config_hash: str, *, max_steps: int = 3, max_tool_calls: int = 1, mode: M18ExecutionMode = M18ExecutionMode.SYNTHETIC, frozen_binding: M18FrozenProviderBinding | None = None) -> None:
         if len(provider_config_hash) != 64: raise ValueError("provider config hash required")
-        self.provider_config_hash, self.budget = provider_config_hash, EvaluationBudget(max_steps, max_tool_calls)
+        if not isinstance(mode, M18ExecutionMode): raise TypeError("mode must be M18ExecutionMode")
+        if mode is M18ExecutionMode.FROZEN and (frozen_binding is None or frozen_binding.provider_config_hash != provider_config_hash): raise ValueError("frozen execution requires matching canonical provider binding")
+        if mode is M18ExecutionMode.SYNTHETIC and frozen_binding is not None: raise ValueError("synthetic execution cannot admit frozen binding")
+        self.provider_config_hash, self.budget, self.mode, self.frozen_binding = provider_config_hash, EvaluationBudget(max_steps, max_tool_calls), mode, frozen_binding
         self.environment, self.evaluator = M18DeterministicEnvironment(), M18Evaluator()
     def run_synthetic(self, spec: M18RunSpec, case: M18Case, adapter: M18Adapter) -> M18RunRecord:
-        if case.namespace is not M18Namespace.PILOT and not case.case_id.startswith("synthetic."): raise ValueError("harness dry-run accepts synthetic cases only")
+        if self.mode is not M18ExecutionMode.SYNTHETIC: raise RuntimeError("synthetic runner is unavailable in frozen mode")
         if spec.case_id != case.case_id or spec.system_condition != adapter.system_condition: raise ValueError("run/adaptor mismatch")
         adapter.initialize(case); feedback = EvaluationFeedback(EvaluationFeedbackType.INITIAL_INPUT); state = EvaluationBudgetState(self.budget); runtime = None; evaluator = None; invalid = 0; decisions = 0; submitted_tools = 0
         try:
@@ -245,6 +308,7 @@ class M18SharedExecutionHarness:
                 except Exception:
                     runtime = M18RuntimeTerminal.INFRASTRUCTURE_INVALID; break
                 feedback = _feedback(outcome)
+                adapter.accept_observation(feedback)
                 if outcome.category is M18EnvironmentCategory.INVALID_ACTION:
                     invalid += 1
                     if invalid >= self.budget.max_tool_calls: runtime = M18RuntimeTerminal.INVALID_ACTION_EXHAUSTED; break
@@ -254,4 +318,4 @@ class M18SharedExecutionHarness:
             runtime = M18RuntimeTerminal.PROVIDER_FAILURE if "provider" in type(error).__name__.lower() else M18RuntimeTerminal.AGENT_INTERNAL_FAILURE
         telemetry = adapter.telemetry_snapshot(); counters = M18BudgetCounters(decision_cycles=decisions, logical_provider_calls=int(telemetry.get("logical_provider_calls", 0)), transport_attempts=int(telemetry.get("transport_attempts", 0)), tool_calls=submitted_tools, invalid_actions=invalid, recoverable_failures=int(telemetry.get("recoverable_failures", 0)), replans=int(telemetry.get("replans", 0)))
         category = neutral_failure(runtime, evaluator.category if evaluator else None)
-        return M18RunRecord(spec.run_id, spec.suite_version, case.case_id, case.cohort.value, case.difficulty.value, spec.system_condition, spec.repetition, spec.provider_config_hash, harness_identity(), runtime.value, evaluator.category.value if evaluator else None, category.value, counters, runtime is not M18RuntimeTerminal.INFRASTRUCTURE_INVALID)
+        return M18RunRecord(spec.run_id, spec.suite_version, case.case_id, case.cohort.value, case.difficulty.value, spec.system_condition, spec.repetition, spec.provider_config_hash, harness_identity(), runtime.value, evaluator.category.value if evaluator else None, category.value, counters, runtime is not M18RuntimeTerminal.INFRASTRUCTURE_INVALID, result_schema_version=M18_RESULT_SCHEMA_VERSION, experiment_namespace="m18_synthetic_v1", system_artifact_identity=M18_SYSTEM_ARTIFACTS[spec.system_condition])
