@@ -24,6 +24,11 @@ def _name(value: Any) -> None:
 
 _PRIVATE_DESCRIPTOR_KEYS = frozenset({"expected_answer", "ground_truth", "correct_tool", "correct_action", "completion_label", "evaluator_success"})
 
+# Capability descriptors are policy-visible.  Their schema is deliberately a
+# small public input-contract vocabulary, rather than arbitrary JSON metadata.
+_PUBLIC_SCHEMA_KEYS = frozenset({"type", "properties", "required", "additionalProperties"})
+_PUBLIC_SCHEMA_TYPES = frozenset({"object", "string", "number", "integer", "boolean", "null"})
+
 def _json(value: Any) -> Any:
     if value is None or isinstance(value, (bool, str, int)): return value
     if isinstance(value, float):
@@ -39,6 +44,67 @@ def _json(value: Any) -> Any:
     if isinstance(value, (list, tuple)): return tuple(_json(item) for item in value)
     raise TypeError("value must be JSON-compatible")
 
+
+def _freeze_public_parameter_schema(schema: dict[str, Any]) -> MappingProxyType:
+    """Freeze the explicit public schema subset admissible to policy.
+
+    This is intentionally not a general JSON Schema parser.  Unknown fields
+    are rejected at every node so evaluator metadata cannot be carried through
+    a descriptor as seemingly harmless schema data.
+    """
+
+    if not isinstance(schema, dict):
+        raise TypeError("parameter_schema must be a dict")
+    unknown = set(schema) - _PUBLIC_SCHEMA_KEYS
+    if unknown:
+        raise ValueError("parameter_schema contains unsupported public contract fields")
+    if any(not isinstance(key, str) for key in schema):
+        raise TypeError("parameter_schema keys must be strings")
+
+    output: dict[str, Any] = {}
+    declared_type = schema.get("type")
+    if "type" in schema:
+        if not isinstance(declared_type, str):
+            raise TypeError("parameter_schema type must be a string")
+        if declared_type not in _PUBLIC_SCHEMA_TYPES:
+            raise ValueError("parameter_schema type is not supported")
+        output["type"] = declared_type
+
+    object_contract = declared_type in (None, "object")
+    if not object_contract and any(key in schema for key in ("properties", "required", "additionalProperties")):
+        raise ValueError("non-object parameter schemas cannot declare object fields")
+
+    properties = schema.get("properties")
+    if "properties" in schema:
+        if not isinstance(properties, dict):
+            raise TypeError("parameter_schema properties must be a dict")
+        public_properties: dict[str, Any] = {}
+        for name, property_schema in properties.items():
+            _name(name)
+            if not isinstance(property_schema, dict):
+                raise TypeError("parameter property schema must be a dict")
+            public_properties[name] = _freeze_public_parameter_schema(property_schema)
+        output["properties"] = MappingProxyType(public_properties)
+
+    if "required" in schema:
+        required = schema["required"]
+        if isinstance(required, str) or not isinstance(required, (list, tuple)):
+            raise TypeError("parameter_schema required must be an ordered sequence")
+        if not all(isinstance(name, str) and name.strip() for name in required):
+            raise ValueError("parameter_schema required entries must be non-empty strings")
+        if len(set(required)) != len(required):
+            raise ValueError("parameter_schema required entries must be unique")
+        if properties is None or any(name not in properties for name in required):
+            raise ValueError("parameter_schema required entries must be declared properties")
+        output["required"] = tuple(required)
+
+    if "additionalProperties" in schema:
+        if not isinstance(schema["additionalProperties"], bool):
+            raise TypeError("parameter_schema additionalProperties must be a bool")
+        output["additionalProperties"] = schema["additionalProperties"]
+
+    return MappingProxyType(output)
+
 @dataclass(frozen=True)
 class CapabilityDescriptor:
     """Immutable public capability information derived from a registered tool."""
@@ -51,7 +117,7 @@ class CapabilityDescriptor:
         if self.display_name is not None and (not isinstance(self.display_name, str) or not self.display_name.strip()): raise ValueError("display_name must be non-empty when present")
         if self.description is not None and not isinstance(self.description, str): raise TypeError("description must be a string or None")
         if self.parameter_schema is not None and not isinstance(self.parameter_schema, dict): raise TypeError("parameter_schema must be a dict or None")
-        object.__setattr__(self, "parameter_schema", _json(self.parameter_schema) if self.parameter_schema is not None else None)
+        object.__setattr__(self, "parameter_schema", _freeze_public_parameter_schema(self.parameter_schema) if self.parameter_schema is not None else None)
     def to_dict(self) -> dict[str, Any]: return {"tool_id": self.tool_id, "display_name": self.display_name, "description": self.description, "parameter_schema": _thaw(self.parameter_schema)}
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "CapabilityDescriptor":

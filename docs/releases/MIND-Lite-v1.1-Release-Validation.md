@@ -5,7 +5,10 @@
 - Release: **MIND-Lite v1.1.0**
 - Planned tag: `v1.1.0`
 - Tag status: **NOT YET CREATED**
-- Candidate release commit: this release-freeze commit; exact immutable commit identity is recorded in the delivery record after commit creation.
+- Original blocked candidate: `4c13920e5fdd4107a059f2670727503bb3916302`.
+- Original independent readiness verdict: **BLOCKED ON TRUTH LEAKAGE**.
+- Original candidate status: **NEVER TAGGED OR RELEASED**.
+- Replacement candidate: this truth-firewall remediation commit supersedes the original candidate; its exact immutable identity is recorded after commit creation.
 
 ## Scope
 
@@ -69,6 +72,8 @@ Provider-free deterministic release validation covers:
 
 ## Truth Leakage Audit
 
+The original candidate's `CapabilityDescriptor.parameter_schema` accepted unrestricted JSON metadata except for a partial blacklist.  Independent readiness review found that this allowed evaluator-private `difficulty` metadata to reach generalized policy context.  The remediation replaces that admission path with an explicit recursive public input-schema allowlist; unknown schema fields are rejected at descriptor construction and cannot enter policy context.
+
 Generalized policy context and public outcomes exclude expected answers, ground truth, correct tools/actions, evaluator success, benchmark completion state, difficulty, private judge metadata, prompts, credentials, hidden reasoning, and exception/traceback data. The controller does not import completion evaluation or inspect evaluator truth.
 
 ## Immutability Validation
@@ -81,9 +86,9 @@ v1.1 is opt-in. Direct answer, calculator behavior, `GoalDirectedAgent.run()`, m
 
 ## Test Evidence
 
-- Focused v1.1 integration validation: **44 passed**.
-- Full `python -m unittest` regression suite: **480 passed**.
-- Full `pytest` regression suite: **480 passed**.
+- Focused v1.1/runtime/truth-firewall validation: **35 passed**.
+- Full `python -m unittest` regression suite: **484 passed**.
+- Full `pytest` regression suite: **484 passed**.
 - `git diff --check`: **passed**.
 
 ## Known Limitations

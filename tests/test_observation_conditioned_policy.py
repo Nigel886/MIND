@@ -124,6 +124,11 @@ class ObservationConditionedPolicyTest(unittest.TestCase):
         self.assertNotIn("correct_tool", _keys(context.to_dict()))
         self.assertNotIn("correct_action", _keys(context.to_dict()))
 
+    def test_unsafe_capability_metadata_cannot_enter_policy_context(self) -> None:
+        for key in ("difficulty", "expected_answer", "ground_truth", "correct_tool", "benchmark_label"):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                CapabilityDescriptor("unsafe", parameter_schema={"properties": {"value": {key: "private"}}})
+
     def test_same_public_context_with_different_observations_produces_different_actions(self) -> None:
         policy = ObservationPolicy()
         one = self._context(Observation(source="agent_environment", content={"value": "one"}))
