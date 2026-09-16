@@ -15,6 +15,8 @@ from src.evaluation.m18_plan_repair_rerun import (
     M18PlanRepairRunRecord, M18_PLAN_REPAIR_COMMIT, M18_PLAN_REPAIR_CONDITION_ID,
     M18_PLAN_REPAIR_NAMESPACE, historical_plan_record_digest,
 )
+from src.evaluation.m18_execution_harness import M18FrozenProviderBinding
+from src.evaluation.m18_shared_provider import M18SharedProviderClient
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -141,6 +143,64 @@ class M18PlanRepairRerunTests(unittest.TestCase):
             value = json.loads(path.read_text(encoding="utf-8")); value["repair_commit"] = "0" * 40
             path.write_text(json.dumps(value), encoding="utf-8")
             with self.assertRaises(ValueError): M18PlanRepairPlan.from_repository(root)
+
+    def _fake_binding(self, answer: str, *, model: str = "deepseek-flash", calls: list[dict] | None = None):
+        responses = [
+            '{"steps":[{"step_id":"finish","subgoal":"return public answer","capability_id":null}]}',
+            json.dumps({"action": "answer", "answer": answer}),
+        ]
+        def post(url, headers, body, timeout):
+            value = json.loads(body)
+            if calls is not None: calls.append(value)
+            return {"model": model, "choices": [{"message": {"content": responses.pop(0)}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
+        return M18FrozenProviderBinding(M18SharedProviderClient(http_post=post, environment={"DEEPSEEK_API_KEY": "test-only"}))
+
+    def test_real_execute_bridge_exists_and_fake_success_persists_repaired_identity(self):
+        with TemporaryDirectory() as directory:
+            root = temporary_repository(directory); rerun = M18PlanRepairRerun.from_repository(root)
+            store = rerun.result_store(); spec = rerun.plan.specs[0]; case = rerun.plan.cases_by_id[spec.case_id]
+            requests: list[dict] = []
+            rerun.result_store = lambda: store  # type: ignore[method-assign]
+            rerun._frozen_binding = lambda environment: self._fake_binding(case.evaluator.target_answer, calls=requests)  # type: ignore[method-assign]
+            store.missing = lambda: (spec,)  # type: ignore[method-assign]
+            records = rerun.execute("f" * 40, environment={"DEEPSEEK_API_KEY": "test-only"})
+            self.assertTrue(hasattr(rerun, "execute"))
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].repaired_run_id, spec.repaired_run_id)
+            self.assertEqual(records[0].original_run_id, spec.original_run_id)
+            self.assertTrue((rerun.result_root / (spec.repaired_run_id + ".json")).exists())
+            self.assertFalse((rerun.result_root / (spec.original_run_id + ".json")).exists())
+            self.assertEqual(store.completed_ids(), frozenset({spec.repaired_run_id}))
+            self.assertIn("Public request", json.dumps(requests))
+
+    def test_fake_normal_failure_persists_and_remains_benchmark_data(self):
+        with TemporaryDirectory() as directory:
+            rerun = M18PlanRepairRerun.from_repository(temporary_repository(directory)); store = rerun.result_store()
+            spec = rerun.plan.specs[0]
+            record = rerun._execute_specs(store, (spec,), "f" * 40, lambda: self._fake_binding("wrong"))[0]
+            self.assertEqual(record.runtime_terminal_outcome, "answer_submitted")
+            self.assertEqual(record.neutral_failure_category, "wrong_answer")
+            self.assertEqual(store.completed_ids(), frozenset({spec.repaired_run_id}))
+
+    def test_integrity_drift_and_persistence_failure_stop_before_later_identity(self):
+        with TemporaryDirectory() as directory:
+            rerun = M18PlanRepairRerun.from_repository(temporary_repository(directory)); store = rerun.result_store()
+            calls: list[dict] = []
+            with self.assertRaises(M18OperationalStopCondition) as raised:
+                rerun._execute_specs(store, rerun.plan.specs[:2], "f" * 40,
+                                      lambda: self._fake_binding("unused", model="wrong-model", calls=calls))
+            self.assertEqual(raised.exception.event.category, M18OperationalStopCategory.PROVIDER_IDENTITY_DRIFT)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(store.completed_ids(), frozenset())
+        with TemporaryDirectory() as directory:
+            rerun = M18PlanRepairRerun.from_repository(temporary_repository(directory)); store = rerun.result_store()
+            spec = rerun.plan.specs[0]; store.persist = lambda record: (_ for _ in ()).throw(OSError("synthetic"))  # type: ignore[method-assign]
+            case = rerun.plan.cases_by_id[spec.case_id]
+            with self.assertRaises(M18OperationalStopCondition) as raised:
+                rerun._execute_specs(store, (spec,), "f" * 40,
+                                      lambda: self._fake_binding(case.evaluator.target_answer))
+            self.assertEqual(raised.exception.event.category, M18OperationalStopCategory.PERSISTENCE_INTEGRITY_FAILURE)
 
 
 if __name__ == "__main__":

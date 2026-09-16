@@ -16,11 +16,15 @@ from typing import Any, Mapping
 
 from src.evaluation.m18_execution_harness import (
     M18BudgetCounters,
+    M18ExecutionIntegrityError,
+    M18ExecutionMode,
     M18_FORMAL_REPETITIONS,
+    M18FrozenProviderBinding,
     M18_RESULT_SCHEMA_VERSION,
     M18_SYSTEM_ARTIFACTS,
     M18RunRecord,
     M18RunSpec,
+    M18SharedExecutionHarness,
     harness_identity,
 )
 from src.evaluation.m18_pilot_execution import (
@@ -35,8 +39,8 @@ from src.evaluation.m18_pilot_execution import (
     M18_PILOT_TRANCHE_ID,
     _read_json,
 )
-from src.evaluation.m18_shared_provider import M18SharedProviderConfiguration
-from src.evaluation.m18_task_generation import canonical_json
+from src.evaluation.m18_shared_provider import M18SharedProviderClient, M18SharedProviderConfiguration
+from src.evaluation.m18_task_generation import M18Case, M18Namespace, canonical_json
 
 
 M18_PLAN_REPAIR_RERUN_ID = "m18_plan_repair_rerun_v1"
@@ -188,6 +192,7 @@ class M18PlanRepairPlan:
     repository_root: Path
     manifest: M18PlanRepairManifest
     specs: tuple[M18PlanRepairRunSpec, ...]
+    cases: tuple[M18Case, ...]
 
     @classmethod
     def from_repository(cls, repository_root: Path) -> "M18PlanRepairPlan":
@@ -199,7 +204,8 @@ class M18PlanRepairPlan:
             raise M18FrozenArtifactValidationError("repair rerun manifest must be an object")
         manifest = M18PlanRepairManifest.from_dict(raw)
         expected = tuple(_repair_spec(spec) for spec in tranche.specs if spec.system_condition == "plan_and_execute")
-        plan = cls(root, manifest, expected)
+        selected = tuple(case for case in pilot.cases if case.case_id in manifest.case_ids)
+        plan = cls(root, manifest, expected, selected)
         plan.validate_admission()
         return plan
 
@@ -229,15 +235,22 @@ class M18PlanRepairPlan:
             or m.result_namespace == M18_PILOT_EXPERIMENT_NAMESPACE
             or len(m.case_ids) != 12 or len(set(m.case_ids)) != 12
             or len(self.specs) != 60
+            or len(self.cases) != 12
             or len({item.repaired_run_id for item in self.specs}) != 60
             or len({item.original_run_id for item in self.specs}) != 60
             or {item.case_id for item in self.specs} != set(m.case_ids)
+            or {item.case_id for item in self.cases} != set(m.case_ids)
+            or any(item.namespace is not M18Namespace.PILOT for item in self.cases)
             or {item.repetition for item in self.specs} != set(m.repetitions)
             or any(item.repaired_run_id == item.original_run_id for item in self.specs)
             or m.replacement_identity_set_hash != _hash([item.to_dict() for item in self.specs])
             or m.manifest_hash != _hash(m.core_dict())
         ):
             raise M18FrozenArtifactValidationError("repair rerun manifest admission mismatch")
+
+    @property
+    def cases_by_id(self) -> Mapping[str, M18Case]:
+        return {item.case_id: item for item in self.cases}
 
     def dry_run(self) -> dict[str, int | bool]:
         self.validate_admission()
@@ -383,7 +396,7 @@ class M18PlanRepairResultStore:
 
 
 class M18PlanRepairRerun:
-    """Admission surface only; intentionally does not execute a benchmark or provider."""
+    """The only repaired-Plan execution surface; never writes pilot identities."""
 
     def __init__(self, plan: M18PlanRepairPlan) -> None:
         self.plan = plan
@@ -402,6 +415,106 @@ class M18PlanRepairRerun:
     def result_store(self, root: Path | None = None) -> M18PlanRepairResultStore:
         return M18PlanRepairResultStore(root or self.result_root, self.plan)
 
+    def _raise_stop(self, category: M18OperationalStopCategory, stage: str, detail: str,
+                    *, repaired_run_id: str | None = None, persist: bool = True) -> None:
+        event = M18OperationalStopEvent(category, stage, category.value, detail, repaired_run_id)
+        if persist:
+            root = self.result_root
+            root.mkdir(parents=True, exist_ok=True)
+            path = root / M18_PLAN_REPAIR_STOP_FILENAME
+            if not path.exists():
+                self._atomic_stop(path, event)
+        raise M18OperationalStopCondition(event)
+
+    @staticmethod
+    def _atomic_stop(path: Path, event: M18OperationalStopEvent) -> None:
+        with NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=path.parent, suffix=".tmp") as handle:
+            json.dump(event.to_dict(), handle, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            handle.write("\n")
+            temporary = Path(handle.name)
+        temporary.replace(path)
+
+    def _assert_no_prior_stop(self) -> None:
+        path = self.result_root / M18_PLAN_REPAIR_STOP_FILENAME
+        if path.exists():
+            self._raise_stop(M18OperationalStopCategory.PERSISTENCE_INTEGRITY_FAILURE, "resume",
+                             "prior_integrity_stop_requires_explicit_operator_resolution", persist=False)
+
+    def _frozen_binding(self, environment: Mapping[str, str] | None) -> M18FrozenProviderBinding:
+        return M18FrozenProviderBinding(M18SharedProviderClient(environment=environment))
+
+    @staticmethod
+    def _original_spec(spec: M18PlanRepairRunSpec) -> M18RunSpec:
+        return M18RunSpec("m18_suite_v1", spec.case_id, "plan_and_execute", spec.repetition,
+                          spec.provider_config_hash)
+
+    def _execute_specs(self, store: M18PlanRepairResultStore,
+                       specs: tuple[M18PlanRepairRunSpec, ...], execution_baseline: str,
+                       binding_factory) -> tuple[M18PlanRepairRunRecord, ...]:
+        """Execute admitted repair identities; persistence keys are repaired IDs only."""
+        records: list[M18PlanRepairRunRecord] = []
+        for spec in specs:
+            case = self.plan.cases_by_id.get(spec.case_id)
+            if case is None or case.namespace is not M18Namespace.PILOT:
+                self._raise_stop(M18OperationalStopCategory.PROVENANCE_INTEGRITY_FAILURE, "case_admission",
+                                 "repair_case_not_admitted", repaired_run_id=spec.repaired_run_id)
+            try:
+                binding = binding_factory()
+                if not isinstance(binding, M18FrozenProviderBinding):
+                    raise TypeError("repair execution requires frozen provider binding")
+                harness = M18SharedExecutionHarness(
+                    spec.provider_config_hash, max_steps=3, max_tool_calls=1,
+                    mode=M18ExecutionMode.FROZEN, frozen_binding=binding,
+                )
+            except M18OperationalStopCondition:
+                raise
+            except Exception as error:
+                self._raise_stop(M18OperationalStopCategory.PROVIDER_CONFIG_DRIFT, "provider_preflight",
+                                 type(error).__name__, repaired_run_id=spec.repaired_run_id)
+            try:
+                # The original spec is internal-only. It is never persisted or used as completion identity.
+                internal = harness.run_frozen_pilot(self._original_spec(spec), case,
+                                                     tranche_id=spec.source_tranche_id)
+            except M18ExecutionIntegrityError as error:
+                try:
+                    category = M18OperationalStopCategory(error.category)
+                except ValueError:
+                    category = M18OperationalStopCategory.PROVENANCE_INTEGRITY_FAILURE
+                self._raise_stop(category, error.stage, error.detail, repaired_run_id=spec.repaired_run_id)
+            references = set(internal.raw_artifact_references)
+            if "m18_plan_provider:model_identity_mismatch" in references:
+                self._raise_stop(M18OperationalStopCategory.PROVIDER_IDENTITY_DRIFT, "provider_decode",
+                                 "model_identity_mismatch", repaired_run_id=spec.repaired_run_id)
+            if "m18_plan_provider:malformed_json" in references:
+                self._raise_stop(M18OperationalStopCategory.PROVIDER_DECODER_INCOMPATIBILITY, "provider_decode",
+                                 "malformed_json", repaired_run_id=spec.repaired_run_id)
+            repaired = M18PlanRepairRunRecord.from_harness_record(spec, self.plan.manifest,
+                                                                    execution_baseline, internal)
+            try:
+                store.persist(repaired)
+            except Exception as error:
+                self._raise_stop(M18OperationalStopCategory.PERSISTENCE_INTEGRITY_FAILURE, "persistence",
+                                 type(error).__name__, repaired_run_id=spec.repaired_run_id)
+            records.append(repaired)
+        return tuple(records)
+
+    def execute(self, execution_baseline: str, *, environment: Mapping[str, str] | None = None) -> tuple[M18PlanRepairRunRecord, ...]:
+        """Execute missing repaired identities only, using the unchanged frozen provider contract."""
+        if not isinstance(execution_baseline, str) or len(execution_baseline) != 40:
+            raise ValueError("execution baseline must be a commit hash")
+        self.plan.validate_admission()
+        self._assert_no_prior_stop()
+        try:
+            store = self.result_store()
+            missing = store.missing()
+        except M18OperationalStopCondition:
+            raise
+        except Exception as error:
+            self._raise_stop(M18OperationalStopCategory.PROVENANCE_INTEGRITY_FAILURE, "resume",
+                             type(error).__name__)
+        return self._execute_specs(store, missing, execution_baseline,
+                                   lambda: self._frozen_binding(environment))
+
     def stop_for_integrity_failure(self, category: M18OperationalStopCategory, stage: str, detail: str) -> None:
         if category not in {
             M18OperationalStopCategory.PROVIDER_IDENTITY_DRIFT,
@@ -415,7 +528,7 @@ class M18PlanRepairRerun:
             M18OperationalStopCategory.PROVIDER_DECODER_INCOMPATIBILITY,
         }:
             raise ValueError("unsupported repair stop category")
-        raise M18OperationalStopCondition(M18OperationalStopEvent(category, stage, category.value, detail))
+        self._raise_stop(category, stage, detail, persist=False)
 
 
 def historical_plan_record_digest(root: Path) -> tuple[int, str]:

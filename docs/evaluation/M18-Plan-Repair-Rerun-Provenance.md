@@ -38,3 +38,19 @@ separately persisted repair 60. A repaired cell may be descriptively compared
 with the other conditions only with explicit post-hoc repair disclosure. This
 provenance freeze performs no provider call, benchmark execution, remaining
 pilot execution, or formal execution.
+
+## Execution bridge
+
+The repaired execution entry point creates a fresh frozen shared-provider
+binding and shared harness for each missing repaired identity. It uses the
+corresponding original `M18RunSpec` only inside the unchanged harness; the
+returned record is immediately projected to `M18PlanRepairRunRecord` and is
+persisted only by repaired run ID in the dedicated namespace. Original run IDs
+remain linkage metadata and are never filenames or completion identities.
+
+The actual rerun code baseline is supplied at execution time and is stored
+separately from the fixed #130 repair semantic commit. Resume discovers only
+fully validated repair records. Typed M18 integrity stops prevent later
+identities from executing on provider/model drift, decoder incompatibility,
+provenance, or persistence failure. This bridge implementation performed no
+real provider call or benchmark execution.
