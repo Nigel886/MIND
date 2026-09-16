@@ -12,6 +12,7 @@ from src.evaluation.m18_v2_runtime import (
 )
 from src.evaluation.contracts import EvaluationFeedback, EvaluationFeedbackType
 from src.evaluation.m18_v2_semantics import M18V2BudgetError, M18V2BudgetState, M18V2EvaluationCategory, generate_m18_v2_case, reference_public_trajectory
+from src.evaluation.m18_v2_provenance import comparator_condition_for_system
 
 HASH="b"*64
 class SequenceProvider:
@@ -54,6 +55,7 @@ class M18V2ConcreteAdapterTests(unittest.TestCase):
                 self.assertEqual(result.evaluator_outcome,M18V2EvaluationCategory.SUCCESS)
                 self.assertEqual((result.budget.action_cycles,result.budget.tool_attempts),(5,4))
                 self.assertEqual(result.final_public_state["current_value"],trace.final_public_result)
+                self.assertEqual(result.run_provenance.identity.comparator_condition_id,comparator_condition_for_system(kind))
     def test_b_and_both_c_subtypes_all_concrete(self):
         for value in (case(M18Cohort.B,M18Difficulty.MEDIUM),case(M18Cohort.C,M18Difficulty.MEDIUM,M18FailureSubtype.RECOVERABLE),case(M18Cohort.C,M18Difficulty.MEDIUM,M18FailureSubtype.INVALID)):
             for kind,result,trace,_ in self.execute_all(value):

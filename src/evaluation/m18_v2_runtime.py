@@ -21,6 +21,12 @@ from src.evaluation.m18_mind_policy_condition import M18MINDPolicyCondition
 from src.evaluation.m18_plan_and_execute import M18PlanAndExecuteBaseline
 from src.evaluation.m18_react import M18ReActBaseline
 from src.evaluation.m18_task_generation import canonical_hash
+from src.evaluation.m18_v2_provenance import (
+    M18V2RunIdentity,
+    M18V2RunProvenance,
+    M18_V2_RUNTIME_ID,
+    comparator_condition_for_system,
+)
 from src.evaluation.m18_v2_semantics import (
     M18V2Budget, M18V2BudgetError, M18V2BudgetState, M18V2Case,
     M18V2Episode, M18V2EvaluationCategory, M18V2EnvironmentOutcome,
@@ -32,7 +38,6 @@ from src.evaluation.m18_v2_semantics import (
 M18_V1_RUNTIME_CONDITION = "m18_runtime_condition_v1_historical"
 M18_V2_RUNTIME_CONDITION = "m18_runtime_condition_v2"
 M18_V1_BUDGET_ID = "m18_budget_v1_historical_3_1"
-M18_V2_RUNTIME_ID = "m18_shared_execution_runtime_v2"
 M18_V2_SYSTEMS = ("mind_lite_v11", "direct_tool_calling", "react", "plan_and_execute")
 
 
@@ -150,6 +155,31 @@ class M18V2ResultProvenance:
     def provenance_hash(self) -> str:
         return canonical_hash(self.to_dict())
 
+    def for_run(
+        self,
+        case: M18V2Case,
+        system_condition: str,
+        repetition: int,
+        execution_baseline: str,
+    ) -> M18V2RunProvenance:
+        """Project one complete future record identity from the shared condition."""
+        if not isinstance(case, M18V2Case):
+            raise TypeError("case must be an M18V2Case")
+        return M18V2RunProvenance(
+            M18V2RunIdentity(
+                case.suite_version,
+                case.case_id,
+                comparator_condition_for_system(system_condition),
+                repetition,
+            ),
+            self.condition.environment_id,
+            self.condition.evaluator_id,
+            self.condition.budget_id,
+            self.execution_harness_id,
+            self.provider_config_hash,
+            execution_baseline,
+        )
+
 
 @dataclass(frozen=True)
 class M18V2RuntimeResult:
@@ -163,6 +193,7 @@ class M18V2RuntimeResult:
     logical_provider_calls: int
     transport_attempts: int
     provenance: M18V2ResultProvenance
+    run_provenance: M18V2RunProvenance
 
     def to_dict(self) -> dict[str, Any]:
         return {"terminal": self.terminal.value,
@@ -171,7 +202,8 @@ class M18V2RuntimeResult:
                 "environment_outcomes": list(self.environment_outcomes),
                 "final_public_state": dict(self.final_public_state), "budget": self.budget.to_dict(),
                 "logical_provider_calls": self.logical_provider_calls,
-                "transport_attempts": self.transport_attempts, "provenance": self.provenance.to_dict()}
+                "transport_attempts": self.transport_attempts, "provenance": self.provenance.to_dict(),
+                "run_provenance": self.run_provenance.to_dict()}
 
 
 class M18V2SharedExecutionHarness:
@@ -184,12 +216,27 @@ class M18V2SharedExecutionHarness:
             raise ValueError("M18 v2 shared runtime requires the complete v2 condition")
         self.condition, self.provenance, self.budget = condition, provenance, M18V2Budget()
 
-    def dry_run(self, case: M18V2Case, adapter: M18V2RuntimeAdapter, *, elapsed_seconds: int | float = 0) -> M18V2RuntimeResult:
+    def dry_run(
+        self,
+        case: M18V2Case,
+        adapter: M18V2RuntimeAdapter,
+        *,
+        elapsed_seconds: int | float = 0,
+        repetition: int = 1,
+        execution_baseline: str = "provider_free_v2",
+        run_provenance: M18V2RunProvenance | None = None,
+    ) -> M18V2RuntimeResult:
         """Execute an injected fake/public adapter without persistence or real providers."""
         if not isinstance(case, M18V2Case) or case.suite_version != self.condition.suite_version:
             raise ValueError("case does not match explicit v2 runtime condition")
         if adapter.system_condition not in M18_V2_SYSTEMS:
             raise ValueError("unknown M18 v2 system condition")
+        expected_run_provenance = self.provenance.for_run(
+            case, adapter.system_condition, repetition, execution_baseline,
+        )
+        if run_provenance is not None and run_provenance != expected_run_provenance:
+            raise ValueError("v2 run provenance does not match runtime admission")
+        run_provenance = expected_run_provenance
         episode = M18V2Episode(case)
         episode.enforce_elapsed_seconds(elapsed_seconds)
         gate = M18V2ProviderCallGate(episode.budget_state)
@@ -240,7 +287,8 @@ class M18V2SharedExecutionHarness:
                 terminal = M18V2RuntimeTerminal.BUDGET_EXHAUSTED
         return M18V2RuntimeResult(terminal, evaluation, tuple(actions), tuple(feedbacks), tuple(outcomes),
                                   dict(episode.public_state), episode.budget_state,
-                                  gate.budget_state.logical_provider_calls, gate.transport_attempts, self.provenance)
+                                  gate.budget_state.logical_provider_calls, gate.transport_attempts,
+                                  self.provenance, run_provenance)
 
 
 # Concrete comparator adapters -------------------------------------------------

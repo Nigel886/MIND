@@ -93,6 +93,32 @@ adapter tests cover all 18 pilot candidates and all 162 formal candidate
 definitions; these are fixture-path validation checks, not pilot or formal
 execution. No v2 suite, manifest, or result namespace is frozen by this work.
 
+## Deterministic future-run provenance
+
+Future v2 records use the `m18_v2_logical_run_id_v1` canonical identity tuple:
+`suite_identity`, `case_id`, exact `comparator_condition_id`, and repetition.
+Repetitions are explicit integers `1..5`. The run ID is SHA-256 over the
+canonical JSON object with named fields and a schema identifier, rather than a
+concatenated string; it is consequently stable across processes and machines
+and cannot be confused by field-boundary ambiguity.
+
+`M18V2RunProvenance` additionally requires the exact v2 environment,
+evaluator, budget, runtime, provider-configuration hash, result-schema
+identity, and separately recorded execution baseline. The execution baseline
+is deliberately not part of the scientific run ID: harmless delivery commits
+must not make an already-defined run unresumable. Provider configuration and
+the environment/evaluator/budget/runtime identities are mandatory record
+provenance and are validated on admission, so a result from a different
+condition cannot be accepted.
+
+Result admission recomputes the run ID from serialized provenance, rejects a
+mismatch or duplicate as a typed provenance-integrity stop, and resumes only
+identities with fully valid admitted records. A filename never establishes
+completion. The candidate projection verifies 360 unique pilot identities and
+3,240 unique formal identities with no pilot/formal intersection. It creates
+no suite-v2 manifest, hash, result namespace, provider call, pilot run, or
+formal run.
+
 ## Anti-tuning and next gate
 
 The implementation follows only the #139 transition and #141 budget
