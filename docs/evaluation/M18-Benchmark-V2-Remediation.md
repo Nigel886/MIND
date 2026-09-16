@@ -69,6 +69,30 @@ Direct, ReAct, and Plan adapter conditions; transport attempts remain separate.
 No v2 result persistence surface is created by this binding. The existing v1
 shared harness remains the explicit historical 3/1 route.
 
+## Concrete comparator binding
+
+The v2 runtime now has explicit evaluation-side adapters for the existing MIND
+policy condition, Direct tool-calling baseline, ReAct baseline, and repaired
+Plan-and-Execute baseline. Each adapter preserves its established request,
+schema, decoding, and baseline-state behavior; the only added boundary is
+explicit routing into `M18V2SharedExecutionHarness`. The historical
+`M18SharedExecutionHarness` and its v1 comparator route remain unchanged.
+
+Every provider operation made through these concrete v2 adapters is
+interposed by the shared v2 logical-call gate. Planner, executor, and replan
+operations therefore count as logical provider calls for Plan, while transport
+attempts remain a separate observational counter. The gate binds all four
+paths to the immutable eight-logical-call v2 limit without changing any
+provider configuration, prompt, response schema, or retry policy.
+
+The adapters receive and serialize only public v2 task capability descriptors
+and public environment feedback. They do not pass evaluator fixtures, expected
+results, private generator state, hidden environment state, or prohibited
+capability metadata to their provider-facing requests. Provider-free concrete
+adapter tests cover all 18 pilot candidates and all 162 formal candidate
+definitions; these are fixture-path validation checks, not pilot or formal
+execution. No v2 suite, manifest, or result namespace is frozen by this work.
+
 ## Anti-tuning and next gate
 
 The implementation follows only the #139 transition and #141 budget

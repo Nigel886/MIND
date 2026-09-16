@@ -10,7 +10,16 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Mapping, Protocol
 
-from src.evaluation.contracts import EvaluationAction, EvaluationActionType, EvaluationFeedback, EvaluationFeedbackType
+from src.core.cognitive_session import CognitiveAgentSession, CognitiveSessionPhase
+from src.core.environment_outcome import EnvironmentOutcome, EnvironmentOutcomeCategory, EnvironmentOutcomeReason
+from src.core.task import Goal, Task
+from src.core.tool import CapabilityDescriptor
+from src.evaluation.contracts import EvaluationAction, EvaluationActionType, EvaluationCase, EvaluationFeedback, EvaluationFeedbackType
+from src.evaluation.execution import AgentStepInput, EvaluationBudget, EvaluationBudgetState
+from src.evaluation.m18_direct_tool_calling import M18DirectToolCallingBaseline
+from src.evaluation.m18_mind_policy_condition import M18MINDPolicyCondition
+from src.evaluation.m18_plan_and_execute import M18PlanAndExecuteBaseline
+from src.evaluation.m18_react import M18ReActBaseline
 from src.evaluation.m18_task_generation import canonical_hash
 from src.evaluation.m18_v2_semantics import (
     M18V2Budget, M18V2BudgetError, M18V2BudgetState, M18V2Case,
@@ -222,6 +231,9 @@ class M18V2SharedExecutionHarness:
                 outcome = episode.submit_invalid_action()
             outcomes.append(outcome.to_dict())
             feedback = _feedback(outcome); feedbacks.append(feedback.to_dict())
+            accept = getattr(adapter, "accept_observation", None)
+            if callable(accept):
+                accept(feedback)
             if episode.terminal_reason:
                 terminal = M18V2RuntimeTerminal.TIMEOUT if episode.terminal_reason == "timeout" else M18V2RuntimeTerminal.BUDGET_EXHAUSTED
             elif outcome.category is M18V2OutcomeCategory.BUDGET_EXHAUSTED:
@@ -229,3 +241,111 @@ class M18V2SharedExecutionHarness:
         return M18V2RuntimeResult(terminal, evaluation, tuple(actions), tuple(feedbacks), tuple(outcomes),
                                   dict(episode.public_state), episode.budget_state,
                                   gate.budget_state.logical_provider_calls, gate.transport_attempts, self.provenance)
+
+
+# Concrete comparator adapters -------------------------------------------------
+# These are deliberately evaluation-side wrappers.  They retain each baseline's
+# request/decoder/state implementation and only interpose the v2 call gate.
+
+def _capabilities(case: M18V2Case) -> tuple[CapabilityDescriptor, ...]:
+    return tuple(CapabilityDescriptor(item["tool_id"], item["display_name"], item["description"], item["parameter_schema"])
+                 for item in case.public.to_dict()["capabilities"])
+
+
+def _step_input(case: M18V2Case, feedback: EvaluationFeedback, budget: M18V2BudgetState) -> AgentStepInput:
+    task = Task(Goal(case.public.task_text, ("act using public capability information",)), {"task_text": case.public.task_text})
+    return AgentStepInput(EvaluationCase(case.case_id, task), feedback,
+                          EvaluationBudgetState(EvaluationBudget(6, 4), budget.action_cycles, budget.tool_attempts))
+
+
+class _GatedGenerateProvider:
+    def __init__(self, provider: Any) -> None:
+        self.provider, self.gate, self.last_request = provider, None, None
+    def generate(self, request: Any) -> str:
+        if self.gate is None: raise RuntimeError("v2 provider gate not bound")
+        self.last_request = request
+        attempts = getattr(self.provider, "transport_attempts_per_logical_call", 1)
+        return self.gate.invoke(lambda: self.provider.generate(request), transport_attempts=attempts)
+
+
+class _GatedPlanProvider:
+    def __init__(self, provider: Any) -> None:
+        self.provider, self.gate, self.last_plan_request, self.last_executor_request = provider, None, None, None
+    def plan(self, request: Any) -> str:
+        if self.gate is None: raise RuntimeError("v2 provider gate not bound")
+        self.last_plan_request = request
+        attempts = getattr(self.provider, "transport_attempts_per_logical_call", 1)
+        return self.gate.invoke(lambda: self.provider.plan(request), transport_attempts=attempts)
+    def execute(self, request: Any) -> str:
+        if self.gate is None: raise RuntimeError("v2 provider gate not bound")
+        self.last_executor_request = request
+        attempts = getattr(self.provider, "transport_attempts_per_logical_call", 1)
+        return self.gate.invoke(lambda: self.provider.execute(request), transport_attempts=attempts)
+
+
+class M18V2MINDAdapter:
+    system_condition = "mind_lite_v11"
+    def __init__(self, provider: Any) -> None:
+        self._provider = _GatedGenerateProvider(provider); self._condition = M18MINDPolicyCondition(self._provider); self._session = None
+    def initialize(self, case: M18V2Case) -> None:
+        task = Task(Goal(case.public.task_text, ("choose a public action",)), {"task_text": case.public.task_text})
+        self._session = CognitiveAgentSession(6, policy_engine=self._condition, capabilities=_capabilities(case)); self._session.start(task)
+    def next_decision(self, feedback: EvaluationFeedback, budget: M18V2BudgetState, provider_gate: M18V2ProviderCallGate) -> EvaluationAction:
+        self._provider.gate = provider_gate
+        assert self._session is not None
+        result = self._session.step()
+        if result.phase is not CognitiveSessionPhase.AWAITING_OBSERVATION or result.action_request is None: raise RuntimeError("MIND session terminated before public action")
+        request = result.action_request
+        if request.action == "answer": return EvaluationAction(EvaluationActionType.ANSWER, {"answer": request.parameters["answer"]})
+        return EvaluationAction(EvaluationActionType.TOOL_CALL, {"tool_name": request.parameters["tool_name"], "parameters": request.parameters["parameters"]})
+    def accept_observation(self, feedback: EvaluationFeedback) -> None:
+        assert self._session is not None
+        payload = feedback.to_dict()["payload"]
+        if feedback.feedback_type is EvaluationFeedbackType.TOOL_RESPONSE: outcome = EnvironmentOutcome(EnvironmentOutcomeCategory.SUCCESS, EnvironmentOutcomeReason.SUCCESSFUL_RESULT, payload)
+        elif feedback.feedback_type is EvaluationFeedbackType.TOOL_FAILURE: outcome = EnvironmentOutcome(EnvironmentOutcomeCategory.RECOVERABLE_FAILURE, EnvironmentOutcomeReason.TOOL_TRANSIENT_FAILURE, {k:v for k,v in payload.items() if k != "category"})
+        else: outcome = EnvironmentOutcome(EnvironmentOutcomeCategory.INVALID_ACTION, EnvironmentOutcomeReason.INVALID_ARGUMENTS, payload)
+        self._session.observe(outcome.to_observation())
+    @property
+    def last_request(self): return self._provider.last_request
+
+
+class M18V2DirectAdapter:
+    system_condition = "direct_tool_calling"
+    def __init__(self, provider: Any) -> None: self._provider = _GatedGenerateProvider(provider); self._baseline = None; self._case = None
+    def initialize(self, case: M18V2Case) -> None: self._case = case; self._baseline = M18DirectToolCallingBaseline(self._provider, _capabilities(case))
+    def next_decision(self, feedback: EvaluationFeedback, budget: M18V2BudgetState, provider_gate: M18V2ProviderCallGate) -> EvaluationAction:
+        self._provider.gate = provider_gate; assert self._baseline is not None and self._case is not None
+        return self._baseline.step(_step_input(self._case, feedback, budget)).action
+    @property
+    def last_request(self): return self._provider.last_request
+
+
+class M18V2ReActAdapter:
+    system_condition = "react"
+    def __init__(self, provider: Any) -> None: self._provider = _GatedGenerateProvider(provider); self._baseline = None; self._case = None
+    def initialize(self, case: M18V2Case) -> None: self._case = case; self._baseline = M18ReActBaseline(self._provider, _capabilities(case))
+    def next_decision(self, feedback: EvaluationFeedback, budget: M18V2BudgetState, provider_gate: M18V2ProviderCallGate) -> EvaluationAction:
+        self._provider.gate = provider_gate; assert self._baseline is not None and self._case is not None
+        return self._baseline.step(_step_input(self._case, feedback, budget)).action
+    @property
+    def last_request(self): return self._provider.last_request
+
+
+class M18V2PlanAdapter:
+    system_condition = "plan_and_execute"
+    def __init__(self, provider: Any) -> None: self._provider = _GatedPlanProvider(provider); self._baseline = None; self._case = None
+    def initialize(self, case: M18V2Case) -> None: self._case = case; self._baseline = M18PlanAndExecuteBaseline(self._provider, _capabilities(case))
+    def next_decision(self, feedback: EvaluationFeedback, budget: M18V2BudgetState, provider_gate: M18V2ProviderCallGate) -> EvaluationAction:
+        self._provider.gate = provider_gate; assert self._baseline is not None and self._case is not None
+        return self._baseline.step(_step_input(self._case, feedback, budget)).action
+    @property
+    def last_requests(self): return self._provider.last_plan_request, self._provider.last_executor_request
+
+
+def m18_v2_concrete_adapters(providers: Mapping[str, Any]) -> dict[str, M18V2RuntimeAdapter]:
+    """Explicitly construct all four concrete v2 adapters; no v1 fallback."""
+    if set(providers) != set(M18_V2_SYSTEMS): raise ValueError("all four v2 comparator providers are required")
+    return {"mind_lite_v11": M18V2MINDAdapter(providers["mind_lite_v11"]),
+            "direct_tool_calling": M18V2DirectAdapter(providers["direct_tool_calling"]),
+            "react": M18V2ReActAdapter(providers["react"]),
+            "plan_and_execute": M18V2PlanAdapter(providers["plan_and_execute"])}
