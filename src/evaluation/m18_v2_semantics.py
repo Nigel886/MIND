@@ -127,6 +127,14 @@ class M18V2Episode:
             try: self.budget_state=self.budget_state.consume_action()
             except M18V2BudgetError as e: self.terminal_reason=str(e)
         return M18EvaluatorV2().evaluate(self.case,candidate,self.public_state,self.terminal_reason)
+    def submit_invalid_action(self):
+        """Account for a submitted non-tool public action without a tool slot."""
+        if self.terminal_reason: raise M18V2BudgetError("episode_terminated")
+        try: self.budget_state=self.budget_state.consume_action()
+        except M18V2BudgetError as e: self.terminal_reason=str(e); return M18V2EnvironmentOutcome(M18V2OutcomeCategory.BUDGET_EXHAUSTED,_freeze({"reason":str(e)}),_freeze(self.public_state))
+        outcome=M18V2EnvironmentOutcome(M18V2OutcomeCategory.INVALID_ACTION,_freeze({"reason":"invalid_public_action"}),_freeze(self.public_state))
+        self.budget_state,stop=self.budget_state.record_outcome(outcome.category); self.terminal_reason=stop or self.terminal_reason
+        return outcome
     def record_logical_provider_call(self): self.budget_state=self.budget_state.record_logical_provider_call()
     def enforce_elapsed_seconds(self,elapsed):
         if elapsed>=M18V2Budget().episode_timeout_seconds:self.terminal_reason="timeout"

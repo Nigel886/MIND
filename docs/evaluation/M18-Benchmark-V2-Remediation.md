@@ -53,9 +53,25 @@ Provider-free tests cover all twelve cohort/difficulty/subtype cells, the
 environment/evaluator equality, budget boundaries, finite recovery, and the
 truth firewall. No provider, pilot, or formal run occurred.
 
+## Explicit shared-runtime binding
+
+Future v2 execution must select `m18_runtime_condition_v2` explicitly. That
+condition binds `m18_suite_v2`, `m18_environment_v2`, `m18_evaluator_v2`, and
+`m18_budget_v2` together and rejects mixed or unknown combinations. The v2
+shared runtime invokes the same `M18V2Episode` transition/accounting path used
+by provider-free reference trajectories; it does not duplicate the environment
+formula or evaluator target logic.
+
+The runtime records condition, environment, evaluator, budget, harness,
+provider-config, and comparator-condition identities in its future-result
+provenance projection. Its logical-provider-call gate is shared by MIND,
+Direct, ReAct, and Plan adapter conditions; transport attempts remain separate.
+No v2 result persistence surface is created by this binding. The existing v1
+shared harness remains the explicit historical 3/1 route.
+
 ## Anti-tuning and next gate
 
 The implementation follows only the #139 transition and #141 budget
 specifications. It does not inspect or tune to prior system outputs, rates,
 prompts, providers, or comparator behavior. A later issue must independently
-freeze v2 suite, manifest, and provenance before real execution.
+freeze v2 suite, manifest, and result namespace before real execution.
