@@ -8,23 +8,83 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 from typing import Any, Mapping
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
-_SECRET_PATTERN = re.compile(
-    r"(?i)(authorization\s*[:=]\s*(?:bearer\s+)?[^\s,;]+|bearer\s+[^\s,;]+|"
-    r"(?:api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+)"
+_URL_PATTERN = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+_HEADER_PATTERN = re.compile(
+    r"(?i)\b(?:proxy-)?authorization\s*[:=]\s*(?:(?:bearer|basic)\s+)?[^\s,;]+"
 )
+_ASSIGNMENT_PATTERN = re.compile(
+    r"(?i)\b([a-z][a-z0-9_-]*)\s*([=:])\s*(\"[^\"]*\"|'[^']*'|[^\s,;&]+)"
+)
+_SECRET_NAMES = frozenset({
+    "key", "apikey", "accesstoken", "token", "auth", "authorization",
+    "credential", "credentials", "secret", "clientsecret", "password",
+    "passwd", "signature", "sig", "xapikey",
+})
 _CONTRACT_CATEGORIES = frozenset({
     "http_400", "invalid_request_error", "provider_result_contract",
     "malformed_json", "model_identity_mismatch", "schema_incompatible",
 })
 
 
+def _normalized_name(value: object) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.lower()) if isinstance(value, str) else ""
+
+
+def is_sensitive_diagnostic_name(value: object) -> bool:
+    """Conservative, context-aware predicate for credential-bearing fields."""
+    name = _normalized_name(value)
+    return (name in _SECRET_NAMES or "secret" in name or "token" in name
+            or "credential" in name or "password" in name
+            or ("api" in name and "key" in name))
+
+
+def _sanitize_query(value: str) -> str:
+    if not value:
+        return value
+    pairs = parse_qsl(value, keep_blank_values=True)
+    if not pairs:
+        return value
+    return urlencode([(key, "[REDACTED]" if is_sensitive_diagnostic_name(key) else item)
+                      for key, item in pairs], doseq=True)
+
+
+def _sanitize_url(match: re.Match[str]) -> str:
+    raw = match.group(0)
+    try:
+        parsed = urlsplit(raw)
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path,
+                           _sanitize_query(parsed.query), _sanitize_query(parsed.fragment)))
+    except ValueError:
+        return raw
+
+
 def sanitize_provider_message(value: object) -> str:
-    """Return a bounded, non-secret diagnostic summary."""
+    """Return bounded free text with URLs, headers, and credential assignments redacted."""
     text = value if isinstance(value, str) else type(value).__name__
-    text = _SECRET_PATTERN.sub("[redacted]", text).strip()
+    text = _URL_PATTERN.sub(_sanitize_url, text)
+    text = _HEADER_PATTERN.sub("[REDACTED]", text)
+
+    def replace_assignment(match: re.Match[str]) -> str:
+        name, separator, item = match.groups()
+        return name + separator + "[REDACTED]" if is_sensitive_diagnostic_name(name) else match.group(0)
+
+    text = _ASSIGNMENT_PATTERN.sub(replace_assignment, text).strip()
     return (text or "provider_failure")[:240]
+
+
+def sanitize_diagnostic_value(value: Any) -> Any:
+    """Recursively sanitize structured evidence before any serialization boundary."""
+    if isinstance(value, Mapping):
+        return {str(key): "[REDACTED]" if is_sensitive_diagnostic_name(key)
+                else sanitize_diagnostic_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [sanitize_diagnostic_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(sanitize_diagnostic_value(item) for item in value)
+    return sanitize_provider_message(value) if isinstance(value, str) else value
 
 
 @dataclass(frozen=True)
@@ -51,8 +111,7 @@ class M18V2ProviderDiagnostic:
             raise ValueError("provider diagnostic accounting is invalid")
         if not isinstance(self.retry_exhausted, bool):
             raise TypeError("retry_exhausted must be bool")
-        if _SECRET_PATTERN.search(self.message_summary):
-            raise ValueError("provider diagnostic message contains secret material")
+        object.__setattr__(self, "message_summary", sanitize_provider_message(self.message_summary))
 
     @property
     def is_contract_incompatibility(self) -> bool:

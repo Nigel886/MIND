@@ -9,9 +9,11 @@ import unittest
 from src.evaluation.m18_shared_provider import M18ProviderTransportError
 from src.evaluation.m18_v2_pilot_runner import M18V2PilotPlan, M18V2PilotRunner
 from src.evaluation.m18_v2_provider_diagnostics import (
-    M18V2ProviderExecutionFailure, M18V2SystematicProviderStop,
-    normalize_provider_failure, sanitize_provider_message,
+    M18V2ProviderDiagnostic, M18V2ProviderExecutionFailure,
+    M18V2SystematicProviderStop, normalize_provider_failure,
+    sanitize_diagnostic_value, sanitize_provider_message,
 )
+from src.evaluation.m18_v2_provenance import M18V2ResultRecord
 from src.evaluation.m18_v2_runtime import M18V2PlanAdapter, M18V2ProviderCallGate
 from src.evaluation.m18_v2_semantics import M18V2BudgetState
 from src.evaluation.contracts import EvaluationFeedback, EvaluationFeedbackType
@@ -75,6 +77,44 @@ class M18V2ProviderDiagnosticTests(unittest.TestCase):
         self.assertEqual(diagnostic.to_dict()["category"], "http_503")
         self.assertEqual(diagnostic.logical_call_index, 2)
         self.assertTrue(diagnostic.retry_exhausted)
+
+    def test_url_query_headers_free_text_and_structures_are_sanitized(self):
+        secrets = ("diagnostic-secret", "sk-test-123", "BearerSecretXYZ", "supersecretvalue")
+        text = sanitize_provider_message(
+            "https://api.example.test/v1/chat?KEY=diagnostic-secret&api_key=sk-test-123&"
+            "access_token=BearerSecretXYZ&mode=json#client_secret=supersecretvalue&view=public "
+            "Authorization: Basic basic-secret X-API-Key: x-secret key=another-secret"
+        )
+        for secret in secrets + ("basic-secret", "x-secret", "another-secret"):
+            self.assertNotIn(secret, text)
+        self.assertIn("mode=json", text)
+        self.assertIn("http_503", sanitize_provider_message("http_503 planner logical_call=2 transport_attempts=3"))
+        self.assertEqual(sanitize_provider_message("missing required key in JSON object"), "missing required key in JSON object")
+        structured = sanitize_diagnostic_value({
+            "key": "diagnostic-secret", "headers": {"Authorization": "Bearer BearerSecretXYZ"},
+            "items": [{"client_secret": "supersecretvalue"}, "https://x.test/?token=sk-test-123"],
+        })
+        rendered = json.dumps(structured, sort_keys=True)
+        for secret in secrets:
+            self.assertNotIn(secret, rendered)
+
+    def test_diagnostic_constructor_and_result_persistence_cannot_bypass_sanitizer(self):
+        diagnostic = M18V2ProviderDiagnostic(
+            "http_503", "direct_tool_calling", "direct_decision", 1, 3, True,
+            "https://example.test/fail?key=diagnostic-secret&mode=json Authorization: Bearer sk-test-123",
+        )
+        self.assertNotIn("diagnostic-secret", json.dumps(diagnostic.to_dict()))
+        self.assertNotIn("sk-test-123", json.dumps(diagnostic.to_dict()))
+        with TemporaryDirectory() as directory:
+            runner = self.runner(Path(directory) / "pilot")
+            expected = self.plan.expected[0]
+            record = M18V2ResultRecord(expected, None, "provider_failure",
+                {"logical_provider_calls": 1, "transport_attempts": 3}, None, diagnostic)
+            persisted = runner.store.persist(record)
+            on_disk = next(runner.result_root.glob("*.json")).read_text(encoding="utf-8")
+            self.assertNotIn("diagnostic-secret", on_disk)
+            self.assertNotIn("sk-test-123", on_disk)
+            self.assertEqual(persisted.provider_diagnostic, runner.store.records()[0].provider_diagnostic)
 
     def test_transient_failure_is_persisted_and_does_not_stop(self):
         with TemporaryDirectory() as directory:

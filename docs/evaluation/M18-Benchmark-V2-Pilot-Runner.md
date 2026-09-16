@@ -44,6 +44,16 @@ retry-exhaustion state, and a sanitized short message. It never stores API
 credentials, authorization headers, cookies, raw prompts, or private fixture
 data. Diagnostic metadata is not part of the scientific run ID.
 
+The diagnostic sanitizer is the sole text/structure boundary before diagnostic
+serialization. It recursively redacts credential-bearing mapping fields and
+sequence members, free-text header assignments, and URL query/fragment values.
+Credential names are case-insensitive and include `key`, API-key aliases,
+token/access-token, authorization/auth, credential, secret/client-secret,
+password, signature, and `sig`; names containing strong credential markers are
+also redacted. Safe URL structure and non-sensitive query values remain
+available for operations. There is no raw-message, debug-message, or other
+unsanitized fallback field in the result or stop-event schemas.
+
 Integrity conditions—frozen artifact drift, provenance mismatch, duplicate or
 conflicting identity, malformed persistence, and mixed runtime identity—remain
 fail-closed integrity errors and are never reclassified as provider results.
