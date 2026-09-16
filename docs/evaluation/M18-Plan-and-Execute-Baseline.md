@@ -2,7 +2,7 @@
 
 ## Architecture identity
 
-`m18_plan_and_execute_baseline_v1` is an evaluation-side condition with a
+The historical `m18_plan_and_execute_baseline_v1` is an evaluation-side condition with a
 strict initial planner, immutable explicit public plan, separate executor, and
 at most one budgeted replan. The flow is:
 
@@ -14,6 +14,13 @@ It is distinct from Direct (no persistent plan/history), ReAct (public
 interaction history but no future plan), and MIND (released cognitive runtime
 state). It uses no MIND `RuntimeState`, no ReAct transcript, no hidden provider
 history, and no planner/executor tool execution.
+
+The provenance-distinct repaired condition is
+`m18_plan_provider_contract_repair_v1`. It retains this comparator design and
+adds only an explicit JSON-output instruction to the planner prompt required
+by the frozen JSON-object provider mode. See
+`M18-Plan-Provider-Contract-Repair.md`; historical results remain associated
+with the original condition identity.
 
 ## Plan and execution contracts
 

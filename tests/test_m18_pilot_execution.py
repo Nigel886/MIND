@@ -220,7 +220,8 @@ class ProvenanceSafeResumeTests(unittest.TestCase):
 class OperationalStopTests(unittest.TestCase):
     def _temporary_repository(self, directory: str) -> Path:
         root = Path(directory)
-        shutil.copytree(ROOT / "evaluation" / "m18", root / "evaluation" / "m18")
+        # Operational result records are runtime evidence, not fixture input.
+        shutil.copytree(ROOT / "evaluation" / "m18", root / "evaluation" / "m18", ignore=shutil.ignore_patterns("results"))
         return root
 
     def _assert_construction_stop(self, root: Path) -> None:

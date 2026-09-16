@@ -24,7 +24,7 @@ from src.evaluation.contracts import EvaluationAction, EvaluationActionType, Eva
 from src.evaluation.execution import AgentStepInput, EvaluationBudget, EvaluationBudgetState
 from src.evaluation.m18_direct_tool_calling import M18DirectToolCallingBaseline
 from src.evaluation.m18_mind_policy_condition import M18MINDPolicyCondition
-from src.evaluation.m18_plan_and_execute import M18PlanAndExecuteBaseline
+from src.evaluation.m18_plan_and_execute import M18PlanAndExecuteBaseline, M18PlanConditionError, M18PlanProviderError, m18_plan_artifacts
 from src.evaluation.m18_react import M18ReActBaseline
 from src.evaluation.m18_shared_provider import M18ProviderTransportError, M18SharedProviderClient, M18SharedProviderConfiguration, M18SharedMINDProvider, M18SharedDirectProvider, M18SharedReActProvider, M18SharedPlanProvider
 from src.evaluation.m18_task_generation import M18Case, M18DeterministicEnvironment, M18EnvironmentCategory, M18EvaluationCategory, M18Evaluator, M18Namespace, canonical_hash, canonical_json
@@ -37,7 +37,7 @@ M18_RESUME_POLICY = "atomic_per_run_provenance_validate_v4"
 M18_FORMAL_REPETITIONS = 5
 M18_SCHEDULE_SEED = "m18_schedule_seed_v1"
 M18_SYSTEMS = ("mind_lite_v11", "direct_tool_calling", "react", "plan_and_execute")
-M18_SYSTEM_ARTIFACTS = {"mind_lite_v11": "99bbe96c7413024f3c76f1c3439c51593770c22e+b4f1daa5be8c4e6d4ea623e6dc61aa0321e203b0", "direct_tool_calling": "4aa402ea85fdfc8b92f5f180a6d5f3ac461a6a43", "react": "62901b2c9fcbcb79374ee30eab8a77418e9d4849", "plan_and_execute": "0c0decad89793d2b8b1b9d943febd23b9b377759"}
+M18_SYSTEM_ARTIFACTS = {"mind_lite_v11": "99bbe96c7413024f3c76f1c3439c51593770c22e+b4f1daa5be8c4e6d4ea623e6dc61aa0321e203b0", "direct_tool_calling": "4aa402ea85fdfc8b92f5f180a6d5f3ac461a6a43", "react": "62901b2c9fcbcb79374ee30eab8a77418e9d4849", "plan_and_execute": m18_plan_artifacts().implementation_hash}
 
 
 def _hash(value: Any) -> str: return sha256(canonical_json(value).encode("utf-8")).hexdigest()
@@ -397,7 +397,7 @@ class M18SharedExecutionHarness:
 
     def _run(self, spec: M18RunSpec, case: M18Case, adapter: M18Adapter, experiment_namespace: str, *, tranche_id: str | None = None) -> M18RunRecord:
         if spec.case_id != case.case_id or spec.system_condition != adapter.system_condition: raise ValueError("run/adaptor mismatch")
-        adapter.initialize(case); feedback = EvaluationFeedback(EvaluationFeedbackType.INITIAL_INPUT); state = EvaluationBudgetState(self.budget); runtime = None; evaluator = None; invalid = 0; decisions = 0; submitted_tools = 0
+        adapter.initialize(case); feedback = EvaluationFeedback(EvaluationFeedbackType.INITIAL_INPUT); state = EvaluationBudgetState(self.budget); runtime = None; evaluator = None; invalid = 0; decisions = 0; submitted_tools = 0; references = ()
         try:
             for used in range(self.budget.max_steps):
                 action = adapter.next_decision(feedback, EvaluationBudgetState(self.budget, used, min(used, self.budget.max_tool_calls)))
@@ -435,8 +435,14 @@ class M18SharedExecutionHarness:
                 category = "provider_identity_drift" if error.category == "model_identity_mismatch" else "provider_decoder_incompatibility"
                 raise M18ExecutionIntegrityError(category, "provider_decode", error.category) from error
             runtime = M18RuntimeTerminal.PROVIDER_FAILURE
+        except M18PlanProviderError as error:
+            references = ("m18_plan_provider:" + error.category,)
+            runtime = M18RuntimeTerminal.PROVIDER_FAILURE
+        except M18PlanConditionError as error:
+            references = ("m18_plan_decoder:" + error.category,)
+            runtime = M18RuntimeTerminal.AGENT_INTERNAL_FAILURE
         except Exception as error:
             runtime = M18RuntimeTerminal.PROVIDER_FAILURE if "provider" in type(error).__name__.lower() else M18RuntimeTerminal.AGENT_INTERNAL_FAILURE
         telemetry = adapter.telemetry_snapshot(); counters = M18BudgetCounters(decision_cycles=decisions, logical_provider_calls=int(telemetry.get("logical_provider_calls", 0)), transport_attempts=int(telemetry.get("transport_attempts", 0)), tool_calls=submitted_tools, invalid_actions=invalid, recoverable_failures=int(telemetry.get("recoverable_failures", 0)), replans=int(telemetry.get("replans", 0)))
         category = neutral_failure(runtime, evaluator.category if evaluator else None)
-        return M18RunRecord(spec.run_id, spec.suite_version, case.case_id, case.cohort.value, case.difficulty.value, spec.system_condition, spec.repetition, spec.provider_config_hash, harness_identity(), runtime.value, evaluator.category.value if evaluator else None, category.value, counters, runtime is not M18RuntimeTerminal.INFRASTRUCTURE_INVALID, provider_model=telemetry.get("provider_model"), token_telemetry=telemetry.get("token_telemetry"), latency_ms=telemetry.get("latency_ms"), result_schema_version=M18_RESULT_SCHEMA_VERSION, experiment_namespace=experiment_namespace, system_artifact_identity=M18_SYSTEM_ARTIFACTS[spec.system_condition], tranche_id=tranche_id)
+        return M18RunRecord(spec.run_id, spec.suite_version, case.case_id, case.cohort.value, case.difficulty.value, spec.system_condition, spec.repetition, spec.provider_config_hash, harness_identity(), runtime.value, evaluator.category.value if evaluator else None, category.value, counters, runtime is not M18RuntimeTerminal.INFRASTRUCTURE_INVALID, provider_model=telemetry.get("provider_model"), token_telemetry=telemetry.get("token_telemetry"), latency_ms=telemetry.get("latency_ms"), raw_artifact_references=references, result_schema_version=M18_RESULT_SCHEMA_VERSION, experiment_namespace=experiment_namespace, system_artifact_identity=M18_SYSTEM_ARTIFACTS[spec.system_condition], tranche_id=tranche_id)

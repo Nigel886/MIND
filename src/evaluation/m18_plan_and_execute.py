@@ -37,13 +37,19 @@ def _thaw(v: Any) -> Any:
     return deepcopy(v)
 def _hash(v: Any) -> str: return sha256(json.dumps(v,sort_keys=True,separators=(",",":"),ensure_ascii=False,allow_nan=False).encode()).hexdigest()
 
-M18_PLAN_EXECUTE_ID="m18_plan_and_execute_baseline_v1"
-M18_PLANNER_PROMPT="Create only a strict public ordered execution plan from the supplied public task, tools, and budget. Do not include reasoning, rationale, evaluator information, or extra fields."
+M18_PLAN_EXECUTE_ID="m18_plan_provider_contract_repair_v1"
+M18_PLANNER_PROMPT="Create only a strict public ordered execution plan from the supplied public task, tools, and budget. Return only a JSON object matching the required planner schema. Do not include reasoning, rationale, evaluator information, or extra fields."
 M18_EXECUTOR_PROMPT="Select exactly one next action using the supplied public task, explicit plan, cursor, current public feedback, tools, and budget. Return only strict action JSON; no reasoning, rationale, plan, confidence, or extra fields."
 M18_PLAN_SCHEMA={"type":"object","additionalProperties":False,"required":["steps"],"properties":{"steps":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":False,"required":["step_id","subgoal","capability_id"],"properties":{"step_id":{"type":"string","minLength":1},"subgoal":{"type":"string","minLength":1},"capability_id":{"type":["string","null"]}}}}}}
 
-class M18PlanConditionError(ValueError): pass
-class M18PlanProviderError(RuntimeError): pass
+class M18PlanConditionError(ValueError):
+    """Strict planner-output rejection with a safe diagnostic category."""
+    category="planner_decoder_rejection"
+
+class M18PlanProviderError(RuntimeError):
+    """Planner provider failure retaining only its bounded public category."""
+    def __init__(self,message:str,category:str="provider_wrapper_exception"):
+        super().__init__(message); self.category=category
 class M18PlanTerminationReason(str,Enum):
     ANSWER_SUBMITTED="answer_submitted"; BUDGET_EXHAUSTED="budget_exhausted"; UNRECOVERABLE_ENVIRONMENT_FAILURE="unrecoverable_environment_failure"; REPLAN_LIMIT_REACHED="replan_limit_reached"
 
@@ -137,20 +143,24 @@ class M18PlanAndExecuteBaseline:
     def action_cycles(self): return self._action_cycles
     def _public(self,si): return PolicyTaskContext.from_task(si.case.task).to_dict(),tuple(x.to_dict() for x in self._capabilities),si.budget_state.to_dict()
     def _parse_plan(self,raw):
-        if not isinstance(raw,str): raise M18PlanProviderError("plan provider result must be JSON string")
+        if not isinstance(raw,str): raise M18PlanProviderError("plan provider result must be JSON string","provider_result_contract")
         try: data=json.loads(raw,parse_constant=lambda _: (_ for _ in ()).throw(M18PlanConditionError("nonfinite")))
         except (json.JSONDecodeError,M18PlanConditionError) as e: raise M18PlanConditionError("planner output is not strict JSON") from e
         return PublicExecutionPlan.from_dict(data)
+    @staticmethod
+    def _provider_error(message,error):
+        category=getattr(error,"category",None)
+        return M18PlanProviderError(message,category if isinstance(category,str) and category else "provider_wrapper_exception")
     def _initial_plan(self,si):
         task,caps,budget=self._public(si); request=M18PlannerRequest(M18_PLANNER_PROMPT,task,caps,budget,M18_PLAN_SCHEMA); self._planner_calls+=1
         try: self._plan=self._parse_plan(self._provider.plan(request))
         except M18PlanConditionError: raise
-        except Exception as e: raise M18PlanProviderError("initial planning failed") from e
+        except Exception as e: raise self._provider_error("initial planning failed",e) from e
     def _replan(self,si):
         task,caps,budget=self._public(si); request=M18PlannerRequest(M18_PLANNER_PROMPT,task,caps,budget,M18_PLAN_SCHEMA,self._plan.to_dict(),self._cursor,si.previous_feedback.to_dict()); self._replan_calls+=1
         try: self._plan=self._parse_plan(self._provider.plan(request)); self._cursor=0
         except M18PlanConditionError: raise
-        except Exception as e: raise M18PlanProviderError("replanning failed") from e
+        except Exception as e: raise self._provider_error("replanning failed",e) from e
     def _termination(self,si):
         if si.budget_state.remaining_steps==0:return M18PlanTerminationReason.BUDGET_EXHAUSTED
         fb=si.previous_feedback
