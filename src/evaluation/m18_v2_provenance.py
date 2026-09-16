@@ -20,6 +20,7 @@ from src.evaluation.m18_v2_semantics import (
     M18_V2_EVALUATOR_ID,
     M18_V2_SUITE_VERSION,
 )
+from src.evaluation.m18_v2_provider_diagnostics import M18V2ProviderDiagnostic
 
 
 M18_V2_RUNTIME_ID = "m18_shared_execution_runtime_v2"
@@ -192,6 +193,7 @@ class M18V2ResultRecord:
     failure_taxonomy: str | None
     provider_accounting: Mapping[str, int | None]
     token_latency_telemetry: Mapping[str, int | float | None] | None = None
+    provider_diagnostic: M18V2ProviderDiagnostic | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.provenance, M18V2RunProvenance):
@@ -209,6 +211,10 @@ class M18V2ResultRecord:
                 raise ValueError("provider accounting must contain non-negative integers")
         if self.token_latency_telemetry is not None and not isinstance(self.token_latency_telemetry, Mapping):
             raise TypeError("token_latency_telemetry must be a mapping or null")
+        if self.provider_diagnostic is not None and not isinstance(self.provider_diagnostic, M18V2ProviderDiagnostic):
+            raise TypeError("provider_diagnostic must be an M18V2ProviderDiagnostic or null")
+        if self.provider_diagnostic is not None and self.failure_taxonomy != "provider_failure":
+            raise ValueError("provider diagnostics require provider_failure taxonomy")
 
     @property
     def run_id(self) -> str:
@@ -226,13 +232,17 @@ class M18V2ResultRecord:
                 dict(self.token_latency_telemetry)
                 if self.token_latency_telemetry is not None else None
             ),
+            "provider_diagnostic": (
+                self.provider_diagnostic.to_dict()
+                if self.provider_diagnostic is not None else None
+            ),
         }
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "M18V2ResultRecord":
         expected = {
             "run_id", "repetition", "provenance", "evaluator_outcome", "failure_taxonomy",
-            "provider_accounting", "token_latency_telemetry",
+            "provider_accounting", "token_latency_telemetry", "provider_diagnostic",
         }
         if not isinstance(value, Mapping) or set(value) != expected:
             raise ValueError("M18 v2 result record schema mismatch")
@@ -242,6 +252,8 @@ class M18V2ResultRecord:
             dict(value["provider_accounting"]),
             dict(value["token_latency_telemetry"])
             if value["token_latency_telemetry"] is not None else None,
+            M18V2ProviderDiagnostic.from_dict(value["provider_diagnostic"])
+            if value["provider_diagnostic"] is not None else None,
         )
         if value["run_id"] != result.run_id or value["repetition"] != result.provenance.identity.repetition:
             raise ValueError("M18 v2 record identity projection mismatch")

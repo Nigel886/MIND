@@ -27,6 +27,9 @@ from src.evaluation.m18_v2_provenance import (
     M18_V2_COMPARATOR_CONDITIONS, M18_V2_RUNTIME_ID,
     project_m18_v2_run_provenances,
 )
+from src.evaluation.m18_v2_provider_diagnostics import (
+    M18V2SystematicProviderStop, M18V2SystematicProviderStopEvent,
+)
 from src.evaluation.m18_v2_runtime import (
     M18BenchmarkRuntimeCondition, M18V2ResultProvenance,
     M18V2RuntimeTerminal, M18V2SharedExecutionHarness,
@@ -42,6 +45,7 @@ from src.evaluation.m18_v2_semantics import (
 M18_V2_PILOT_RESULT_NAMESPACE = Path("evaluation/m18/results/v2/pilot/m18_suite_v2")
 M18_V2_FORMAL_RESULT_NAMESPACE = Path("evaluation/m18/results/v2/formal/m18_suite_v2")
 M18_V2_PILOT_STORE_MANIFEST = "m18_v2_pilot_store_manifest.json"
+M18_V2_PILOT_SYSTEMATIC_STOP = "m18_v2_pilot_systematic_provider_stop.json"
 M18_V2_FREEZE_BASELINE = "59506751b66f22bed5106db68a51b1089975c419"
 
 
@@ -154,6 +158,10 @@ class M18V2PilotResultStore:
     def manifest_path(self) -> Path:
         return self.root / M18_V2_PILOT_STORE_MANIFEST
 
+    @property
+    def systematic_stop_path(self) -> Path:
+        return self.root / M18_V2_PILOT_SYSTEMATIC_STOP
+
     def _store_manifest(self) -> dict[str, Any]:
         return {"store_schema": "m18_v2_pilot_store_v1", "suite_manifest_hash": self.manifest["manifest_hash"],
                 "split_manifest_hash": self.manifest["split_manifest_hash"],
@@ -189,7 +197,7 @@ class M18V2PilotResultStore:
             return ()
         records: list[M18V2ResultRecord] = []
         for path in sorted(self.root.glob("*.json")):
-            if path.name == M18_V2_PILOT_STORE_MANIFEST:
+            if path.name in {M18_V2_PILOT_STORE_MANIFEST, M18_V2_PILOT_SYSTEMATIC_STOP}:
                 continue
             try:
                 record = M18V2ResultRecord.from_dict(_read_json(path))
@@ -235,6 +243,22 @@ class M18V2PilotResultStore:
         except Exception as error:
             raise M18V2PilotIntegrityError("persisted v2 pilot record failed re-read admission") from error
         return reread
+
+    def systematic_stop(self) -> M18V2SystematicProviderStopEvent | None:
+        if not self.systematic_stop_path.exists():
+            return None
+        try:
+            return M18V2SystematicProviderStopEvent.from_dict(_read_json(self.systematic_stop_path))
+        except Exception as error:
+            raise M18V2PilotIntegrityError("invalid v2 pilot systematic provider stop") from error
+
+    def persist_systematic_stop(self, event: M18V2SystematicProviderStopEvent) -> None:
+        if self.systematic_stop_path.exists():
+            existing = self.systematic_stop()
+            if existing != event:
+                raise M18V2PilotIntegrityError("conflicting v2 pilot systematic provider stop")
+            return
+        self._atomic(self.systematic_stop_path, event.to_dict())
 
     def digest(self) -> str:
         records = self.records()
@@ -292,20 +316,30 @@ class M18V2PilotRunner:
     @staticmethod
     def _record(result: Any) -> M18V2ResultRecord:
         outcome = result.evaluator_outcome.value if result.evaluator_outcome is not None else None
-        failure = None if outcome == M18V2EvaluationCategory.SUCCESS.value else result.terminal.value
+        failure = "provider_failure" if result.provider_diagnostic is not None else (
+            None if outcome == M18V2EvaluationCategory.SUCCESS.value else result.terminal.value)
         return M18V2ResultRecord(
             result.run_provenance, outcome, failure,
             {"logical_provider_calls": result.logical_provider_calls,
              "transport_attempts": result.transport_attempts}, None,
+            result.provider_diagnostic,
         )
 
     def execute(self, *, provider_factory: ProviderFactory | None = None,
                 after_persist: Callable[[M18V2ResultRecord], None] | None = None,
-                limit: int | None = None) -> tuple[M18V2ResultRecord, ...]:
+                limit: int | None = None, allow_systematic_resume: bool = False) -> tuple[M18V2ResultRecord, ...]:
         """Execute missing pilot identities only; caller must provide explicit authority."""
         self.store.initialize()
+        prior_stop = self.store.systematic_stop()
+        if prior_stop is not None and not allow_systematic_resume:
+            raise M18V2SystematicProviderStop(prior_stop)
         factory = self._production_provider if provider_factory is None else provider_factory
         completed: list[M18V2ResultRecord] = []
+        evidence: dict[tuple[str, str, str], list[str]] = {}
+        for record in self.store.records():
+            diagnostic = record.provider_diagnostic
+            if diagnostic is not None and diagnostic.is_contract_incompatibility:
+                evidence.setdefault((diagnostic.comparator, diagnostic.stage, diagnostic.category), []).append(record.run_id)
         for expected in self.store.missing()[:limit]:
             system = next(key for key, value in self.plan.suite_manifest["comparator_conditions"].items()
                           if value == expected.identity.comparator_condition_id)
@@ -329,6 +363,18 @@ class M18V2PilotRunner:
             completed.append(record)
             if after_persist is not None:
                 after_persist(record)
+            diagnostic = record.provider_diagnostic
+            if diagnostic is not None and diagnostic.is_contract_incompatibility:
+                key = (diagnostic.comparator, diagnostic.stage, diagnostic.category)
+                run_ids = evidence.setdefault(key, [])
+                run_ids.append(record.run_id)
+                if len(run_ids) >= 2:
+                    event = M18V2SystematicProviderStopEvent(
+                        diagnostic.comparator, diagnostic.stage, diagnostic.category,
+                        tuple(run_ids), len(run_ids),
+                    )
+                    self.store.persist_systematic_stop(event)
+                    raise M18V2SystematicProviderStop(event)
         return tuple(completed)
 
 

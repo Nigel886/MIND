@@ -27,6 +27,10 @@ from src.evaluation.m18_v2_provenance import (
     M18_V2_RUNTIME_ID,
     comparator_condition_for_system,
 )
+from src.evaluation.m18_v2_provider_diagnostics import (
+    M18V2ProviderDiagnostic, M18V2ProviderExecutionFailure,
+    normalize_provider_failure,
+)
 from src.evaluation.m18_v2_semantics import (
     M18V2Budget, M18V2BudgetError, M18V2BudgetState, M18V2Case,
     M18V2Episode, M18V2EvaluationCategory, M18V2EnvironmentOutcome,
@@ -76,6 +80,7 @@ class M18V2RuntimeTerminal(str, Enum):
     BUDGET_EXHAUSTED = "budget_exhausted"
     TIMEOUT = "timeout"
     AGENT_FAILURE = "agent_failure"
+    PROVIDER_FAILURE = "provider_failure"
 
 
 class M18V2ProviderCallGate:
@@ -194,6 +199,7 @@ class M18V2RuntimeResult:
     transport_attempts: int
     provenance: M18V2ResultProvenance
     run_provenance: M18V2RunProvenance
+    provider_diagnostic: M18V2ProviderDiagnostic | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {"terminal": self.terminal.value,
@@ -203,7 +209,8 @@ class M18V2RuntimeResult:
                 "final_public_state": dict(self.final_public_state), "budget": self.budget.to_dict(),
                 "logical_provider_calls": self.logical_provider_calls,
                 "transport_attempts": self.transport_attempts, "provenance": self.provenance.to_dict(),
-                "run_provenance": self.run_provenance.to_dict()}
+                "run_provenance": self.run_provenance.to_dict(),
+                "provider_diagnostic": self.provider_diagnostic.to_dict() if self.provider_diagnostic else None}
 
 
 class M18V2SharedExecutionHarness:
@@ -247,6 +254,7 @@ class M18V2SharedExecutionHarness:
         adapter.initialize(case)
         terminal: M18V2RuntimeTerminal | None = None
         evaluation: M18V2EvaluationCategory | None = None
+        provider_diagnostic: M18V2ProviderDiagnostic | None = None
         while terminal is None:
             if episode.terminal_reason == "timeout":
                 terminal = M18V2RuntimeTerminal.TIMEOUT
@@ -256,6 +264,10 @@ class M18V2SharedExecutionHarness:
                 action = adapter.next_decision(feedback, episode.budget_state, gate)
             except M18V2BudgetError:
                 terminal = M18V2RuntimeTerminal.BUDGET_EXHAUSTED
+                break
+            except M18V2ProviderExecutionFailure as error:
+                provider_diagnostic = error.diagnostic
+                terminal = M18V2RuntimeTerminal.PROVIDER_FAILURE
                 break
             # Provider calls are counted at the call boundary but are a distinct
             # dimension from public action/tool counters.
@@ -288,7 +300,7 @@ class M18V2SharedExecutionHarness:
         return M18V2RuntimeResult(terminal, evaluation, tuple(actions), tuple(feedbacks), tuple(outcomes),
                                   dict(episode.public_state), episode.budget_state,
                                   gate.budget_state.logical_provider_calls, gate.transport_attempts,
-                                  self.provenance, run_provenance)
+                                  self.provenance, run_provenance, provider_diagnostic)
 
 
 # Concrete comparator adapters -------------------------------------------------
@@ -307,41 +319,74 @@ def _step_input(case: M18V2Case, feedback: EvaluationFeedback, budget: M18V2Budg
 
 
 class _GatedGenerateProvider:
-    def __init__(self, provider: Any) -> None:
-        self.provider, self.gate, self.last_request = provider, None, None
+    def __init__(self, provider: Any, comparator: str, stage: str) -> None:
+        self.provider, self.comparator, self.stage = provider, comparator, stage
+        self.gate, self.last_request, self.last_failure = None, None, None
     def generate(self, request: Any) -> str:
         if self.gate is None: raise RuntimeError("v2 provider gate not bound")
         self.last_request = request
         attempts = getattr(self.provider, "transport_attempts_per_logical_call", 1)
-        return self.gate.invoke(lambda: self.provider.generate(request), transport_attempts=attempts)
+        try:
+            return self.gate.invoke(lambda: self.provider.generate(request), transport_attempts=attempts)
+        except M18V2BudgetError:
+            raise
+        except Exception as error:
+            diagnostic = normalize_provider_failure(
+                error, comparator=self.comparator, stage=self.stage,
+                logical_call_index=self.gate.budget_state.logical_provider_calls,
+                fallback_transport_attempts=attempts,
+            )
+            self.last_failure = M18V2ProviderExecutionFailure(diagnostic)
+            raise self.last_failure from error
 
 
 class _GatedPlanProvider:
-    def __init__(self, provider: Any) -> None:
-        self.provider, self.gate, self.last_plan_request, self.last_executor_request = provider, None, None, None
+    def __init__(self, provider: Any, comparator: str) -> None:
+        self.provider, self.comparator = provider, comparator
+        self.gate, self.last_plan_request, self.last_executor_request, self.last_failure = None, None, None, None
+        self.stage = "plan_planner"
     def plan(self, request: Any) -> str:
         if self.gate is None: raise RuntimeError("v2 provider gate not bound")
         self.last_plan_request = request
         attempts = getattr(self.provider, "transport_attempts_per_logical_call", 1)
-        return self.gate.invoke(lambda: self.provider.plan(request), transport_attempts=attempts)
+        try:
+            return self.gate.invoke(lambda: self.provider.plan(request), transport_attempts=attempts)
+        except M18V2BudgetError:
+            raise
+        except Exception as error:
+            diagnostic = normalize_provider_failure(error, comparator=self.comparator, stage=self.stage,
+                logical_call_index=self.gate.budget_state.logical_provider_calls, fallback_transport_attempts=attempts)
+            self.last_failure = M18V2ProviderExecutionFailure(diagnostic)
+            raise self.last_failure from error
     def execute(self, request: Any) -> str:
         if self.gate is None: raise RuntimeError("v2 provider gate not bound")
         self.last_executor_request = request
         attempts = getattr(self.provider, "transport_attempts_per_logical_call", 1)
-        return self.gate.invoke(lambda: self.provider.execute(request), transport_attempts=attempts)
+        try:
+            return self.gate.invoke(lambda: self.provider.execute(request), transport_attempts=attempts)
+        except M18V2BudgetError:
+            raise
+        except Exception as error:
+            diagnostic = normalize_provider_failure(error, comparator=self.comparator, stage="plan_executor",
+                logical_call_index=self.gate.budget_state.logical_provider_calls, fallback_transport_attempts=attempts)
+            self.last_failure = M18V2ProviderExecutionFailure(diagnostic)
+            raise self.last_failure from error
 
 
 class M18V2MINDAdapter:
     system_condition = "mind_lite_v11"
     def __init__(self, provider: Any) -> None:
-        self._provider = _GatedGenerateProvider(provider); self._condition = M18MINDPolicyCondition(self._provider); self._session = None
+        self._provider = _GatedGenerateProvider(provider, self.system_condition, "mind_policy"); self._condition = M18MINDPolicyCondition(self._provider); self._session = None
     def initialize(self, case: M18V2Case) -> None:
         task = Task(Goal(case.public.task_text, ("choose a public action",)), {"task_text": case.public.task_text})
         self._session = CognitiveAgentSession(6, policy_engine=self._condition, capabilities=_capabilities(case)); self._session.start(task)
     def next_decision(self, feedback: EvaluationFeedback, budget: M18V2BudgetState, provider_gate: M18V2ProviderCallGate) -> EvaluationAction:
         self._provider.gate = provider_gate
         assert self._session is not None
-        result = self._session.step()
+        try: result = self._session.step()
+        except Exception as error:
+            if self._provider.last_failure is not None: raise self._provider.last_failure from error
+            raise
         if result.phase is not CognitiveSessionPhase.AWAITING_OBSERVATION or result.action_request is None: raise RuntimeError("MIND session terminated before public action")
         request = result.action_request
         if request.action == "answer": return EvaluationAction(EvaluationActionType.ANSWER, {"answer": request.parameters["answer"]})
@@ -359,33 +404,46 @@ class M18V2MINDAdapter:
 
 class M18V2DirectAdapter:
     system_condition = "direct_tool_calling"
-    def __init__(self, provider: Any) -> None: self._provider = _GatedGenerateProvider(provider); self._baseline = None; self._case = None
+    def __init__(self, provider: Any) -> None: self._provider = _GatedGenerateProvider(provider, self.system_condition, "direct_decision"); self._baseline = None; self._case = None
     def initialize(self, case: M18V2Case) -> None: self._case = case; self._baseline = M18DirectToolCallingBaseline(self._provider, _capabilities(case))
     def next_decision(self, feedback: EvaluationFeedback, budget: M18V2BudgetState, provider_gate: M18V2ProviderCallGate) -> EvaluationAction:
         self._provider.gate = provider_gate; assert self._baseline is not None and self._case is not None
-        return self._baseline.step(_step_input(self._case, feedback, budget)).action
+        try: return self._baseline.step(_step_input(self._case, feedback, budget)).action
+        except Exception as error:
+            if self._provider.last_failure is not None: raise self._provider.last_failure from error
+            raise
     @property
     def last_request(self): return self._provider.last_request
 
 
 class M18V2ReActAdapter:
     system_condition = "react"
-    def __init__(self, provider: Any) -> None: self._provider = _GatedGenerateProvider(provider); self._baseline = None; self._case = None
+    def __init__(self, provider: Any) -> None: self._provider = _GatedGenerateProvider(provider, self.system_condition, "react_decision"); self._baseline = None; self._case = None
     def initialize(self, case: M18V2Case) -> None: self._case = case; self._baseline = M18ReActBaseline(self._provider, _capabilities(case))
     def next_decision(self, feedback: EvaluationFeedback, budget: M18V2BudgetState, provider_gate: M18V2ProviderCallGate) -> EvaluationAction:
         self._provider.gate = provider_gate; assert self._baseline is not None and self._case is not None
-        return self._baseline.step(_step_input(self._case, feedback, budget)).action
+        try: return self._baseline.step(_step_input(self._case, feedback, budget)).action
+        except Exception as error:
+            if self._provider.last_failure is not None: raise self._provider.last_failure from error
+            raise
     @property
     def last_request(self): return self._provider.last_request
 
 
 class M18V2PlanAdapter:
     system_condition = "plan_and_execute"
-    def __init__(self, provider: Any) -> None: self._provider = _GatedPlanProvider(provider); self._baseline = None; self._case = None
+    def __init__(self, provider: Any) -> None: self._provider = _GatedPlanProvider(provider, self.system_condition); self._baseline = None; self._case = None
     def initialize(self, case: M18V2Case) -> None: self._case = case; self._baseline = M18PlanAndExecuteBaseline(self._provider, _capabilities(case))
     def next_decision(self, feedback: EvaluationFeedback, budget: M18V2BudgetState, provider_gate: M18V2ProviderCallGate) -> EvaluationAction:
         self._provider.gate = provider_gate; assert self._baseline is not None and self._case is not None
-        return self._baseline.step(_step_input(self._case, feedback, budget)).action
+        if self._baseline.plan is None: self._provider.stage = "plan_planner"
+        elif feedback.feedback_type is EvaluationFeedbackType.INVALID_ACTION or (feedback.feedback_type is EvaluationFeedbackType.TOOL_FAILURE and feedback.to_dict()["payload"].get("category") == "recoverable_failure"):
+            self._provider.stage = "plan_replan"
+        else: self._provider.stage = "plan_executor"
+        try: return self._baseline.step(_step_input(self._case, feedback, budget)).action
+        except Exception as error:
+            if self._provider.last_failure is not None: raise self._provider.last_failure from error
+            raise
     @property
     def last_requests(self): return self._provider.last_plan_request, self._provider.last_executor_request
 

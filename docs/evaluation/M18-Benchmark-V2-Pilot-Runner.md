@@ -33,3 +33,28 @@ Raw pilot evidence remains separate from tracked summaries. A later authorized
 execution must produce a deterministic digest from admitted records only, retain
 typed provider/integrity failures separately from benchmark outcomes, and leave
 formal-v2 and historical namespaces untouched.
+
+## Provider failure diagnostics and operational stops
+
+An ordinary bounded provider failure is admitted as a valid
+`provider_failure` result only when its frozen run provenance is valid. Its
+record may carry a safe diagnostic projection: normalized provider category,
+comparator and stage, logical provider-call index, transport attempts,
+retry-exhaustion state, and a sanitized short message. It never stores API
+credentials, authorization headers, cookies, raw prompts, or private fixture
+data. Diagnostic metadata is not part of the scientific run ID.
+
+Integrity conditions—frozen artifact drift, provenance mismatch, duplicate or
+conflicting identity, malformed persistence, and mixed runtime identity—remain
+fail-closed integrity errors and are never reclassified as provider results.
+
+The pilot runner persists a separate operational stop event after **two
+independent** provider failures with the same structural contract category,
+comparator, and stage. Current structural categories include `http_400`,
+`invalid_request_error`, `provider_result_contract`, `malformed_json`, and
+`model_identity_mismatch`. A single transient (`http_503`, timeout, connection
+reset, or rate limit) is admitted as ordinary provider-failure evidence and
+does not stop scheduling. A persisted systematic-stop event blocks an ordinary
+restart before new provider execution; a later explicit operator authorization
+is required to override it. The stop event is operational evidence, not a
+benchmark result.
