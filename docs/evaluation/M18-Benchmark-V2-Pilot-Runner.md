@@ -54,15 +54,28 @@ also redacted. Safe URL structure and non-sensitive query values remain
 available for operations. There is no raw-message, debug-message, or other
 unsanitized fallback field in the result or stop-event schemas.
 
+All provider-derived values are untrusted, including fields named `category`,
+`code`, `type`, or `stage`. Persisted diagnostic categories are finite internal
+taxonomy values (`http_4xx`, `http_5xx`, `invalid_request`, authentication or
+authorization error, rate limit, timeout, connection/transport error,
+provider-contract error, provider error, or unknown provider error). When one
+is available, HTTP status is retained only as a typed integer. Comparator and
+stage identifiers are finite internal execution values. A systematic-stop
+event has its own internal category,
+`systematic_provider_contract_failure`, and may reference only canonical
+provider evidence; it never adopts a provider string as its stop category.
+
 Integrity conditions—frozen artifact drift, provenance mismatch, duplicate or
 conflicting identity, malformed persistence, and mixed runtime identity—remain
 fail-closed integrity errors and are never reclassified as provider results.
 
 The pilot runner persists a separate operational stop event after **two
 independent** provider failures with the same structural contract category,
-comparator, and stage. Current structural categories include `http_400`,
-`invalid_request_error`, `provider_result_contract`, `malformed_json`, and
-`model_identity_mismatch`. A single transient (`http_503`, timeout, connection
+comparator, and stage. Canonical structural categories include `http_4xx`,
+`invalid_request`, and `provider_contract_error`; raw provider labels such as
+`http_400`, `invalid_request_error`, `provider_result_contract`,
+`malformed_json`, and `model_identity_mismatch` are normalized before
+persistence. A single transient (`http_5xx`, timeout, connection
 reset, or rate limit) is admitted as ordinary provider-failure evidence and
 does not stop scheduling. A persisted systematic-stop event blocks an ordinary
 restart before new provider execution; a later explicit operator authorization

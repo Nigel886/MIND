@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -9,8 +11,10 @@ import unittest
 from src.evaluation.m18_shared_provider import M18ProviderTransportError
 from src.evaluation.m18_v2_pilot_runner import M18V2PilotPlan, M18V2PilotRunner
 from src.evaluation.m18_v2_provider_diagnostics import (
-    M18V2ProviderDiagnostic, M18V2ProviderExecutionFailure,
-    M18V2SystematicProviderStop, normalize_provider_failure,
+    M18V2ProviderDiagnostic, M18V2ProviderDiagnosticCategory,
+    M18V2ProviderExecutionFailure, M18V2SystematicProviderStop,
+    M18V2SystematicProviderStopEvent, canonical_provider_category,
+    normalize_provider_failure,
     sanitize_diagnostic_value, sanitize_provider_message,
 )
 from src.evaluation.m18_v2_provenance import M18V2ResultRecord
@@ -74,7 +78,8 @@ class M18V2ProviderDiagnosticTests(unittest.TestCase):
             M18ProviderTransportError("http_503", 3, 2), comparator="direct_tool_calling",
             stage="direct_decision", logical_call_index=2, fallback_transport_attempts=3,
         )
-        self.assertEqual(diagnostic.to_dict()["category"], "http_503")
+        self.assertEqual(diagnostic.to_dict()["category"], "http_5xx")
+        self.assertEqual(diagnostic.http_status, 503)
         self.assertEqual(diagnostic.logical_call_index, 2)
         self.assertTrue(diagnostic.retry_exhausted)
 
@@ -116,13 +121,63 @@ class M18V2ProviderDiagnosticTests(unittest.TestCase):
             self.assertNotIn("sk-test-123", on_disk)
             self.assertEqual(persisted.provider_diagnostic, runner.store.records()[0].provider_diagnostic)
 
+    def test_untrusted_machine_fields_are_canonical_and_whole_objects_are_secret_free(self):
+        secret = "diagnostic-secret"
+        raw_corpus = (
+            "http_503?key=" + secret,
+            "invalid_request_error?token=" + secret,
+            "code=" + secret,
+            "type=" + secret,
+            "stage?api_key=" + secret,
+            "reason=" + secret,
+        )
+        diagnostic = M18V2ProviderDiagnostic(
+            raw_corpus[0], "direct_tool_calling?token=" + secret,
+            raw_corpus[4], 1, 3, True, " ".join(raw_corpus[1:]),
+        )
+        serialized = json.dumps(diagnostic.to_dict(), sort_keys=True)
+        self.assertNotIn(secret, serialized)
+        self.assertEqual(diagnostic.category, M18V2ProviderDiagnosticCategory.HTTP_5XX)
+        self.assertEqual(diagnostic.http_status, 503)
+        self.assertEqual(diagnostic.comparator, "unknown_comparator")
+        self.assertEqual(diagnostic.stage, "unknown_provider_stage")
+        equivalents = [canonical_provider_category(value) for value in (
+            "http_503", "http_503?key=" + secret, "HTTP 503", "provider returned 503",
+        )]
+        self.assertEqual(equivalents, [(M18V2ProviderDiagnosticCategory.HTTP_5XX, 503)] * 4)
+        unknown, status = canonical_provider_category("totally_new_provider_error?key=" + secret)
+        self.assertEqual((unknown, status), (M18V2ProviderDiagnosticCategory.UNKNOWN_PROVIDER_ERROR, None))
+        stop = M18V2SystematicProviderStopEvent(
+            "direct_tool_calling", "direct_decision", "http_400?token=" + secret,
+            ("run-1", "run-2"), 2, stopping_rule="reason=" + secret,
+        )
+        stop_serialized = json.dumps(stop.to_dict(), sort_keys=True)
+        self.assertNotIn(secret, stop_serialized)
+        self.assertEqual(stop.category.value, "systematic_provider_contract_failure")
+        self.assertEqual(stop.provider_category, M18V2ProviderDiagnosticCategory.HTTP_4XX)
+        self.assertEqual(stop.http_status, 400)
+        self.assertEqual(
+            stop.stopping_rule.value,
+            "two_independent_structural_failures_same_comparator_stage_category_v1",
+        )
+
+    def test_malicious_structured_provider_values_cannot_escape_through_runner_output(self):
+        secret = "diagnostic-secret"
+        output, errors = StringIO(), StringIO()
+        with TemporaryDirectory() as directory, redirect_stdout(output), redirect_stderr(errors):
+            runner = self.runner(Path(directory) / "pilot")
+            with self.assertRaises(M18V2SystematicProviderStop):
+                runner.execute(provider_factory=lambda system: FailingProvider(
+                    system, "http_400?type=" + secret + "&code=" + secret), limit=3)
+        self.assertNotIn(secret, output.getvalue() + errors.getvalue())
+
     def test_transient_failure_is_persisted_and_does_not_stop(self):
         with TemporaryDirectory() as directory:
             runner = self.runner(Path(directory) / "pilot")
             records = runner.execute(provider_factory=lambda system: FailingProvider(system), limit=2)
             self.assertEqual(len(records), 2)
             self.assertTrue(all(record.failure_taxonomy == "provider_failure" for record in records))
-            self.assertTrue(all(record.provider_diagnostic.category == "http_503" for record in records))
+            self.assertTrue(all(record.provider_diagnostic.category.value == "http_5xx" for record in records))
             self.assertIsNone(runner.store.systematic_stop())
             reread = runner.store.records()
             self.assertEqual([record.provider_diagnostic.to_dict() for record in reread], [record.provider_diagnostic.to_dict() for record in records])
@@ -130,11 +185,13 @@ class M18V2ProviderDiagnosticTests(unittest.TestCase):
     def test_repeated_contract_failure_persists_stop_and_blocks_restart(self):
         with TemporaryDirectory() as directory:
             root = Path(directory) / "pilot"; runner = self.runner(root)
+            secret = "diagnostic-secret"
             with self.assertRaises(M18V2SystematicProviderStop) as raised:
-                runner.execute(provider_factory=lambda system: FailingProvider(system, "http_400"), limit=3)
+                runner.execute(provider_factory=lambda system: FailingProvider(system, "http_400?token=" + secret), limit=3)
             event = raised.exception.event
-            self.assertEqual((event.comparator, event.stage, event.category, event.evidence_count),
-                             ("direct_tool_calling", "direct_decision", "http_400", 2))
+            self.assertEqual((event.comparator, event.stage, event.provider_category.value, event.category.value, event.evidence_count),
+                             ("direct_tool_calling", "direct_decision", "http_4xx", "systematic_provider_contract_failure", 2))
+            self.assertNotIn(secret, runner.store.systematic_stop_path.read_text(encoding="utf-8"))
             self.assertEqual(len(runner.store.records()), 2)
             with self.assertRaises(M18V2SystematicProviderStop):
                 self.runner(root).execute(provider_factory=lambda system: FailingProvider(system), limit=1)
