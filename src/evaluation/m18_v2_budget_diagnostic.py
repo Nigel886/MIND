@@ -19,13 +19,18 @@ from src.evaluation.m18_v2_runtime import (
     M18V2RuntimeResult, M18_V2_RUNTIME_ID, m18_v2_concrete_adapters,
 )
 from src.evaluation.m18_v2_provenance import M18_V2_COMPARATOR_CONDITIONS
+from src.evaluation.m18_v2_provider_diagnostics import M18V2SystematicProviderStop, M18V2SystematicProviderStopEvent
 
 
 M18_V2_BUDGET_DIAGNOSTIC_CONDITION = "m18_v2_budget_diagnostic_v1"
 M18_V2_BUDGET_DIAGNOSTIC_SCHEMA = "m18_v2_budget_diagnostic_record_v1"
 M18_V2_BUDGET_DIAGNOSTIC_NAMESPACE = Path("evaluation/m18/results/diagnostic/m18_v2_budget_diagnostic_v1")
 M18_V2_BUDGET_DIAGNOSTIC_STORE = "m18_v2_budget_diagnostic_store.json"
+M18_V2_BUDGET_DIAGNOSTIC_STOP = "m18_v2_budget_diagnostic_systematic_provider_stop.json"
 _DIMENSIONS = frozenset({"action_cycle_limit", "tool_attempt_limit", "logical_provider_call_limit", "invalid_action_limit", "recoverable_failure_limit", "none"})
+_TELEMETRY_KEYS = frozenset({"action_cycles_used", "tool_attempts_used", "invalid_actions", "recoverable_failures", "logical_provider_calls", "transport_attempts", "answer_emitted", "first_answer_step", "public_completion_before_first_answer", "last_action_type"})
+_TOKEN_KEYS = frozenset({"prompt_tokens", "completion_tokens", "cached_tokens", "total_tokens", "run_latency_seconds", "provider_call_latency_seconds"})
+_TRACE_LIMIT = 6
 
 
 def derive_diagnostic_run_id(case_id: str, comparator_condition_id: str, repetition: int) -> str:
@@ -62,6 +67,7 @@ class M18V2BudgetDiagnosticObserver:
     trace: list[dict[str, Any]] = field(default_factory=list)
     terminal_reason: str | None = None
     terminal_outcome: str | None = None
+    exhaustion_cause: str = "none"
     answer_emitted: bool = False
     first_answer_step: int | None = None
     completion_before_answer: bool | None = None
@@ -94,6 +100,7 @@ class M18V2BudgetDiagnosticObserver:
                 "logical_provider_calls": budget.logical_provider_calls})
         elif name == "terminal":
             self.terminal_outcome, self.terminal_reason = value["terminal"], value.get("reason")
+            self.exhaustion_cause = value.get("exhaustion_cause", "none")
 
 
 @dataclass(frozen=True)
@@ -128,6 +135,13 @@ class M18V2BudgetDiagnosticRecord:
             raise ValueError("diagnostic run id mismatch")
         if self.exhausted_budget_dimension not in _DIMENSIONS:
             raise ValueError("unknown exhaustion dimension")
+        if set(self.telemetry) != _TELEMETRY_KEYS or set(self.token_latency_telemetry) != _TOKEN_KEYS:
+            raise ValueError("diagnostic telemetry schema mismatch")
+        if not isinstance(self.public_trace, tuple) or len(self.public_trace) > _TRACE_LIMIT:
+            raise ValueError("diagnostic trace bound violation")
+        for index, event in enumerate(self.public_trace, 1):
+            if not isinstance(event, Mapping) or event.get("step_index") != index:
+                raise ValueError("diagnostic trace step schema mismatch")
         if not (self.non_canonical and self.diagnostic_only and self.not_performance_evidence):
             raise ValueError("diagnostic provenance flags are required")
         text = canonical_json(self.to_dict())
@@ -153,7 +167,7 @@ def build_diagnostic_record(case: Any, comparator_condition_id: str, result: M18
         derive_diagnostic_run_id(case.case_id, comparator_condition_id, repetition), M18_V2_BUDGET_DIAGNOSTIC_CONDITION,
         case.case_id, comparator_condition_id, repetition, case.suite_version, case.environment_id, case.evaluator_id,
         "m18_budget_v2", M18_V2_RUNTIME_ID, result.run_provenance.provider_config_hash, result.run_provenance.execution_baseline,
-        result.terminal.value, reason, _dimension(reason),
+        result.terminal.value, reason, getattr(observer, "exhaustion_cause", _dimension(reason)),
         {"action_cycles_used": budget.action_cycles, "tool_attempts_used": budget.tool_attempts,
          "invalid_actions": budget.invalid_actions, "recoverable_failures": budget.recoverable_failures,
          "logical_provider_calls": result.logical_provider_calls, "transport_attempts": result.transport_attempts,
@@ -162,6 +176,23 @@ def build_diagnostic_record(case: Any, comparator_condition_id: str, result: M18
          "last_action_type": observer.last_action_type}, tuple(observer.trace),
         {"prompt_tokens": None, "completion_tokens": None, "cached_tokens": None, "total_tokens": None,
          "run_latency_seconds": None, "provider_call_latency_seconds": None})
+
+
+def replay_public_completion(public_case: Mapping[str, Any], public_trace: tuple[Mapping[str, Any], ...]) -> Mapping[str, Any]:
+    """Offline-only completion analysis from public configuration and trace fields."""
+    if not isinstance(public_case, Mapping) or not isinstance(public_trace, tuple):
+        raise TypeError("public case and trace are required")
+    config = public_case.get("task_config")
+    if not isinstance(config, Mapping) or not isinstance(config.get("required_successful_steps"), int):
+        raise ValueError("public completion configuration required")
+    required = config["required_successful_steps"]; first = None; answer_at = None
+    for event in public_trace:
+        progress = event.get("public_progress", {}) if isinstance(event, Mapping) else {}
+        if first is None and progress.get("completed_steps") == required: first = event.get("step_index")
+        if event.get("action_type") == "answer" and answer_at is None: answer_at = event.get("step_index")
+    return {"completion_reached": first is not None, "first_completion_step": first,
+            "post_completion_actions": 0 if first is None else sum(1 for event in public_trace if event.get("step_index", 0) > first),
+            "answer_emitted_by_completion": answer_at is not None and first is not None and answer_at <= first}
 
 
 class M18V2BudgetDiagnosticPlan:
@@ -222,6 +253,17 @@ class M18V2BudgetDiagnosticStore:
         done = {item.run_id for item in self.records()}
         return tuple(item for item in self.plan.expected if derive_diagnostic_run_id(*item) not in done)
 
+    @property
+    def systematic_stop_path(self) -> Path: return self.root / M18_V2_BUDGET_DIAGNOSTIC_STOP
+    def systematic_stop(self) -> M18V2SystematicProviderStopEvent | None:
+        if not self.systematic_stop_path.exists(): return None
+        return M18V2SystematicProviderStopEvent.from_dict(json.loads(self.systematic_stop_path.read_text(encoding="utf-8")))
+    def persist_systematic_stop(self, event: M18V2SystematicProviderStopEvent) -> None:
+        if self.systematic_stop_path.exists():
+            if self.systematic_stop() != event: raise M18V2PilotIntegrityError("conflicting diagnostic systematic stop")
+            return
+        self._atomic(self.systematic_stop_path, event.to_dict())
+
 
 class M18V2BudgetDiagnosticRunner:
     """Explicit diagnostic executor.  It is never invoked on import or by inspection."""
@@ -233,7 +275,10 @@ class M18V2BudgetDiagnosticRunner:
     def execute(self, provider_factory: Callable[[str], Any], *, limit: int | None = None) -> tuple[M18V2BudgetDiagnosticRecord, ...]:
         """Execute only missing diagnostic identities; callers must supply a provider explicitly."""
         self.store.initialize(); completed=[]; by_case=self.plan.pilot.cases_by_id
+        prior_stop=self.store.systematic_stop()
+        if prior_stop is not None: raise M18V2SystematicProviderStop(prior_stop)
         reverse={value:key for key,value in M18_V2_COMPARATOR_CONDITIONS.items()}
+        evidence: dict[tuple[str,str,str],list[str]]={}
         for case_id, condition_id, repetition in self.store.missing()[:limit]:
             system=reverse[condition_id]; providers={name: provider_factory(name) for name in M18_V2_COMPARATOR_CONDITIONS}
             case=by_case[case_id]; condition=M18BenchmarkRuntimeCondition.v2()
@@ -242,5 +287,11 @@ class M18V2BudgetDiagnosticRunner:
             observer=M18V2BudgetDiagnosticObserver(case, condition_id)
             result=runtime.dry_run(case, m18_v2_concrete_adapters(providers)[system], repetition=repetition,
                 execution_baseline=self.plan.pilot.expected[0].execution_baseline, diagnostic_observer=observer)
-            completed.append(self.store.persist(build_diagnostic_record(case, condition_id, result, observer, repetition)))
+            record=self.store.persist(build_diagnostic_record(case, condition_id, result, observer, repetition)); completed.append(record)
+            diagnostic=result.provider_diagnostic
+            if diagnostic is not None and diagnostic.is_contract_incompatibility:
+                key=(diagnostic.comparator,diagnostic.stage,diagnostic.category); ids=evidence.setdefault(key,[]); ids.append(record.run_id)
+                if len(ids)>=2:
+                    event=M18V2SystematicProviderStopEvent(diagnostic.comparator,diagnostic.stage,diagnostic.category,tuple(ids),len(ids))
+                    self.store.persist_systematic_stop(event); raise M18V2SystematicProviderStop(event)
         return tuple(completed)

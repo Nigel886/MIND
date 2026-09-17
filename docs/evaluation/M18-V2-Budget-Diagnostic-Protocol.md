@@ -62,3 +62,18 @@ constructing a plan creates no result directory and makes no provider call.
 Execution requires an explicit caller-supplied provider factory.  Issue #162
 creates infrastructure and provider-free tests only; it authorizes no
 diagnostic, pilot, or formal execution.
+
+## Hardening guarantees
+
+The observer is fail-safe: observer exceptions are suppressed so frozen runtime
+actions, counters, state, evaluator outcome, and terminal benchmark outcome
+remain authoritative. Exhaustion is a finite typed event, not a reconstruction
+from final counters. The telemetry schema is closed; unknown fields and traces
+over the six-event action-cycle-derived bound fail admission.
+
+Public completion replay is offline-only. It accepts public case configuration
+and a bounded public trace, identifies the first public completion step and
+post-completion actions, and never supplies readiness to execution. Diagnostic
+provider-contract failures must use the established systematic-stop semantics:
+a persistent structural stop blocks later scheduling while transient transport
+failures remain ordinary diagnostic results. A stop is not a benchmark result.

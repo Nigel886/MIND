@@ -83,6 +83,24 @@ class M18V2RuntimeTerminal(str, Enum):
     PROVIDER_FAILURE = "provider_failure"
 
 
+class M18V2ExhaustionCause(str, Enum):
+    ACTION_CYCLE_LIMIT = "action_cycle_limit"
+    TOOL_ATTEMPT_LIMIT = "tool_attempt_limit"
+    LOGICAL_PROVIDER_CALL_LIMIT = "logical_provider_call_limit"
+    INVALID_ACTION_LIMIT = "invalid_action_limit"
+    RECOVERABLE_FAILURE_LIMIT = "recoverable_failure_limit"
+    NONE = "none"
+
+
+def m18_v2_exhaustion_cause(reason: str | None) -> M18V2ExhaustionCause:
+    """Canonical branch mapping; every budget terminal must use this finite event."""
+    return {"action_cycle_limit": M18V2ExhaustionCause.ACTION_CYCLE_LIMIT,
+            "tool_attempt_limit": M18V2ExhaustionCause.TOOL_ATTEMPT_LIMIT,
+            "logical_provider_call_limit": M18V2ExhaustionCause.LOGICAL_PROVIDER_CALL_LIMIT,
+            "invalid_action_threshold_reached": M18V2ExhaustionCause.INVALID_ACTION_LIMIT,
+            "recoverable_failure_threshold_reached": M18V2ExhaustionCause.RECOVERABLE_FAILURE_LIMIT}.get(reason, M18V2ExhaustionCause.NONE)
+
+
 class M18V2ProviderCallGate:
     """The sole logical-call gate for all v2 adapters.
 
@@ -259,23 +277,30 @@ class M18V2SharedExecutionHarness:
         def observe(name: str, **values: Any) -> None:
             """Optional diagnostic-only observer; never feeds the execution loop."""
             if diagnostic_observer is not None:
-                diagnostic_observer.observe(name, **values)
+                try:
+                    diagnostic_observer.observe(name, **values)
+                except Exception:
+                    # Telemetry may fail, but frozen benchmark execution may not change.
+                    pass
+        def terminal_event(terminal_value: M18V2RuntimeTerminal, reason: str | None) -> None:
+            observe("terminal", terminal=terminal_value.value, reason=reason,
+                    exhaustion_cause=m18_v2_exhaustion_cause(reason).value, budget=episode.budget_state)
         while terminal is None:
             if episode.terminal_reason == "timeout":
                 terminal = M18V2RuntimeTerminal.TIMEOUT
                 evaluation = episode.submit_answer(None)
-                observe("terminal", terminal=terminal.value, reason="timeout", budget=episode.budget_state)
+                terminal_event(terminal, "timeout")
                 break
             try:
                 action = adapter.next_decision(feedback, episode.budget_state, gate)
             except M18V2BudgetError as error:
                 terminal = M18V2RuntimeTerminal.BUDGET_EXHAUSTED
-                observe("terminal", terminal=terminal.value, reason=str(error), budget=episode.budget_state)
+                terminal_event(terminal, str(error))
                 break
             except M18V2ProviderExecutionFailure as error:
                 provider_diagnostic = error.diagnostic
                 terminal = M18V2RuntimeTerminal.PROVIDER_FAILURE
-                observe("terminal", terminal=terminal.value, reason="provider_failure", budget=episode.budget_state)
+                terminal_event(terminal, "provider_failure")
                 break
             # Provider calls are counted at the call boundary but are a distinct
             # dimension from public action/tool counters.
@@ -286,7 +311,7 @@ class M18V2SharedExecutionHarness:
             )
             if not isinstance(action, EvaluationAction):
                 terminal = M18V2RuntimeTerminal.AGENT_FAILURE
-                observe("terminal", terminal=terminal.value, reason="agent_failure", budget=episode.budget_state)
+                terminal_event(terminal, "agent_failure")
                 break
             actions.append(action.to_dict())
             if action.action_type is EvaluationActionType.ANSWER:
@@ -310,10 +335,10 @@ class M18V2SharedExecutionHarness:
                 accept(feedback)
             if episode.terminal_reason:
                 terminal = M18V2RuntimeTerminal.TIMEOUT if episode.terminal_reason == "timeout" else M18V2RuntimeTerminal.BUDGET_EXHAUSTED
-                observe("terminal", terminal=terminal.value, reason=episode.terminal_reason, budget=episode.budget_state)
+                terminal_event(terminal, episode.terminal_reason)
             elif outcome.category is M18V2OutcomeCategory.BUDGET_EXHAUSTED:
                 terminal = M18V2RuntimeTerminal.BUDGET_EXHAUSTED
-                observe("terminal", terminal=terminal.value, reason=outcome.to_dict()["payload"].get("reason"), budget=episode.budget_state)
+                terminal_event(terminal, outcome.to_dict()["payload"].get("reason"))
         return M18V2RuntimeResult(terminal, evaluation, tuple(actions), tuple(feedbacks), tuple(outcomes),
                                   dict(episode.public_state), episode.budget_state,
                                   gate.budget_state.logical_provider_calls, gate.transport_attempts,

@@ -10,7 +10,7 @@ from src.evaluation.m18_task_generation import M18Cohort, M18Difficulty, M18Fail
 from src.evaluation.m18_v2_budget_diagnostic import (
     M18_V2_BUDGET_DIAGNOSTIC_CONDITION, M18V2BudgetDiagnosticObserver,
     M18V2BudgetDiagnosticPlan, M18V2BudgetDiagnosticStore, build_diagnostic_record,
-    derive_diagnostic_run_id,
+    derive_diagnostic_run_id, replay_public_completion,
 )
 from src.evaluation.m18_v2_pilot_runner import M18V2PilotPlan, M18V2PilotResultStore
 from src.evaluation.m18_v2_provenance import M18_V2_COMPARATOR_CONDITIONS
@@ -27,6 +27,8 @@ class Script:
 class GateFailure(Script):
     def __init__(self, reason): self.reason=reason
     def next_decision(self, feedback, budget, gate): raise M18V2BudgetError(self.reason)
+class BrokenObserver:
+    def observe(self,*args,**kwargs): raise RuntimeError("telemetry failure")
 
 def runtime(provider_hash=HASH):
     c=M18BenchmarkRuntimeCondition.v2(); return M18V2SharedExecutionHarness(c,M18V2ResultProvenance(c,"m18_shared_execution_runtime_v2",provider_hash,"m18_direct_tool_calling_v1"))
@@ -57,6 +59,10 @@ class M18V2BudgetDiagnosticTests(unittest.TestCase):
         self.assertTrue(record.telemetry["answer_emitted"])
         self.assertTrue(record.telemetry["public_completion_before_first_answer"])
         self.assertNotIn("expected_final_result",json.dumps(record.to_dict()))
+        broken=runtime().dry_run(value,Script(ref_actions(value)),diagnostic_observer=BrokenObserver())
+        self.assertEqual((normal.terminal,normal.evaluator_outcome,normal.budget),(broken.terminal,broken.evaluator_outcome,broken.budget))
+        replay=replay_public_completion(value.public.to_dict(),record.public_trace)
+        self.assertEqual(replay["first_completion_step"],len(record.public_trace)-1)
 
     def test_tool_and_invalid_and_recoverable_limits_are_distinguished(self):
         hard=case(); extra=ref_actions(hard,False)+[ref_actions(hard,False)[-1]]
@@ -82,6 +88,8 @@ class M18V2BudgetDiagnosticTests(unittest.TestCase):
             store=M18V2BudgetDiagnosticStore(Path(tmp),plan); store.initialize()
             admitted=store.persist(record); self.assertEqual(store.records(),(admitted,)); self.assertEqual(len(store.missing()),71)
             with self.assertRaises(Exception): store.persist(record)
+            path=Path(tmp)/(record.run_id+".json"); payload=json.loads(path.read_text()); payload["telemetry"]["unknown"]=1; path.write_text(json.dumps(payload))
+            with self.assertRaises(Exception): store.records()
 
     def test_historical_pilot_is_unchanged_and_formal_namespace_empty(self):
         plan=M18V2PilotPlan.from_repository(Path(".")); store=M18V2PilotResultStore(Path("evaluation/m18/results/v2/pilot/m18_suite_v2"),plan.expected,plan.suite_manifest)
