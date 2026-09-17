@@ -214,6 +214,23 @@ class M18V2BudgetDiagnosticTests(unittest.TestCase):
         self.assertEqual((observer.last_action_type,observer.decoder_failure_stage),(None,"plan_executor"))
         with self.assertRaises(Exception): runtime().dry_run(value,M18V2PlanAdapter(BadPlanner("",[])),diagnostic_observer=BrokenObserver())
 
+    def test_plan_replan_stage_provenance_preserves_decoder_semantics(self):
+        value=case(M18Cohort.C,M18Difficulty.EASY,M18FailureSubtype.INVALID)
+        caps=value.public.to_dict()["capabilities"]
+        valid=json.dumps({"steps":[{"step_id":"s0","subgoal":"public","capability_id":caps[0]["tool_id"]}]})
+        wrong=json.dumps({"action":"tool_call","tool_name":caps[1]["tool_id"],"parameters":{"value":value.public.to_dict()["task_config"]["initial_value"]}})
+        class ReplanProvider:
+            transport_attempts_per_logical_call=1
+            def __init__(self): self.plans=[valid,"{bad"]; self.actions=[wrong]; self.calls=0
+            def plan(self,request): self.calls+=1; return self.plans.pop(0)
+            def execute(self,request): self.calls+=1; return self.actions.pop(0)
+        normal_provider=ReplanProvider()
+        with self.assertRaises(Exception) as normal: runtime().dry_run(value,M18V2PlanAdapter(normal_provider))
+        diagnostic_provider=ReplanProvider(); observer=M18V2BudgetDiagnosticObserver(value,"m18_plan_and_execute_v1")
+        with self.assertRaises(type(normal.exception)): runtime().dry_run(value,M18V2PlanAdapter(diagnostic_provider),diagnostic_observer=observer)
+        self.assertEqual((normal_provider.calls,diagnostic_provider.calls,observer.last_action_type,observer.decoder_failure_stage),(3,3,"tool_call","plan_replan"))
+        with self.assertRaises(type(normal.exception)): runtime().dry_run(value,M18V2PlanAdapter(ReplanProvider()),diagnostic_observer=BrokenObserver())
+
     def test_diagnostic_runner_systematic_stop_persists_and_transients_do_not_stop(self):
         plan=M18V2BudgetDiagnosticPlan.from_repository(Path("."))
         with TemporaryDirectory() as tmp:

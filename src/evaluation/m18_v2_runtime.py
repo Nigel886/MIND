@@ -493,7 +493,10 @@ class M18V2PlanAdapter:
         else: self._provider.stage = "plan_executor"
         try: return self._baseline.step(_step_input(self._case, feedback, budget)).action
         except Exception as error:
-            if self._provider.last_executor_request is not None:
+            # A historical executor request also exists before a replan.  Only
+            # the initial planner->executor compound step may refine planner
+            # attribution to executor; trusted replan context is authoritative.
+            if self._provider.stage == "plan_planner" and self._provider.last_executor_request is not None:
                 self._provider.stage = "plan_executor"
             if self._provider.last_failure is not None: raise self._provider.last_failure from error
             raise
