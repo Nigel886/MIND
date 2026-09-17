@@ -28,10 +28,11 @@ M18_V2_BUDGET_DIAGNOSTIC_NAMESPACE = Path("evaluation/m18/results/diagnostic/m18
 M18_V2_BUDGET_DIAGNOSTIC_STORE = "m18_v2_budget_diagnostic_store.json"
 M18_V2_BUDGET_DIAGNOSTIC_STOP = "m18_v2_budget_diagnostic_systematic_provider_stop.json"
 _DIMENSIONS = frozenset({"action_cycle_limit", "tool_attempt_limit", "logical_provider_call_limit", "invalid_action_limit", "recoverable_failure_limit", "none"})
-_TELEMETRY_KEYS = frozenset({"action_cycles_used", "tool_attempts_used", "invalid_actions", "recoverable_failures", "logical_provider_calls", "transport_attempts", "answer_emitted", "first_answer_step", "public_completion_before_first_answer", "last_action_type", "decoder_failure", "decoder_failure_kind"})
+_TELEMETRY_KEYS = frozenset({"action_cycles_used", "tool_attempts_used", "invalid_actions", "recoverable_failures", "logical_provider_calls", "transport_attempts", "answer_emitted", "first_answer_step", "public_completion_before_first_answer", "last_action_type", "decoder_failure", "decoder_failure_kind", "decoder_failure_stage"})
 _TOKEN_KEYS = frozenset({"prompt_tokens", "completion_tokens", "cached_tokens", "total_tokens", "run_latency_seconds", "provider_call_latency_seconds"})
 _TRACE_LIMIT = 6
 _DECODER_FAILURE_KINDS = frozenset({"none", "malformed_output", "invalid_schema", "invalid_action_encoding"})
+_DECODER_FAILURE_STAGES = frozenset({"none", "mind_lite_v11", "direct_tool_calling", "react", "plan_planner", "plan_executor", "plan_replan"})
 # The diagnostic must faithfully project every existing public
 # ``EvaluationAction`` kind.  It never invents an action for decoder failure.
 _ACTION_TYPES = frozenset({"tool_call", "answer", "fail", "invalid"})
@@ -78,6 +79,7 @@ class M18V2BudgetDiagnosticObserver:
     exhaustion_cause: str = "none"
     decoder_failure: bool = False
     decoder_failure_kind: str = "none"
+    decoder_failure_stage: str = "none"
     answer_emitted: bool = False
     first_answer_step: int | None = None
     completion_before_answer: bool | None = None
@@ -117,7 +119,9 @@ class M18V2BudgetDiagnosticObserver:
             self.decoder_failure = True
             kind = value["kind"]
             if kind not in _DECODER_FAILURE_KINDS - {"none"}: raise ValueError("unknown decoder failure kind")
+            if value.get("stage") not in _DECODER_FAILURE_STAGES - {"none"}: raise ValueError("unknown decoder failure stage")
             self.decoder_failure_kind = kind
+            self.decoder_failure_stage = value["stage"]
 
 
 @dataclass(frozen=True)
@@ -166,6 +170,8 @@ class M18V2BudgetDiagnosticRecord:
             raise ValueError("diagnostic decoder provenance mismatch")
         if self.telemetry["decoder_failure"] != (self.telemetry["decoder_failure_kind"] != "none"):
             raise ValueError("diagnostic decoder provenance inconsistency")
+        if self.telemetry["decoder_failure_stage"] not in _DECODER_FAILURE_STAGES or self.telemetry["decoder_failure"] != (self.telemetry["decoder_failure_stage"] != "none"):
+            raise ValueError("diagnostic decoder stage provenance mismatch")
         if self.telemetry["first_answer_step"] is not None and (not isinstance(self.telemetry["first_answer_step"], int) or self.telemetry["first_answer_step"] < 1):
             raise ValueError("diagnostic answer provenance mismatch")
         if self.telemetry["public_completion_before_first_answer"] is not None and not isinstance(self.telemetry["public_completion_before_first_answer"], bool):
@@ -226,7 +232,7 @@ def build_diagnostic_record(case: Any, comparator_condition_id: str, result: M18
          "answer_emitted": observer.answer_emitted, "first_answer_step": observer.first_answer_step,
          "public_completion_before_first_answer": observer.completion_before_answer,
          "last_action_type": observer.last_action_type, "decoder_failure": observer.decoder_failure,
-         "decoder_failure_kind": observer.decoder_failure_kind}, tuple(observer.trace),
+         "decoder_failure_kind": observer.decoder_failure_kind, "decoder_failure_stage": observer.decoder_failure_stage}, tuple(observer.trace),
         {"prompt_tokens": None, "completion_tokens": None, "cached_tokens": None, "total_tokens": None,
          "run_latency_seconds": None, "provider_call_latency_seconds": None})
 
@@ -281,7 +287,7 @@ class M18V2BudgetDiagnosticStore:
         if not self.root.exists(): return ()
         out=[]
         for path in sorted(self.root.glob("*.json")):
-            if path.name == M18_V2_BUDGET_DIAGNOSTIC_STORE: continue
+            if path.name in {M18_V2_BUDGET_DIAGNOSTIC_STORE, M18_V2_BUDGET_DIAGNOSTIC_STOP}: continue
             record=M18V2BudgetDiagnosticRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
             expected = next((item for item in self.plan.expected if derive_diagnostic_run_id(*item) == record.run_id), None)
             if (path.stem != record.run_id or expected is None or

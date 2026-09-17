@@ -10,8 +10,9 @@ from src.evaluation.m18_task_generation import M18Cohort, M18Difficulty, M18Fail
 from src.evaluation.m18_v2_budget_diagnostic import (
     M18_V2_BUDGET_DIAGNOSTIC_CONDITION, M18V2BudgetDiagnosticObserver,
     M18V2BudgetDiagnosticPlan, M18V2BudgetDiagnosticStore, build_diagnostic_record,
-    derive_diagnostic_run_id, replay_public_completion,
+    derive_diagnostic_run_id, replay_public_completion, M18V2BudgetDiagnosticRunner,
 )
+from src.evaluation.m18_v2_provider_diagnostics import M18V2SystematicProviderStop
 from src.evaluation.m18_v2_pilot_runner import M18V2PilotPlan, M18V2PilotResultStore
 from src.evaluation.m18_v2_provenance import M18_V2_COMPARATOR_CONDITIONS
 from src.evaluation.m18_v2_runtime import M18BenchmarkRuntimeCondition, M18V2ResultProvenance, M18V2SharedExecutionHarness
@@ -39,6 +40,12 @@ class PlanProvider:
     def __init__(self,plan,responses): self.plan_text=plan; self.responses=list(responses); self.transport_attempts_per_logical_call=1
     def plan(self,request): return self.plan_text
     def execute(self,request): return self.responses.pop(0)
+class StructuralFailure(RuntimeError): category="malformed_json"
+class FailingPlanProvider:
+    transport_attempts_per_logical_call=1
+    def generate(self,request): raise StructuralFailure("diagnostic-secret sk-test-123")
+    def plan(self,request): raise StructuralFailure("diagnostic-secret sk-test-123")
+    def execute(self,request): raise StructuralFailure("diagnostic-secret sk-test-123")
 
 def runtime(provider_hash=HASH):
     c=M18BenchmarkRuntimeCondition.v2(); return M18V2SharedExecutionHarness(c,M18V2ResultProvenance(c,"m18_shared_execution_runtime_v2",provider_hash,"m18_direct_tool_calling_v1"))
@@ -191,6 +198,31 @@ class M18V2BudgetDiagnosticTests(unittest.TestCase):
         observer=M18V2BudgetDiagnosticObserver(value,"m18_direct_tool_calling_v1")
         with self.assertRaises(Exception): runtime().dry_run(value,concrete("direct_tool_calling",value,[actions[0],malformed]),diagnostic_observer=observer)
         self.assertEqual((observer.last_action_type,observer.decoder_failure_kind),("tool_call","malformed_output"))
+
+    def test_plan_planner_and_executor_stage_provenance_and_observer_isolation(self):
+        value=case(M18Cohort.B,M18Difficulty.EASY); malformed="{not-json"
+        # Planner is supplied by the trusted Plan wrapper, so a malformed
+        # planner result never becomes a public action.
+        class BadPlanner(PlanProvider):
+            def plan(self,request): return malformed
+        observer=M18V2BudgetDiagnosticObserver(value,"m18_plan_and_execute_v1")
+        with self.assertRaises(Exception): runtime().dry_run(value,M18V2PlanAdapter(BadPlanner("",[])),diagnostic_observer=observer)
+        self.assertEqual((observer.last_action_type,observer.decoder_failure_stage),(None,"plan_planner"))
+        valid_plan=concrete_payloads(value)[1]
+        observer=M18V2BudgetDiagnosticObserver(value,"m18_plan_and_execute_v1")
+        with self.assertRaises(Exception): runtime().dry_run(value,M18V2PlanAdapter(PlanProvider(valid_plan,[malformed])),diagnostic_observer=observer)
+        self.assertEqual((observer.last_action_type,observer.decoder_failure_stage),(None,"plan_executor"))
+        with self.assertRaises(Exception): runtime().dry_run(value,M18V2PlanAdapter(BadPlanner("",[])),diagnostic_observer=BrokenObserver())
+
+    def test_diagnostic_runner_systematic_stop_persists_and_transients_do_not_stop(self):
+        plan=M18V2BudgetDiagnosticPlan.from_repository(Path("."))
+        with TemporaryDirectory() as tmp:
+            runner=M18V2BudgetDiagnosticRunner(plan,result_root=Path(tmp))
+            with self.assertRaises(M18V2SystematicProviderStop): runner.execute(lambda _: FailingPlanProvider(),limit=5)
+            stop=runner.store.systematic_stop(); self.assertIsNotNone(stop)
+            self.assertEqual(stop.evidence_count,2); self.assertGreater(len(runner.store.missing()),0)
+            self.assertNotIn("diagnostic-secret",runner.store.systematic_stop_path.read_text())
+            with self.assertRaises(M18V2SystematicProviderStop): M18V2BudgetDiagnosticRunner(plan,result_root=Path(tmp)).execute(lambda _: FailingPlanProvider(),limit=1)
 
     def test_strict_tamper_trace_bound_and_secret_firewall(self):
         value=case(); result,record=run(value,ref_actions(value))

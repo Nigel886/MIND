@@ -288,7 +288,7 @@ class M18V2SharedExecutionHarness:
         def decoder_failure_event(error: Exception) -> None:
             name = type(error).__name__
             kind = "malformed_output" if "ConditionError" in name else "invalid_action_encoding"
-            observe("decoder_failure", kind=kind, stage=getattr(adapter, "system_condition", "unknown"),
+            observe("decoder_failure", kind=kind, stage=getattr(adapter, "diagnostic_stage", getattr(adapter, "system_condition", "unknown")),
                     budget=episode.budget_state)
         while terminal is None:
             if episode.terminal_reason == "timeout":
@@ -493,10 +493,14 @@ class M18V2PlanAdapter:
         else: self._provider.stage = "plan_executor"
         try: return self._baseline.step(_step_input(self._case, feedback, budget)).action
         except Exception as error:
+            if self._provider.last_executor_request is not None:
+                self._provider.stage = "plan_executor"
             if self._provider.last_failure is not None: raise self._provider.last_failure from error
             raise
     @property
     def last_requests(self): return self._provider.last_plan_request, self._provider.last_executor_request
+    @property
+    def diagnostic_stage(self): return self._provider.stage
 
 
 def m18_v2_concrete_adapters(providers: Mapping[str, Any]) -> dict[str, M18V2RuntimeAdapter]:

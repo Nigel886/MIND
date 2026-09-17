@@ -82,3 +82,10 @@ failures remain ordinary diagnostic results. A stop is not a benchmark result.
 public action. A strict decoder rejection has no public action; it is observed
 separately as finite decoder-failure provenance and the original exception is
 re-raised unchanged. Raw provider output is never retained.
+
+The diagnostic runner inherits the frozen systematic provider-stop lifecycle:
+two independent structural provider-contract failures for the same trusted
+comparator/stage/category persist a stop, and a fresh runner refuses scheduling
+until later explicit authorization. Transient provider failures do not create
+that stop. Plan decoder provenance is trusted execution context only:
+`plan_planner`, `plan_executor`, or `plan_replan`; it is never provider text.
