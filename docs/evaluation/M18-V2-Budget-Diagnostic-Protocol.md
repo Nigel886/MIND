@@ -77,3 +77,8 @@ post-completion actions, and never supplies readiness to execution. Diagnostic
 provider-contract failures must use the established systematic-stop semantics:
 a persistent structural stop blocks later scheduling while transient transport
 failures remain ordinary diagnostic results. A stop is not a benchmark result.
+
+`last_action_type` denotes only the last successfully decoded and submitted
+public action. A strict decoder rejection has no public action; it is observed
+separately as finite decoder-failure provenance and the original exception is
+re-raised unchanged. Raw provider output is never retained.

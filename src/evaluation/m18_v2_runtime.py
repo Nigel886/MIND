@@ -285,6 +285,11 @@ class M18V2SharedExecutionHarness:
         def terminal_event(terminal_value: M18V2RuntimeTerminal, reason: str | None) -> None:
             observe("terminal", terminal=terminal_value.value, reason=reason,
                     exhaustion_cause=m18_v2_exhaustion_cause(reason).value, budget=episode.budget_state)
+        def decoder_failure_event(error: Exception) -> None:
+            name = type(error).__name__
+            kind = "malformed_output" if "ConditionError" in name else "invalid_action_encoding"
+            observe("decoder_failure", kind=kind, stage=getattr(adapter, "system_condition", "unknown"),
+                    budget=episode.budget_state)
         while terminal is None:
             if episode.terminal_reason == "timeout":
                 terminal = M18V2RuntimeTerminal.TIMEOUT
@@ -302,6 +307,10 @@ class M18V2SharedExecutionHarness:
                 terminal = M18V2RuntimeTerminal.PROVIDER_FAILURE
                 terminal_event(terminal, "provider_failure")
                 break
+            except Exception as error:
+                # Preserve exact frozen decoder/condition exception semantics.
+                decoder_failure_event(error)
+                raise
             # Provider calls are counted at the call boundary but are a distinct
             # dimension from public action/tool counters.
             episode.budget_state = M18V2BudgetState(

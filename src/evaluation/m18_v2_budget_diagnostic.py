@@ -28,9 +28,13 @@ M18_V2_BUDGET_DIAGNOSTIC_NAMESPACE = Path("evaluation/m18/results/diagnostic/m18
 M18_V2_BUDGET_DIAGNOSTIC_STORE = "m18_v2_budget_diagnostic_store.json"
 M18_V2_BUDGET_DIAGNOSTIC_STOP = "m18_v2_budget_diagnostic_systematic_provider_stop.json"
 _DIMENSIONS = frozenset({"action_cycle_limit", "tool_attempt_limit", "logical_provider_call_limit", "invalid_action_limit", "recoverable_failure_limit", "none"})
-_TELEMETRY_KEYS = frozenset({"action_cycles_used", "tool_attempts_used", "invalid_actions", "recoverable_failures", "logical_provider_calls", "transport_attempts", "answer_emitted", "first_answer_step", "public_completion_before_first_answer", "last_action_type"})
+_TELEMETRY_KEYS = frozenset({"action_cycles_used", "tool_attempts_used", "invalid_actions", "recoverable_failures", "logical_provider_calls", "transport_attempts", "answer_emitted", "first_answer_step", "public_completion_before_first_answer", "last_action_type", "decoder_failure", "decoder_failure_kind"})
 _TOKEN_KEYS = frozenset({"prompt_tokens", "completion_tokens", "cached_tokens", "total_tokens", "run_latency_seconds", "provider_call_latency_seconds"})
 _TRACE_LIMIT = 6
+_DECODER_FAILURE_KINDS = frozenset({"none", "malformed_output", "invalid_schema", "invalid_action_encoding"})
+# The diagnostic must faithfully project every existing public
+# ``EvaluationAction`` kind.  It never invents an action for decoder failure.
+_ACTION_TYPES = frozenset({"tool_call", "answer", "fail", "invalid"})
 
 
 def derive_diagnostic_run_id(case_id: str, comparator_condition_id: str, repetition: int) -> str:
@@ -56,7 +60,11 @@ def _safe_parameters(action: Mapping[str, Any]) -> Mapping[str, Any] | None:
     if action.get("action_type") != "tool_call" or not isinstance(payload, Mapping):
         return None
     value = payload.get("parameters")
-    return value if isinstance(value, Mapping) else None
+    # Diagnostic traces prove the public action shape, not its raw values.  A
+    # type-only projection prevents provider-derived strings or credentials
+    # from becoming a persisted diagnostic side channel.
+    return ({str(key): type(item).__name__ for key, item in value.items()}
+            if isinstance(value, Mapping) else None)
 
 
 @dataclass
@@ -68,6 +76,8 @@ class M18V2BudgetDiagnosticObserver:
     terminal_reason: str | None = None
     terminal_outcome: str | None = None
     exhaustion_cause: str = "none"
+    decoder_failure: bool = False
+    decoder_failure_kind: str = "none"
     answer_emitted: bool = False
     first_answer_step: int | None = None
     completion_before_answer: bool | None = None
@@ -79,6 +89,7 @@ class M18V2BudgetDiagnosticObserver:
             payload = action.get("payload", {})
             self.last_action_type = action.get("action_type")
             config = self.case.public.to_dict()["task_config"]
+            if len(self.trace) >= _TRACE_LIMIT: return
             self.trace.append({"step_index": len(self.trace) + 1, "comparator_condition_id": self.comparator_condition_id,
                 "action_type": self.last_action_type, "tool_id": payload.get("tool_name") if isinstance(payload, Mapping) else None,
                 "parameters": _safe_parameters(action), "environment_outcome": outcome["category"],
@@ -92,6 +103,7 @@ class M18V2BudgetDiagnosticObserver:
             self.last_action_type = "answer"; self.answer_emitted = True
             self.first_answer_step = len(self.trace) + 1 if self.first_answer_step is None else self.first_answer_step
             self.completion_before_answer = state["completed_steps"] == config["required_successful_steps"]
+            if len(self.trace) >= _TRACE_LIMIT: return
             self.trace.append({"step_index": len(self.trace) + 1, "comparator_condition_id": self.comparator_condition_id,
                 "action_type": "answer", "tool_id": None, "parameters": None, "environment_outcome": None,
                 "public_progress": {"completed_steps": state["completed_steps"], "required_successful_steps": config["required_successful_steps"]},
@@ -101,6 +113,11 @@ class M18V2BudgetDiagnosticObserver:
         elif name == "terminal":
             self.terminal_outcome, self.terminal_reason = value["terminal"], value.get("reason")
             self.exhaustion_cause = value.get("exhaustion_cause", "none")
+        elif name == "decoder_failure":
+            self.decoder_failure = True
+            kind = value["kind"]
+            if kind not in _DECODER_FAILURE_KINDS - {"none"}: raise ValueError("unknown decoder failure kind")
+            self.decoder_failure_kind = kind
 
 
 @dataclass(frozen=True)
@@ -123,6 +140,7 @@ class M18V2BudgetDiagnosticRecord:
     telemetry: Mapping[str, Any]
     public_trace: tuple[Mapping[str, Any], ...]
     token_latency_telemetry: Mapping[str, Any]
+    integrity_hash: str = ""
     schema_version: str = M18_V2_BUDGET_DIAGNOSTIC_SCHEMA
     non_canonical: bool = True
     diagnostic_only: bool = True
@@ -137,17 +155,49 @@ class M18V2BudgetDiagnosticRecord:
             raise ValueError("unknown exhaustion dimension")
         if set(self.telemetry) != _TELEMETRY_KEYS or set(self.token_latency_telemetry) != _TOKEN_KEYS:
             raise ValueError("diagnostic telemetry schema mismatch")
+        integer_keys = {"action_cycles_used", "tool_attempts_used", "invalid_actions", "recoverable_failures", "logical_provider_calls", "transport_attempts"}
+        if any(not isinstance(self.telemetry[key], int) or self.telemetry[key] < 0 for key in integer_keys):
+            raise ValueError("diagnostic counter schema mismatch")
+        if not isinstance(self.telemetry["answer_emitted"], bool) or not isinstance(self.telemetry["decoder_failure"], bool):
+            raise ValueError("diagnostic boolean schema mismatch")
+        if self.telemetry["last_action_type"] is not None and self.telemetry["last_action_type"] not in _ACTION_TYPES:
+            raise ValueError("diagnostic action provenance mismatch")
+        if self.telemetry["decoder_failure_kind"] not in _DECODER_FAILURE_KINDS:
+            raise ValueError("diagnostic decoder provenance mismatch")
+        if self.telemetry["decoder_failure"] != (self.telemetry["decoder_failure_kind"] != "none"):
+            raise ValueError("diagnostic decoder provenance inconsistency")
+        if self.telemetry["first_answer_step"] is not None and (not isinstance(self.telemetry["first_answer_step"], int) or self.telemetry["first_answer_step"] < 1):
+            raise ValueError("diagnostic answer provenance mismatch")
+        if self.telemetry["public_completion_before_first_answer"] is not None and not isinstance(self.telemetry["public_completion_before_first_answer"], bool):
+            raise ValueError("diagnostic completion provenance mismatch")
         if not isinstance(self.public_trace, tuple) or len(self.public_trace) > _TRACE_LIMIT:
             raise ValueError("diagnostic trace bound violation")
         for index, event in enumerate(self.public_trace, 1):
             if not isinstance(event, Mapping) or event.get("step_index") != index:
                 raise ValueError("diagnostic trace step schema mismatch")
+            if set(event) != {"step_index", "comparator_condition_id", "action_type", "tool_id", "parameters", "environment_outcome", "public_progress", "action_cycles_used", "tool_attempts_used", "invalid_actions", "recoverable_failures", "logical_provider_calls"}:
+                raise ValueError("diagnostic trace schema mismatch")
+            if event["action_type"] not in _ACTION_TYPES:
+                raise ValueError("diagnostic trace action mismatch")
         if not (self.non_canonical and self.diagnostic_only and self.not_performance_evidence):
             raise ValueError("diagnostic provenance flags are required")
+        protected = self._protected_payload()
+        expected_integrity_hash = canonical_hash(protected)
+        if not self.integrity_hash:
+            object.__setattr__(self, "integrity_hash", expected_integrity_hash)
+        elif self.integrity_hash != expected_integrity_hash:
+            raise ValueError("diagnostic integrity hash mismatch")
         text = canonical_json(self.to_dict())
         for forbidden in ("expected_final_result", "ground_truth", "chain_of_thought", "hidden_reasoning", "api_key", "authorization"):
             if forbidden in text:
                 raise ValueError("diagnostic truth/secret firewall violation")
+
+    def _protected_payload(self) -> Mapping[str, Any]:
+        return {name: getattr(self, name) for name in self.__dataclass_fields__ if name != "integrity_hash"} | {
+            "public_trace": [dict(x) for x in self.public_trace],
+            "telemetry": dict(self.telemetry),
+            "token_latency_telemetry": dict(self.token_latency_telemetry),
+        }
 
     def to_dict(self) -> dict[str, Any]:
         return {name: getattr(self, name) for name in self.__dataclass_fields__} | {"public_trace": [dict(x) for x in self.public_trace], "telemetry": dict(self.telemetry), "token_latency_telemetry": dict(self.token_latency_telemetry)}
@@ -156,6 +206,8 @@ class M18V2BudgetDiagnosticRecord:
     def from_dict(cls, value: Mapping[str, Any]) -> "M18V2BudgetDiagnosticRecord":
         names = set(cls.__dataclass_fields__)
         if not isinstance(value, Mapping) or set(value) != names: raise ValueError("diagnostic record schema mismatch")
+        if not isinstance(value.get("integrity_hash"), str) or not value["integrity_hash"]:
+            raise ValueError("diagnostic integrity hash required")
         return cls(**{k: (tuple(value[k]) if k == "public_trace" else value[k]) for k in names})
 
 
@@ -173,7 +225,8 @@ def build_diagnostic_record(case: Any, comparator_condition_id: str, result: M18
          "logical_provider_calls": result.logical_provider_calls, "transport_attempts": result.transport_attempts,
          "answer_emitted": observer.answer_emitted, "first_answer_step": observer.first_answer_step,
          "public_completion_before_first_answer": observer.completion_before_answer,
-         "last_action_type": observer.last_action_type}, tuple(observer.trace),
+         "last_action_type": observer.last_action_type, "decoder_failure": observer.decoder_failure,
+         "decoder_failure_kind": observer.decoder_failure_kind}, tuple(observer.trace),
         {"prompt_tokens": None, "completion_tokens": None, "cached_tokens": None, "total_tokens": None,
          "run_latency_seconds": None, "provider_call_latency_seconds": None})
 
