@@ -12,7 +12,8 @@ from src.evaluation.contracts import EvaluationCase, EvaluationFeedback, Evaluat
 from src.evaluation.execution import AgentStepInput, EvaluationBudget, EvaluationBudgetState
 from src.evaluation.m18_corrected_comparator_contract import (
     M18_CORRECTED_COMPARATOR_CONTRACT_ID, M18CorrectedRunIdentity,
-    corrected_namespace_counts, select_corrected_condition,
+    M18CorrectedProvenance, M18CorrectedRecord, M18CorrectedResultStore,
+    M18CorrectedRunnerPlan, corrected_namespace_counts, select_corrected_condition,
 )
 from src.evaluation.m18_direct_tool_calling import M18_DIRECT_RESPONSE_SCHEMA, M18DirectConditionError, decode_m18_direct_response
 from src.evaluation.m18_mind_policy_condition import M18_POLICY_RESPONSE_SCHEMA, M18PolicyConditionError, decode_m18_policy_response
@@ -84,6 +85,20 @@ class CorrectedComparatorContractTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True); path.write_text(json.dumps({}))
                 with self.assertRaises(Exception): validate_m18_v3_namespace_integrity(root)
                 path.unlink()
+
+    def test_corrected_store_admits_only_closed_corrected_provenance(self):
+        from src.evaluation.m18_v3_pilot_runner import M18V3PilotPlan
+        from src.evaluation.m18_v3_provenance import M18V3RunIdentity
+        runner=M18CorrectedRunnerPlan.from_v3_plan(M18V3PilotPlan.from_repository(Path('.')))
+        with tempfile.TemporaryDirectory() as directory:
+            store=M18CorrectedResultStore(Path(directory)/"pilot",runner.expected,runner.expected[0].manifest_hash)
+            record=M18CorrectedRecord(runner.expected[0],"answer_submitted","success")
+            self.assertEqual(store.persist(record),record); self.assertEqual(len(store.missing()),359)
+            with self.assertRaises(Exception): store.persist(record)
+            old=M18V3RunIdentity(runner.expected[0].identity.case_id,"plan_and_execute",1)
+            self.assertNotIn(old.run_id,{item.run_id for item in runner.expected})
+            payload=record.to_dict(); payload["provenance"]["comparator_contract_id"]="m18_v3"
+            with self.assertRaises(Exception): M18CorrectedRecord.from_dict(payload)
 
 
 if __name__ == "__main__": unittest.main()
