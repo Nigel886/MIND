@@ -61,6 +61,12 @@ MIND, Direct, ReAct, and Plan must each receive the exact same serialized `publi
 
 No comparator receives a private target, evaluator data, future action schedule, or extra task-relevant public state absent from another comparator. **Comparator public-context equivalence: PASS by v3 contract.**
 
+For MIND specifically, the session's active policy task is replaced at each
+public transition with the new current projection.  Latest observations retain
+only historical public feedback; they must not contain another
+`public_action_context`.  Therefore a MIND provider request contains exactly
+one authoritative executable context for its current cycle.
+
 ## Runtime validation and completeness invariant
 
 For every submitted public action, the runtime validates:

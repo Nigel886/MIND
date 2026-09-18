@@ -50,6 +50,30 @@ class _ActionProvider:
 
 
 class M18V3PublicActionContractTests(unittest.TestCase):
+    def test_mind_replaces_active_context_and_preserves_feedback_as_history(self):
+        provider=_ActionProvider()
+        target=case(M18Cohort.A, M18Difficulty.HARD)
+        result=M18V3SharedExecutionHarness().dry_run(target, m18_v3_concrete_adapters({
+            "mind_lite_v11": provider, "direct_tool_calling": _ActionProvider(),
+            "react": _ActionProvider(), "plan_and_execute": _ActionProvider(),
+        })["mind_lite_v11"])
+        self.assertEqual(result.evaluator_outcome, "success")
+        prior_tool=None
+        for request, current in zip(provider.requests, provider.contexts):
+            root=request["public_context"]
+            active=root["task"]["public_input"]
+            self.assertEqual(set(active), {"m18_v3_public_action_context"})
+            self.assertEqual(active["m18_v3_public_action_context"], current)
+            latest=root["latest_observation"]
+            if latest is not None:
+                payload=latest["content"]["environment_outcome"]["payload"]
+                self.assertEqual(set(payload), {"feedback"})
+                self.assertNotIn("m18_v3_public_action_context", payload)
+            tool=None if current["current_action"] is None else current["current_action"]["tool_id"]
+            if prior_tool is not None and tool is not None:
+                self.assertNotEqual(prior_tool, tool)
+            prior_tool=tool
+
     def test_context_is_closed_and_current_only(self):
         episode=M18V3Episode(case()); context=episode.public_context().to_dict()
         self.assertEqual(set(context), {"case_id","task_text","state","current_action","capabilities","latest_feedback","budget"})

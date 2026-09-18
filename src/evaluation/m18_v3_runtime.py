@@ -74,6 +74,12 @@ class M18V3MINDAdapter:
         self._case = case; self._session = CognitiveAgentSession(6, policy_engine=self._condition, capabilities=_caps(episode)); self._session.start(_task(case, episode))
     def next_decision(self, feedback: EvaluationFeedback, episode: M18V3Episode, gate: M18V3ProviderCallGate) -> EvaluationAction:
         self._provider.gate = gate
+        # CognitiveAgentSession retains its task for the lifetime of a normal
+        # session.  In this evaluation-only bridge, that task is the active
+        # provider-facing projection, so replace it before policy invocation.
+        # Public feedback remains in ``latest_observation`` as history; it is
+        # deliberately not encoded as a second action context.
+        self._session._task = _task(self._case, episode)
         self._session._capabilities = _caps(episode)
         try: result = self._session.step()
         except Exception as error:
@@ -85,7 +91,10 @@ class M18V3MINDAdapter:
     def accept_observation(self, feedback: EvaluationFeedback, episode: M18V3Episode) -> None:
         category = EnvironmentOutcomeCategory.SUCCESS if feedback.feedback_type is EvaluationFeedbackType.TOOL_RESPONSE else (EnvironmentOutcomeCategory.RECOVERABLE_FAILURE if feedback.feedback_type is EvaluationFeedbackType.TOOL_FAILURE else EnvironmentOutcomeCategory.INVALID_ACTION)
         reason = EnvironmentOutcomeReason.SUCCESSFUL_RESULT if category is EnvironmentOutcomeCategory.SUCCESS else (EnvironmentOutcomeReason.TOOL_TRANSIENT_FAILURE if category is EnvironmentOutcomeCategory.RECOVERABLE_FAILURE else EnvironmentOutcomeReason.INVALID_ARGUMENTS)
-        payload = {"feedback": feedback.to_dict(), "m18_v3_public_action_context": episode.public_context().to_dict()}
+        # This is historical public feedback, not a second executable-context
+        # channel.  The next decision receives its sole active context via the
+        # replacement task installed in ``next_decision``.
+        payload = {"feedback": feedback.to_dict()}
         self._session.observe(EnvironmentOutcome(category, reason, payload).to_observation())
     @property
     def last_request(self): return self._provider.last_request
