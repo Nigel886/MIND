@@ -248,3 +248,21 @@ A corrected pilot may provide only prespecified nuisance estimates for that cons
 The analysis-population and power-design blocker is resolved. Corrected-pilot and formal execution remain separately unauthorized by this specification. Before formal authorization, the corrected pilot, frozen pilot-to-power addendum, conservative N calculation, newly generated/validated formal manifest, and independent methodology review must all pass.
 
 **M18 CONFIRMATORY POPULATION AND POWER DESIGN SPECIFIED**
+
+## Issue #188 Completion — Frozen Comparative Statistical Protocol
+
+Issue #189 resolved the original #188 blocker by creating a new prospective eligible formal population rather than remapping historical v3 cohorts. The final authoritative protocol is docs/evaluation/M18-Comparative-Statistical-Analysis-Protocol.md, consistent with docs/evaluation/M18-Confirmatory-Population-and-Power-Design.md.
+
+### Final Frozen Protocol
+
+The inferential unit is the case cluster. Five MIND and five Direct repetitions are paired within each eligible case and converted to condition-specific case success proportions; individual repetitions are not independent observations. The evaluator-owned binary endpoint counts success as one and every agent-originated wrong, malformed, incomplete, agent-failure, budget, invalid-action, recoverable-failure, or episode-budget-timeout terminal as comparator failure zero. Verified provider failure, provenance/admission failure, and missing expected records are infrastructure-invalid/non-analyzable and require same-identity rerun; they never enter a partial denominator.
+
+The sole confirmatory contrast is MIND versus Direct. The two-sided alpha is 0.05. The primary test is a complete-five-vector within-case label-permutation test with 100,000 draws and seed 189000002; the primary effect is equal-case-weighted paired absolute success difference, with a 95% paired case-cluster bootstrap of 10,000 draws and seed 189000003. The prospective MRE is +10 percentage points. ReAct and Plan remain secondary/descriptive; any future inferential secondary family requires separately reviewed authorization and Holm adjustment.
+
+The corrected pilot may estimate only frozen nuisance margins, paired discordance, repeated-measure dependence, and feasibility quantities through a pre-pilot pilot-to-power addendum. It cannot alter endpoint, contrast, alpha, sidedness, MRE, eligibility, failure policy, repetitions, or analysis methods. A one-time conservative 100,000-draw simulation (seed 189000001) selects the smallest balanced formal N whose lower power confidence bound reaches 0.90 throughout the frozen nuisance envelope.
+
+### Remaining Execution Boundary
+
+No corrected real pilot or formal run has occurred. Corrected pilot/formal namespaces remain zero records. Formal execution remains prohibited pending an explicitly authorized corrected pilot, valid frozen addendum, feasible conservative N, new held-out eligible suite and manifest, and independent readiness authorization.
+
+**M18 COMPARATIVE STATISTICAL PROTOCOL FROZEN**
