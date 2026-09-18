@@ -46,7 +46,7 @@ class M18ReActTests(unittest.TestCase):
         self.assertEqual(react.logical_provider_calls, 3)
 
     def test_recoverable_and_invalid_feedback_append_public_history_then_allow_next_action(self):
-        provider = FakeReActProvider(['{"action":"tool_call","tool_name":"first","parameters":{}}', '{"action":"tool_call","tool_name":"transform","parameters":{"value":4}}', '{"action":"answer","answer":"ok"}'])
+        provider = FakeReActProvider(['{"action":"tool_call","tool_name":"first","parameters":{}}', '{"action":"tool_call","tool_name":"transform","parameters":{"value":4}}', '{"action":"answer","answer":10}'])
         react = M18ReActBaseline(provider, self.tools)
         react.step(self.step(EvaluationFeedback(EvaluationFeedbackType.INITIAL_INPUT)))
         react.step(self.step(EvaluationFeedback(EvaluationFeedbackType.TOOL_FAILURE, {"category":"recoverable_failure", "correct_tool":"private"}), 1))
@@ -73,7 +73,7 @@ class M18ReActTests(unittest.TestCase):
                 self.assertEqual(react.logical_provider_calls, 1); self.assertEqual(len(provider.requests), 1)
 
     def test_public_history_is_only_cross_decision_state_and_not_a_plan(self):
-        provider = FakeReActProvider(['{"action":"tool_call","tool_name":"transform","parameters":{}}', '{"action":"answer","answer":"ok"}'])
+        provider = FakeReActProvider(['{"action":"tool_call","tool_name":"transform","parameters":{}}', '{"action":"answer","answer":10}'])
         react = M18ReActBaseline(provider, self.tools)
         react.step(self.step(EvaluationFeedback(EvaluationFeedbackType.INITIAL_INPUT, {"ground_truth":"private"})))
         react.step(self.step(EvaluationFeedback(EvaluationFeedbackType.TOOL_RESPONSE, {"output":"ok"}), 1))

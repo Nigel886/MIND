@@ -144,7 +144,7 @@ class M18PlanRepairRerunTests(unittest.TestCase):
             path.write_text(json.dumps(value), encoding="utf-8")
             with self.assertRaises(ValueError): M18PlanRepairPlan.from_repository(root)
 
-    def _fake_binding(self, answer: str, *, model: str = "deepseek-flash", calls: list[dict] | None = None):
+    def _fake_binding(self, answer: int, *, model: str = "deepseek-flash", calls: list[dict] | None = None):
         responses = [
             '{"steps":[{"step_id":"finish","subgoal":"return public answer","capability_id":null}]}',
             json.dumps({"action": "answer", "answer": answer}),
@@ -178,7 +178,7 @@ class M18PlanRepairRerunTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             rerun = M18PlanRepairRerun.from_repository(temporary_repository(directory)); store = rerun.result_store()
             spec = rerun.plan.specs[0]
-            record = rerun._execute_specs(store, (spec,), "f" * 40, lambda: self._fake_binding("wrong"))[0]
+            record = rerun._execute_specs(store, (spec,), "f" * 40, lambda: self._fake_binding(-1))[0]
             self.assertEqual(record.runtime_terminal_outcome, "answer_submitted")
             self.assertEqual(record.neutral_failure_category, "wrong_answer")
             self.assertEqual(store.completed_ids(), frozenset({spec.repaired_run_id}))
@@ -189,7 +189,7 @@ class M18PlanRepairRerunTests(unittest.TestCase):
             calls: list[dict] = []
             with self.assertRaises(M18OperationalStopCondition) as raised:
                 rerun._execute_specs(store, rerun.plan.specs[:2], "f" * 40,
-                                      lambda: self._fake_binding("unused", model="wrong-model", calls=calls))
+                                      lambda: self._fake_binding(-1, model="wrong-model", calls=calls))
             self.assertEqual(raised.exception.event.category, M18OperationalStopCategory.PROVIDER_IDENTITY_DRIFT)
             self.assertEqual(len(calls), 1)
             self.assertEqual(store.completed_ids(), frozenset())

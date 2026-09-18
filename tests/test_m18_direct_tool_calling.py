@@ -49,7 +49,7 @@ class M18DirectToolCallingTest(unittest.TestCase):
         return AgentStepInput(self.case, feedback, EvaluationBudgetState(EvaluationBudget(4, 3), steps_used=used))
 
     def test_direct_answer_and_non_first_tool_are_decoded(self) -> None:
-        provider = FakeDirectProvider(['{"action":"answer","answer":"ok"}', '{"action":"tool_call","tool_name":"transform","parameters":{"value":9}}'])
+        provider = FakeDirectProvider(['{"action":"answer","answer":10}', '{"action":"tool_call","tool_name":"transform","parameters":{"value":9}}'])
         direct = M18DirectToolCallingBaseline(provider, self.capabilities)
         self.assertEqual(direct.step(self.step(EvaluationFeedback(EvaluationFeedbackType.INITIAL_INPUT))).action.to_dict()["action_type"], "answer")
         result = direct.step(self.step(EvaluationFeedback(EvaluationFeedbackType.INITIAL_INPUT)))
@@ -103,7 +103,7 @@ class M18DirectToolCallingTest(unittest.TestCase):
                 self.assertEqual(len(provider.requests), 1)
 
     def test_truth_firewall_and_no_mind_or_react_state(self) -> None:
-        provider = FakeDirectProvider(['{"action":"answer","answer":"ok"}'])
+        provider = FakeDirectProvider(['{"action":"answer","answer":10}'])
         direct = M18DirectToolCallingBaseline(provider, self.capabilities)
         direct.step(self.step(EvaluationFeedback(EvaluationFeedbackType.INITIAL_INPUT, {"difficulty": "private", "visible": True})))
         request = provider.requests[0].to_dict()

@@ -54,7 +54,7 @@ class PlanExecuteTests(unittest.TestCase):
   with self.assertRaises(M18PlanConditionError):b.step(self.step(EvaluationFeedback(EvaluationFeedbackType.INITIAL_INPUT)))
   self.assertEqual(len(p.executor_requests),1)
  def test_no_react_history_mind_state_or_truth_and_artifacts_deterministic(self):
-  p=FakeProvider([PLAN],['{"action":"answer","answer":"ok"}']);b=M18PlanAndExecuteBaseline(p,self.tools)
+  p=FakeProvider([PLAN],['{"action":"answer","answer":10}']);b=M18PlanAndExecuteBaseline(p,self.tools)
   b.step(self.step(EvaluationFeedback(EvaluationFeedbackType.INITIAL_INPUT,{"evaluator_success":True})))
   self.assertFalse({"_history","_scratchpad","_runtime_state","_belief","_provider_history"}&set(vars(b)));self.assertNotIn("evaluator_success",_keys(p.plan_requests[0].to_dict()))
   self.assertEqual(m18_plan_artifacts(),m18_plan_artifacts());self.assertTrue(all(len(x)==64 for x in m18_plan_artifacts().to_dict().values()))

@@ -19,7 +19,7 @@ from urllib.error import HTTPError
 HASH = "0f251e14722603e6e39416374467a3598cd72e1d28673e60daf8440dd6115ee2"
 
 class OneActionProvider:
-    def __init__(self, output='{"action":"answer","answer":"not-private"}'): self.output = output
+    def __init__(self, output='{"action":"answer","answer":7}'): self.output = output
     def generate(self, request): return self.output
 
 class QueueActionProvider:
@@ -28,10 +28,10 @@ class QueueActionProvider:
 
 class OnePlanProvider:
     def plan(self, request): return '{"steps":[{"step_id":"finish","subgoal":"return answer","capability_id":null}]}'
-    def execute(self, request): return '{"action":"answer","answer":"not-private"}'
+    def execute(self, request): return '{"action":"answer","answer":7}'
 
 class ToolThenAnswerPlanProvider:
-    def __init__(self, tool): self.tool, self.actions = tool, [f'{{"action":"tool_call","tool_name":"{tool}","parameters":{{}}}}', '{"action":"answer","answer":"x"}']
+    def __init__(self, tool): self.tool, self.actions = tool, [f'{{"action":"tool_call","tool_name":"{tool}","parameters":{{}}}}', '{"action":"answer","answer":7}']
     def plan(self, request): return '{"steps":[{"step_id":"tool","subgoal":"call","capability_id":"' + self.tool + '"},{"step_id":"answer","subgoal":"answer","capability_id":null}]}'
     def execute(self, request): return self.actions.pop(0)
 
@@ -79,7 +79,7 @@ class HarnessAdapterTests(unittest.TestCase):
     def test_private_case_fields_never_reach_fake_provider_requests(self):
         class Capture:
             def __init__(self): self.requests=[]
-            def generate(self, request): self.requests.append(request.to_dict()); return '{"action":"answer","answer":"x"}'
+            def generate(self, request): self.requests.append(request.to_dict()); return '{"action":"answer","answer":7}'
         provider = Capture(); self._run("direct_tool_calling", direct_adapter(provider))
         payload = json.dumps(provider.requests)
         for forbidden in ("target_answer", "failure_schedule", "difficulty", "evaluator_rule", "generation_seed"):
@@ -93,9 +93,9 @@ class HarnessAdapterTests(unittest.TestCase):
     def test_public_tool_observation_continues_to_a_second_decision(self):
         case = synthetic_case(); tool = case.public.tools[0]["tool_id"]
         for system, adapter in (
-            ("mind_lite_v11", M18MINDAdapter(QueueActionProvider([f'{{"action":"tool_call","tool_name":"{tool}","parameters":{{}}}}', '{"action":"answer","answer":"x"}']))),
-            ("direct_tool_calling", direct_adapter(QueueActionProvider([f'{{"action":"tool_call","tool_name":"{tool}","parameters":{{}}}}', '{"action":"answer","answer":"x"}']))),
-            ("react", react_adapter(QueueActionProvider([f'{{"action":"tool_call","tool_name":"{tool}","parameters":{{}}}}', '{"action":"answer","answer":"x"}']))),
+            ("mind_lite_v11", M18MINDAdapter(QueueActionProvider([f'{{"action":"tool_call","tool_name":"{tool}","parameters":{{}}}}', '{"action":"answer","answer":7}']))),
+            ("direct_tool_calling", direct_adapter(QueueActionProvider([f'{{"action":"tool_call","tool_name":"{tool}","parameters":{{}}}}', '{"action":"answer","answer":7}']))),
+            ("react", react_adapter(QueueActionProvider([f'{{"action":"tool_call","tool_name":"{tool}","parameters":{{}}}}', '{"action":"answer","answer":7}']))),
         ):
             with self.subTest(system=system):
                 record = M18SharedExecutionHarness(HASH).run_synthetic(M18RunSpec("m18_suite_v1", case.case_id, system, 1, HASH), case, adapter)
@@ -118,7 +118,7 @@ class HarnessAdapterTests(unittest.TestCase):
 
     def test_mind_uses_one_continuous_session_per_run_and_fresh_session_per_repetition(self):
         case = synthetic_case(); tool = case.public.tools[0]["tool_id"]
-        first = M18MINDAdapter(QueueActionProvider([f'{{"action":"tool_call","tool_name":"{tool}","parameters":{{}}}}', '{"action":"answer","answer":"x"}']))
+        first = M18MINDAdapter(QueueActionProvider([f'{{"action":"tool_call","tool_name":"{tool}","parameters":{{}}}}', '{"action":"answer","answer":7}']))
         harness = M18SharedExecutionHarness(HASH)
         harness.run_synthetic(M18RunSpec("m18_suite_v1", case.case_id, "mind_lite_v11", 1, HASH), case, first)
         first_session = first._session
@@ -156,7 +156,7 @@ class FrozenProviderBindingTests(unittest.TestCase):
         self.assertEqual(invalid.neutral_failure_category, "invalid_action_exhausted")
         recovery_case = generate_m18_case(M18Cohort.C, M18Difficulty.EASY, 990004, M18Namespace.PILOT, 0)
         recovery_spec = M18RunSpec("m18_suite_v1", recovery_case.case_id, "direct_tool_calling", 1, HASH)
-        recovering = M18SharedExecutionHarness(HASH).run_synthetic(recovery_spec, recovery_case, direct_adapter(QueueActionProvider([f'{{"action":"tool_call","tool_name":"{tool}","parameters":{{}}}}', '{"action":"answer","answer":"x"}'])))
+        recovering = M18SharedExecutionHarness(HASH).run_synthetic(recovery_spec, recovery_case, direct_adapter(QueueActionProvider([f'{{"action":"tool_call","tool_name":"{tool}","parameters":{{}}}}', '{"action":"answer","answer":7}'])))
         self.assertEqual(recovering.runtime_terminal_outcome, "answer_submitted")
         self.assertGreaterEqual(recovering.budget.recoverable_failures, 1)
 
@@ -172,7 +172,7 @@ class FrozenProviderBindingTests(unittest.TestCase):
         self.assertEqual(infrastructure.neutral_failure_category, "infrastructure_invalid")
 
     def test_mind_shared_client_transport_accounting_reaches_record(self):
-        response = {"model":"deepseek-flash","choices":[{"message":{"content":'{"action":"answer","answer":"x"}'}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+        response = {"model":"deepseek-flash","choices":[{"message":{"content":'{"action":"answer","answer":7}'}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
         client = M18SharedProviderClient(http_post=lambda *args: response, environment={"DEEPSEEK_API_KEY":"test"})
         case = synthetic_case(); spec = M18RunSpec("m18_suite_v1", case.case_id, "mind_lite_v11", 1, HASH)
         result = M18SharedExecutionHarness(HASH).run_synthetic(spec, case, M18MINDAdapter(M18SharedMINDProvider(client)))
@@ -180,7 +180,7 @@ class FrozenProviderBindingTests(unittest.TestCase):
         self.assertEqual(result.provider_model, "deepseek-flash")
 
     def test_frozen_environment_and_evaluator_invariant_breaches_are_typed_stops(self):
-        answer = {"model":"deepseek-flash","choices":[{"message":{"content":'{"action":"answer","answer":"x"}'}}]}
+        answer = {"model":"deepseek-flash","choices":[{"message":{"content":'{"action":"answer","answer":7}'}}]}
         case = synthetic_case(); spec = M18RunSpec("m18_suite_v1", case.case_id, "mind_lite_v11", 1, HASH)
         client = M18SharedProviderClient(http_post=lambda *args: answer, environment={"DEEPSEEK_API_KEY":"test"})
         harness = M18SharedExecutionHarness(HASH, mode=M18ExecutionMode.FROZEN, frozen_binding=M18FrozenProviderBinding(client))

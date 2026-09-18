@@ -65,11 +65,11 @@ class M18MINDPolicyConditionTest(unittest.TestCase):
 
     def test_answer_and_general_non_first_tool_decode(self) -> None:
         provider = FakePolicyProvider([
-            '{"action":"answer","answer":"done"}',
+            '{"action":"answer","answer":10}',
             '{"action":"tool_call","tool_name":"transform","parameters":{"value":7}}',
         ])
         condition = M18MINDPolicyCondition(provider)
-        self.assertEqual(condition.decide(self.context()).to_dict(), {"action": "produce_answer", "parameters": {"answer": "done"}, "metadata": {}})
+        self.assertEqual(condition.decide(self.context()).to_dict(), {"action": "produce_answer", "parameters": {"answer": 10}, "metadata": {}})
         self.assertEqual(
             condition.decide(self.context()).to_dict(),
             {"action": "call_tool", "parameters": {"tool_name": "transform", "tool_parameters": {"value": 7}}, "metadata": {}},
@@ -94,14 +94,14 @@ class M18MINDPolicyConditionTest(unittest.TestCase):
         ):
             with self.subTest(category=category):
                 observation = EnvironmentOutcome(category, reason, {"tool_name": "transform"}).to_observation()
-                provider = FakePolicyProvider(['{"action":"answer","answer":"next"}'])
+                provider = FakePolicyProvider(['{"action":"answer","answer":10}'])
                 M18MINDPolicyCondition(provider).decide(self.context(observation))
                 outcome = provider.requests[0].to_dict()["public_context"]["latest_observation"]["content"]["environment_outcome"]
                 self.assertEqual(outcome["category"], category.value)
                 self.assertEqual(outcome["reason"], reason.value)
 
     def test_truth_firewall_applies_at_provider_boundary(self) -> None:
-        provider = FakePolicyProvider(['{"action":"answer","answer":"ok"}'])
+        provider = FakePolicyProvider(['{"action":"answer","answer":10}'])
         M18MINDPolicyCondition(provider).decide(
             self.context(Observation(source="agent_environment", content={"correct_tool": "transform", "visible": "yes"})),
         )
@@ -130,7 +130,7 @@ class M18MINDPolicyConditionTest(unittest.TestCase):
                 self.assertEqual(len(provider.requests), 1)
 
     def test_repeated_invocations_are_stateless_and_context_bound(self) -> None:
-        provider = FakePolicyProvider(['{"action":"answer","answer":"first"}', '{"action":"answer","answer":"second"}'])
+        provider = FakePolicyProvider(['{"action":"answer","answer":10}', '{"action":"answer","answer":11}'])
         condition = M18MINDPolicyCondition(provider)
         condition.decide(self.context(Observation(source="agent_environment", content={"value": "A"})))
         condition.decide(self.context(Observation(source="agent_environment", content={"value": "B"})))

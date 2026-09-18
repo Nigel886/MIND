@@ -37,6 +37,24 @@ M18_V3_EXECUTION_BASELINE = "provider_free_v3"
 M18_V3_EXPECTED_MANIFEST_HASH = "2f88a22a25118d93b30fa3e399562deb21e0034164c04e3fa30caa3103da0db9"
 
 
+def validate_m18_v3_namespace_integrity(repository_root: Path) -> None:
+    """Reject JSON outside the explicit v3 pilot allowlist.
+
+    The canonical pilot store has flat record files plus its two fixed control
+    artifacts.  Formal execution remains unauthorized, so any JSON below v3
+    that is not an allowed pilot file is evidence-integrity drift.
+    """
+    root = repository_root.resolve() / "evaluation/m18/results/v3"
+    if not root.exists():
+        return
+    pilot = root / "pilot/m18_suite_v3"
+    allowed = {M18_V3_PILOT_STORE_MANIFEST, M18_V3_PILOT_SYSTEMATIC_STOP}
+    for path in root.rglob("*.json"):
+        if path.parent == pilot and (path.name in allowed or path.stem.startswith("m18v3-")):
+            continue
+        raise M18V2PilotIntegrityError("stray JSON in immutable v3 evidence tree")
+
+
 def _read(path: Path) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -181,6 +199,9 @@ class M18V3PilotResultStore:
         else: self._atomic(self.manifest_path, value)
     def records(self) -> tuple[M18V3PilotRecord, ...]:
         if not self.root.exists(): return ()
+        for path in self.root.rglob("*.json"):
+            if path.parent != self.root:
+                raise M18V2PilotIntegrityError("nested JSON is not an admitted v3 pilot record")
         records=[]
         for path in sorted(self.root.glob("*.json")):
             if path.name in {M18_V3_PILOT_STORE_MANIFEST, M18_V3_PILOT_SYSTEMATIC_STOP}: continue

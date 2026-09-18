@@ -87,7 +87,7 @@ M18_DIRECT_PROMPT = (
 )
 M18_DIRECT_RESPONSE_SCHEMA = {
     "oneOf": [
-        {"type": "object", "additionalProperties": False, "required": ["action", "answer"], "properties": {"action": {"const": "answer"}, "answer": {}}},
+        {"type": "object", "additionalProperties": False, "required": ["action", "answer"], "properties": {"action": {"const": "answer"}, "answer": {"type": "integer"}}},
         {"type": "object", "additionalProperties": False, "required": ["action", "tool_name", "parameters"], "properties": {"action": {"const": "tool_call"}, "tool_name": {"type": "string", "minLength": 1}, "parameters": {"type": "object"}}},
     ],
 }
@@ -210,6 +210,8 @@ def decode_m18_direct_response(raw_output: str) -> EvaluationAction:
     if data.get("action") == "answer":
         if set(data) != {"action", "answer"}:
             raise M18DirectConditionError("answer response has invalid fields")
+        if not isinstance(data["answer"], int) or isinstance(data["answer"], bool):
+            raise M18DirectConditionError("answer must be an integer")
         return EvaluationAction(EvaluationActionType.ANSWER, {"answer": _thaw(_freeze_json(data["answer"]))})
     if data.get("action") == "tool_call":
         if set(data) != {"action", "tool_name", "parameters"}:

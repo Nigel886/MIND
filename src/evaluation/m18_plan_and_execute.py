@@ -51,7 +51,7 @@ class M18PlanProviderError(RuntimeError):
     def __init__(self,message:str,category:str="provider_wrapper_exception"):
         super().__init__(message); self.category=category
 class M18PlanTerminationReason(str,Enum):
-    ANSWER_SUBMITTED="answer_submitted"; BUDGET_EXHAUSTED="budget_exhausted"; UNRECOVERABLE_ENVIRONMENT_FAILURE="unrecoverable_environment_failure"; REPLAN_LIMIT_REACHED="replan_limit_reached"
+    ANSWER_SUBMITTED="answer_submitted"; BUDGET_EXHAUSTED="budget_exhausted"; UNRECOVERABLE_ENVIRONMENT_FAILURE="unrecoverable_environment_failure"; REPLAN_LIMIT_REACHED="replan_limit_reached"; PLAN_EXHAUSTED="plan_exhausted"
 
 @dataclass(frozen=True)
 class PlanStep:
@@ -97,15 +97,17 @@ class M18PlannerRequest:
 
 @dataclass(frozen=True)
 class M18ExecutorRequest:
-    prompt:str; public_task:dict[str,Any]; plan:PublicExecutionPlan; cursor:int; current_feedback:dict[str,Any]; capabilities:tuple[dict[str,Any],...]; budget:dict[str,Any]; response_schema:dict[str,Any]
+    prompt:str; public_task:dict[str,Any]; plan:PublicExecutionPlan; cursor:int; current_feedback:dict[str,Any]; capabilities:tuple[dict[str,Any],...]; budget:dict[str,Any]; response_schema:dict[str,Any]; phase:str="executing_plan"
     def __post_init__(self):
-        if not isinstance(self.plan,PublicExecutionPlan) or isinstance(self.cursor,bool) or not isinstance(self.cursor,int) or self.cursor<0 or self.cursor>=len(self.plan.steps): raise ValueError("invalid explicit plan or cursor")
+        if not isinstance(self.plan,PublicExecutionPlan) or isinstance(self.cursor,bool) or not isinstance(self.cursor,int) or self.cursor<0: raise ValueError("invalid explicit plan or cursor")
+        if self.phase not in {"executing_plan","answer_pending"}: raise ValueError("invalid executor phase")
+        if (self.phase == "executing_plan" and self.cursor >= len(self.plan.steps)) or (self.phase == "answer_pending" and self.cursor != len(self.plan.steps)): raise ValueError("cursor does not match executor phase")
         for n in ("public_task","current_feedback","budget","response_schema"):
             if not isinstance(getattr(self,n),dict): raise TypeError(f"{n} must be dict")
             object.__setattr__(self,n,_freeze(getattr(self,n)))
         if not isinstance(self.capabilities,tuple) or any(not isinstance(x,dict) for x in self.capabilities): raise TypeError("capabilities must be ordered dicts")
         object.__setattr__(self,"capabilities",tuple(_freeze(x) for x in self.capabilities))
-    def to_dict(self): return {"prompt":self.prompt,"public_task":_thaw(self.public_task),"plan":self.plan.to_dict(),"cursor":self.cursor,"current_feedback":_thaw(self.current_feedback),"capabilities":_thaw(self.capabilities),"budget":_thaw(self.budget),"response_schema":_thaw(self.response_schema)}
+    def to_dict(self): return {"prompt":self.prompt,"public_task":_thaw(self.public_task),"plan":self.plan.to_dict(),"cursor":self.cursor,"phase":self.phase,"current_feedback":_thaw(self.current_feedback),"capabilities":_thaw(self.capabilities),"budget":_thaw(self.budget),"response_schema":_thaw(self.response_schema)}
 
 @runtime_checkable
 class M18PlanProvider(Protocol):
@@ -125,7 +127,7 @@ class M18PlanAndExecuteBaseline:
     def __init__(self,provider:M18PlanProvider,capabilities:tuple[CapabilityDescriptor,...]):
         if not isinstance(provider,M18PlanProvider): raise TypeError("provider must implement planner and executor")
         if not isinstance(capabilities,tuple) or any(not isinstance(x,CapabilityDescriptor) for x in capabilities): raise TypeError("capabilities must be ordered descriptor tuple")
-        self._provider=provider; self._capabilities=capabilities; self._plan:PublicExecutionPlan|None=None; self._cursor=0; self._pending_tool=False
+        self._provider=provider; self._capabilities=capabilities; self._plan:PublicExecutionPlan|None=None; self._cursor=0; self._pending_tool=False; self._answer_opportunity_occurred=False
         self._planner_calls=0; self._executor_calls=0; self._replan_calls=0; self._tool_calls=0; self._invalid_actions=0; self._recoverable_failures=0; self._action_cycles=0
     @property
     def plan(self): return self._plan
@@ -158,7 +160,7 @@ class M18PlanAndExecuteBaseline:
         except Exception as e: raise self._provider_error("initial planning failed",e) from e
     def _replan(self,si):
         task,caps,budget=self._public(si); request=M18PlannerRequest(M18_PLANNER_PROMPT,task,caps,budget,M18_PLAN_SCHEMA,self._plan.to_dict(),self._cursor,si.previous_feedback.to_dict()); self._replan_calls+=1
-        try: self._plan=self._parse_plan(self._provider.plan(request)); self._cursor=0
+        try: self._plan=self._parse_plan(self._provider.plan(request)); self._cursor=0; self._pending_tool=False; self._answer_opportunity_occurred=False
         except M18PlanConditionError: raise
         except Exception as e: raise self._provider_error("replanning failed",e) from e
     def _termination(self,si):
@@ -180,8 +182,11 @@ class M18PlanAndExecuteBaseline:
         elif self._pending_tool and fb.feedback_type is EvaluationFeedbackType.TOOL_RESPONSE:
             self._cursor+=1; self._pending_tool=False
         if self._plan is None:self._initial_plan(si)
-        if self._cursor>=len(self._plan.steps): return AgentStepResult(EvaluationAction(EvaluationActionType.FAIL,{"reason":"plan_exhausted"}),True)
-        task,caps,budget=self._public(si); req=M18ExecutorRequest(M18_EXECUTOR_PROMPT,task,self._plan,self._cursor,fb.to_dict(),caps,budget,M18_DIRECT_RESPONSE_SCHEMA); self._executor_calls+=1; self._action_cycles+=1
+        if self._cursor>len(self._plan.steps) or (self._cursor==len(self._plan.steps) and self._answer_opportunity_occurred):
+            return AgentStepResult(EvaluationAction(EvaluationActionType.FAIL,{"reason":M18PlanTerminationReason.PLAN_EXHAUSTED.value}),True)
+        phase="answer_pending" if self._cursor==len(self._plan.steps) else "executing_plan"
+        task,caps,budget=self._public(si); req=M18ExecutorRequest(M18_EXECUTOR_PROMPT,task,self._plan,self._cursor,fb.to_dict(),caps,budget,M18_DIRECT_RESPONSE_SCHEMA,phase); self._executor_calls+=1; self._action_cycles+=1
+        if phase == "answer_pending": self._answer_opportunity_occurred=True
         try: action=decode_m18_direct_response(self._provider.execute(req))
         except Exception as e: raise M18PlanConditionError("executor output rejected") from e
         if action.action_type is EvaluationActionType.TOOL_CALL:self._tool_calls+=1;self._pending_tool=True

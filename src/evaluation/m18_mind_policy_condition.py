@@ -63,7 +63,7 @@ M18_POLICY_RESPONSE_SCHEMA = {
             "type": "object",
             "additionalProperties": False,
             "required": ["action", "answer"],
-            "properties": {"action": {"const": "answer"}, "answer": {}},
+            "properties": {"action": {"const": "answer"}, "answer": {"type": "integer"}},
         },
         {
             "type": "object",
@@ -209,6 +209,8 @@ def decode_m18_policy_response(raw_output: str) -> Policy:
     if action == "answer":
         if set(data) != {"action", "answer"}:
             raise M18PolicyConditionError("answer output has an invalid field set")
+        if not isinstance(data["answer"], int) or isinstance(data["answer"], bool):
+            raise M18PolicyConditionError("answer must be an integer")
         try:
             answer = _thaw_json(_freeze_json(data["answer"]))
         except (TypeError, ValueError) as error:

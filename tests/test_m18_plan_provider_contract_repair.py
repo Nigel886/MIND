@@ -36,7 +36,7 @@ class CapturePlanProvider:
         return '{"steps":[{"step_id":"finish","subgoal":"return","capability_id":null}]}'
 
     def execute(self, request):
-        return '{"action":"answer","answer":"synthetic"}'
+        return '{"action":"answer","answer":7}'
 
 
 class FailingPlanProvider:
@@ -83,7 +83,7 @@ class PlanProviderContractRepairTests(unittest.TestCase):
     def test_shared_client_keeps_frozen_configuration_and_json_object_response_format(self):
         bodies, responses = [], [
             {"model": "deepseek-flash", "choices": [{"message": {"content": '{"steps":[{"step_id":"finish","subgoal":"return","capability_id":null}]}'}}]},
-            {"model": "deepseek-flash", "choices": [{"message": {"content": '{"action":"answer","answer":"synthetic"}'}}]},
+            {"model": "deepseek-flash", "choices": [{"message": {"content": '{"action":"answer","answer":7}'}}]},
         ]
         def post(url, headers, body, timeout):
             bodies.append(json.loads(body)); return responses.pop(0)
