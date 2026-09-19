@@ -266,3 +266,11 @@ The corrected pilot may estimate only frozen nuisance margins, paired discordanc
 No corrected real pilot or formal run has occurred. Corrected pilot/formal namespaces remain zero records. Formal execution remains prohibited pending an explicitly authorized corrected pilot, valid frozen addendum, feasible conservative N, new held-out eligible suite and manifest, and independent readiness authorization.
 
 **M18 COMPARATIVE STATISTICAL PROTOCOL FROZEN**
+
+## Issue #194 — Prospective Nuisance-Estimation Addendum
+
+The completed corrected pilot is explicitly excluded from nuisance estimation because no pre-pilot addendum existed. The new authoritative specification, `docs/evaluation/M18-Prospective-Nuisance-Estimation-Addendum.md`, freezes `m18_power_calibration_v1`: a new `m18pcv1-`-identified, held-out, MIND/Direct paired five-repetition calibration condition in a separate namespace. It fixes 48 calibration case clusters, balanced eight per cell across two source-template families and three difficulty strata (480 planned logical runs), along with canonical manifest/provenance, collision-rejection, and same-identity infrastructure rerun requirements.
+
+Only prospective equal-case-weighted margins, paired p10/p01 discordance, complete-vector clustered dependence, and operational feasibility may enter the fixed case-cluster bootstrap confidence-envelope and 100,000-draw seed-189000001 conservative power mapping. It includes defined zero-discordance and degenerate-dependence fallbacks, then mechanically selects the smallest balanced formal N with lower one-sided 95% Monte Carlo power bound at least .90 for the fixed +.10 MRE. Alpha, endpoint, contrast, eligibility, failure policy, repetitions, and multiplicity cannot change.
+
+Calibration runner preparation is authorized; real calibration and formal execution remain unauthorized.
