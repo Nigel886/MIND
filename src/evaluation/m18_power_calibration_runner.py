@@ -12,7 +12,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from src.evaluation.m18_task_generation import canonical_hash, canonical_json
 from src.evaluation.m18_v2_pilot_runner import M18V2PilotIntegrityError
@@ -31,6 +31,50 @@ M18_POWER_CALIBRATION_COMPARATORS = ("mind_lite_v11", "direct_tool_calling")
 M18_POWER_CALIBRATION_CONTRACT = "m18_v3_comparator_contract_v2"
 _FAMILIES = ("dependent_stateful_composition_a", "dependent_stateful_composition_b")
 _STRATA = ("low", "medium", "high")
+
+
+class M18PowerCalibrationPreflightError(M18V2PilotIntegrityError):
+    """Typed, fail-closed refusal before a real calibration call."""
+
+
+@dataclass(frozen=True)
+class M18PowerCalibrationDispatch:
+    """The minimal binding evidence required from a real comparator adapter."""
+    comparator_id: str
+    comparator_contract_id: str
+    strict_integer_answer: bool
+
+    def __post_init__(self) -> None:
+        if (self.comparator_id not in M18_POWER_CALIBRATION_COMPARATORS or
+                self.comparator_contract_id != M18_POWER_CALIBRATION_CONTRACT or
+                self.strict_integer_answer is not True):
+            raise M18PowerCalibrationPreflightError("calibration dispatch contract rejected")
+
+
+def _logical_ids_in(value: Any) -> set[str]:
+    """Extract identities only; outcome fields are deliberately ignored."""
+    if isinstance(value, Mapping):
+        own = {str(value[key]) for key in ("run_id", "logical_run_id") if isinstance(value.get(key), str)}
+        return own | set().union(*(_logical_ids_in(item) for item in value.values())) if value else own
+    if isinstance(value, list): return set().union(*(_logical_ids_in(item) for item in value)) if value else set()
+    return set()
+
+
+def historical_calibration_collision_ids(repository_root: Path, expected_ids: Iterable[str]) -> set[str]:
+    """Compare calibration IDs to defined historical/formal identity artifacts."""
+    domains = (
+        "evaluation/m18/results/v3", "evaluation/m18/results/m18_v3_comparator_contract_v2",
+        "evaluation/m18/results/v2", "evaluation/m18/results/v1", "evaluation/results/m16",
+        "evaluation/m18/results/m18_power_calibration_v1/formal",
+    )
+    observed: set[str] = set()
+    for domain in domains:
+        base = repository_root / domain
+        if not base.exists(): continue
+        for path in base.rglob("*.json"):
+            try: observed |= _logical_ids_in(_read(path))
+            except M18V2PilotIntegrityError: continue
+    return set(expected_ids) & observed
 
 
 def _read(path: Path) -> Any:
@@ -180,12 +224,35 @@ class M18PowerCalibrationRunner:
         self.store=M18PowerCalibrationStore(root, plan)
     @classmethod
     def from_repository(cls, root: Path, *, result_root: Path | None = None) -> "M18PowerCalibrationRunner": return cls(M18PowerCalibrationPlan.from_repository(root), result_root=result_root)
-    def preflight(self) -> M18PowerCalibrationPreflight:
+    def _validate_dispatches(self, dispatches: Mapping[str, M18PowerCalibrationDispatch] | None) -> None:
+        if dispatches is None or set(dispatches) != set(M18_POWER_CALIBRATION_COMPARATORS):
+            raise M18PowerCalibrationPreflightError("both corrected calibration dispatches are required")
+        for comparator in M18_POWER_CALIBRATION_COMPARATORS:
+            binding = dispatches[comparator]
+            if (not isinstance(binding, M18PowerCalibrationDispatch) or binding.comparator_id != comparator or
+                    binding.comparator_contract_id != M18_POWER_CALIBRATION_CONTRACT or
+                    binding.strict_integer_answer is not True):
+                raise M18PowerCalibrationPreflightError("calibration dispatch identity rejected")
+
+    @staticmethod
+    def corrected_dispatches() -> dict[str, M18PowerCalibrationDispatch]:
+        return {item: M18PowerCalibrationDispatch(item, M18_POWER_CALIBRATION_CONTRACT, True)
+                for item in M18_POWER_CALIBRATION_COMPARATORS}
+
+    def preflight(self, *, require_empty: bool = False, historical_ids: Iterable[str] | None = None) -> M18PowerCalibrationPreflight:
         records=self.store.records(); ids=[r.run_id for r in records]
         formal = self.plan.repository_root / "evaluation/m18/results/m18_power_calibration_v1/formal"
-        return M18PowerCalibrationPreflight(480, len(records), len(self.store.missing()), len(ids)-len(set(ids)), 0, 0, sum(1 for _ in formal.rglob("*.json")) if formal.exists() else 0)
-    def execute(self, *, provider: Callable[[M18PowerCalibrationProvenance], tuple[str, str | None]], limit: int | None = None, after_persist: Callable[[M18PowerCalibrationRecord], None] | None = None) -> tuple[M18PowerCalibrationRecord, ...]:
+        outcome = M18PowerCalibrationPreflight(480, len(records), len(self.store.missing()), len(ids)-len(set(ids)), 0, 0, sum(1 for _ in formal.rglob("*.json")) if formal.exists() else 0)
+        collisions = set(historical_ids) & set(self.store._by_id) if historical_ids is not None else historical_calibration_collision_ids(self.plan.repository_root, self.store._by_id)
+        if require_empty and (outcome.valid != 0 or outcome.missing != 480 or outcome.formal_records != 0 or collisions or self.store.systematic_stop() is not None):
+            raise M18PowerCalibrationPreflightError("calibration preflight blocked")
+        return outcome
+    def execute(self, *, provider: Callable[[M18PowerCalibrationProvenance], tuple[str, str | None]], dispatches: Mapping[str, M18PowerCalibrationDispatch] | None = None, limit: int | None = None, after_persist: Callable[[M18PowerCalibrationRecord], None] | None = None, historical_ids: Iterable[str] | None = None) -> tuple[M18PowerCalibrationRecord, ...]:
+        self._validate_dispatches(dispatches)
         if self.store.systematic_stop() is not None: raise M18V2SystematicProviderStop(self.store.systematic_stop())
+        # The initial execution is the real-execution admission boundary. A
+        # resume derives work solely from admitted canonical records.
+        if not self.store.records(): self.preflight(require_empty=True, historical_ids=historical_ids)
         completed=[]; evidence={}
         for expected in self.store.missing()[:limit]:
             try: terminal, outcome=provider(expected); row=M18PowerCalibrationRecord(expected, terminal, outcome)
@@ -209,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--condition", default=M18_POWER_CALIBRATION_ID); parser.add_argument("--result-root", type=Path)
     args=parser.parse_args(argv)
     if args.condition != M18_POWER_CALIBRATION_ID: parser.error("only frozen calibration condition is accepted")
-    print(json.dumps(M18PowerCalibrationRunner.from_repository(Path("."), result_root=args.result_root).preflight().__dict__, sort_keys=True)); return 0
+    print(json.dumps(M18PowerCalibrationRunner.from_repository(Path("."), result_root=args.result_root).preflight(require_empty=True).__dict__, sort_keys=True)); return 0
 
 
 if __name__ == "__main__": raise SystemExit(main())
