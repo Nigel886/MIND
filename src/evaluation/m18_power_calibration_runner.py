@@ -20,6 +20,11 @@ from src.evaluation.m18_v2_provider_diagnostics import (
     M18V2ProviderDiagnostic, M18V2ProviderExecutionFailure,
     M18V2SystematicProviderStop, M18V2SystematicProviderStopEvent,
 )
+from src.evaluation.m18_shared_provider import M18SharedProviderConfiguration
+from src.evaluation.m18_task_generation import M18Cohort, M18Difficulty, M18Namespace
+from src.evaluation.m18_v2_semantics import M18V2Case, M18V2PublicCase, generate_m18_v2_case
+from src.evaluation.m18_v3_runtime import M18V3DirectAdapter, M18V3MINDAdapter
+from src.evaluation.m18_v3_semantics import M18V3Case
 
 M18_POWER_CALIBRATION_ID = "m18_power_calibration_v1"
 M18_POWER_CALIBRATION_DESIGN_VERSION = "m18_power_calibration_design_v1"
@@ -29,6 +34,7 @@ M18_POWER_CALIBRATION_NAMESPACE = Path("evaluation/m18/results/m18_power_calibra
 M18_POWER_CALIBRATION_PREFIX = "m18pcv1-"
 M18_POWER_CALIBRATION_COMPARATORS = ("mind_lite_v11", "direct_tool_calling")
 M18_POWER_CALIBRATION_CONTRACT = "m18_v3_comparator_contract_v2"
+M18_POWER_CALIBRATION_PROVIDER_HASH = "0f251e14722603e6e39416374467a3598cd72e1d28673e60daf8440dd6115ee2"
 _FAMILIES = ("dependent_stateful_composition_a", "dependent_stateful_composition_b")
 _STRATA = ("low", "medium", "high")
 
@@ -49,6 +55,32 @@ class M18PowerCalibrationDispatch:
                 self.comparator_contract_id != M18_POWER_CALIBRATION_CONTRACT or
                 self.strict_integer_answer is not True):
             raise M18PowerCalibrationPreflightError("calibration dispatch contract rejected")
+
+
+@dataclass(frozen=True)
+class M18PowerCalibrationEpisode:
+    """One closed calibration-ID to corrected executable-episode binding."""
+    provenance: "M18PowerCalibrationProvenance"
+    case: M18V3Case
+    adapter_type: type
+    provider_config_hash: str
+
+    def __post_init__(self) -> None:
+        identity = self.provenance.identity
+        expected_adapter = M18V3MINDAdapter if identity.comparator_id == "mind_lite_v11" else M18V3DirectAdapter
+        if (not isinstance(self.case, M18V3Case) or self.case.case_id != identity.case_id or
+                self.adapter_type is not expected_adapter or self.provider_config_hash != M18_POWER_CALIBRATION_PROVIDER_HASH):
+            raise M18PowerCalibrationPreflightError("calibration executable bridge rejected")
+
+    @property
+    def run_id(self) -> str: return self.provenance.run_id
+    @property
+    def identity(self) -> "M18PowerCalibrationIdentity": return self.provenance.identity
+
+    def recovered_identity(self) -> dict[str, Any]:
+        return {**self.provenance.identity.to_dict(), "logical_run_id": self.run_id,
+                "provider_config_hash": self.provider_config_hash,
+                "adapter": self.adapter_type.__name__}
 
 
 def _logical_ids_in(value: Any) -> set[str]:
@@ -96,7 +128,7 @@ def _atomic(path: Path, value: Mapping[str, Any]) -> None:
 @dataclass(frozen=True)
 class M18PowerCalibrationIdentity:
     case_id: str; source_family: str; difficulty: str; comparator_id: str; repetition: int
-    provider_config_id: str = "m18_power_calibration_provider_config_v1"
+    provider_config_id: str = M18_POWER_CALIBRATION_PROVIDER_HASH
     def __post_init__(self) -> None:
         if (self.source_family not in _FAMILIES or self.difficulty not in _STRATA or
                 self.comparator_id not in M18_POWER_CALIBRATION_COMPARATORS or not 1 <= self.repetition <= 5):
@@ -175,6 +207,36 @@ class M18PowerCalibrationPlan:
     @property
     def result_root(self) -> Path: return self.repository_root / M18_POWER_CALIBRATION_NAMESPACE
 
+    @staticmethod
+    def _case_for(identity: M18PowerCalibrationIdentity) -> M18V3Case:
+        """Deterministically construct the held-out fixture represented by its seed."""
+        seed = int(hashlib.sha256((identity.case_id + ":fixture").encode()).hexdigest()[:12], 16)
+        difficulty = {"low": M18Difficulty.EASY, "medium": M18Difficulty.MEDIUM, "high": M18Difficulty.HARD}[identity.difficulty]
+        generated = generate_m18_v2_case(M18Cohort.A, difficulty, seed, M18Namespace.FORMAL, int(identity.case_id[-2:]))
+        public = M18V2PublicCase(identity.case_id, generated.public.task_text, generated.public.capabilities, generated.public.task_config)
+        # M18V2Case permits a domain-separated public identity while retaining
+        # the frozen evaluator/runtime representation consumed by M18V3Case.
+        source = M18V2Case(identity.case_id, generated.namespace, generated.cohort, generated.difficulty,
+                           generated.generation_seed, public, generated.evaluator, generated.failure_subtype)
+        return M18V3Case(source)
+
+    def resolve(self, provenance: M18PowerCalibrationProvenance) -> M18PowerCalibrationEpisode:
+        if self.expected_by_id.get(provenance.run_id) != provenance:
+            raise M18PowerCalibrationPreflightError("unknown calibration logical identity")
+        identity = provenance.identity
+        adapter = M18V3MINDAdapter if identity.comparator_id == "mind_lite_v11" else M18V3DirectAdapter
+        return M18PowerCalibrationEpisode(provenance, self._case_for(identity), adapter, identity.provider_config_id)
+
+    @property
+    def expected_by_id(self) -> dict[str, M18PowerCalibrationProvenance]:
+        return {item.run_id: item for item in self.expected}
+
+    def bridge(self) -> tuple[M18PowerCalibrationEpisode, ...]:
+        rows = tuple(self.resolve(item) for item in self.expected)
+        if len(rows) != 480 or len({item.run_id for item in rows}) != 480:
+            raise M18PowerCalibrationPreflightError("calibration bridge cardinality mismatch")
+        return rows
+
 
 class M18PowerCalibrationStore:
     def __init__(self, root: Path, plan: M18PowerCalibrationPlan) -> None:
@@ -239,23 +301,31 @@ class M18PowerCalibrationRunner:
         return {item: M18PowerCalibrationDispatch(item, M18_POWER_CALIBRATION_CONTRACT, True)
                 for item in M18_POWER_CALIBRATION_COMPARATORS}
 
-    def preflight(self, *, require_empty: bool = False, historical_ids: Iterable[str] | None = None) -> M18PowerCalibrationPreflight:
+    def _validate_provider_configuration(self, provider_configuration: M18SharedProviderConfiguration | None) -> None:
+        if provider_configuration is None or provider_configuration.config_hash != M18_POWER_CALIBRATION_PROVIDER_HASH:
+            raise M18PowerCalibrationPreflightError("frozen calibration provider configuration mismatch")
+
+    def preflight(self, *, require_empty: bool = False, historical_ids: Iterable[str] | None = None,
+                  provider_configuration: M18SharedProviderConfiguration | None = None) -> M18PowerCalibrationPreflight:
         records=self.store.records(); ids=[r.run_id for r in records]
         formal = self.plan.repository_root / "evaluation/m18/results/m18_power_calibration_v1/formal"
         outcome = M18PowerCalibrationPreflight(480, len(records), len(self.store.missing()), len(ids)-len(set(ids)), 0, 0, sum(1 for _ in formal.rglob("*.json")) if formal.exists() else 0)
         collisions = set(historical_ids) & set(self.store._by_id) if historical_ids is not None else historical_calibration_collision_ids(self.plan.repository_root, self.store._by_id)
-        if require_empty and (outcome.valid != 0 or outcome.missing != 480 or outcome.formal_records != 0 or collisions or self.store.systematic_stop() is not None):
-            raise M18PowerCalibrationPreflightError("calibration preflight blocked")
+        if require_empty:
+            self._validate_provider_configuration(provider_configuration)
+            if len(self.plan.bridge()) != 480 or outcome.valid != 0 or outcome.missing != 480 or outcome.formal_records != 0 or collisions or self.store.systematic_stop() is not None:
+                raise M18PowerCalibrationPreflightError("calibration preflight blocked")
         return outcome
-    def execute(self, *, provider: Callable[[M18PowerCalibrationProvenance], tuple[str, str | None]], dispatches: Mapping[str, M18PowerCalibrationDispatch] | None = None, limit: int | None = None, after_persist: Callable[[M18PowerCalibrationRecord], None] | None = None, historical_ids: Iterable[str] | None = None) -> tuple[M18PowerCalibrationRecord, ...]:
+    def execute(self, *, provider: Callable[[M18PowerCalibrationEpisode], tuple[str, str | None]], dispatches: Mapping[str, M18PowerCalibrationDispatch] | None = None, provider_configuration: M18SharedProviderConfiguration | None = None, limit: int | None = None, after_persist: Callable[[M18PowerCalibrationRecord], None] | None = None, historical_ids: Iterable[str] | None = None) -> tuple[M18PowerCalibrationRecord, ...]:
         self._validate_dispatches(dispatches)
         if self.store.systematic_stop() is not None: raise M18V2SystematicProviderStop(self.store.systematic_stop())
         # The initial execution is the real-execution admission boundary. A
         # resume derives work solely from admitted canonical records.
-        if not self.store.records(): self.preflight(require_empty=True, historical_ids=historical_ids)
+        if not self.store.records(): self.preflight(require_empty=True, historical_ids=historical_ids, provider_configuration=provider_configuration)
         completed=[]; evidence={}
         for expected in self.store.missing()[:limit]:
-            try: terminal, outcome=provider(expected); row=M18PowerCalibrationRecord(expected, terminal, outcome)
+            episode = self.plan.resolve(expected)
+            try: terminal, outcome=provider(episode); row=M18PowerCalibrationRecord(expected, terminal, outcome)
             except M18V2ProviderExecutionFailure as error:
                 # Diagnostics never cross into result records; only typed stop evidence does.
                 diagnostic=error.diagnostic; row=M18PowerCalibrationRecord(expected, "provider_failure", None)
@@ -276,7 +346,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--condition", default=M18_POWER_CALIBRATION_ID); parser.add_argument("--result-root", type=Path)
     args=parser.parse_args(argv)
     if args.condition != M18_POWER_CALIBRATION_ID: parser.error("only frozen calibration condition is accepted")
-    print(json.dumps(M18PowerCalibrationRunner.from_repository(Path("."), result_root=args.result_root).preflight(require_empty=True).__dict__, sort_keys=True)); return 0
+    print(json.dumps(M18PowerCalibrationRunner.from_repository(Path(".")).preflight(require_empty=True, provider_configuration=M18SharedProviderConfiguration()).__dict__, sort_keys=True)); return 0
 
 
 if __name__ == "__main__": raise SystemExit(main())
