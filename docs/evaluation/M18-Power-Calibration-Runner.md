@@ -17,3 +17,5 @@ Initial execution fails closed unless the canonical calibration namespace is emp
 ## Executable bridge and provider provenance
 
 Every logical ID resolves deterministically to one `M18V3Case`, its corrected MIND or Direct adapter class, and the frozen shared-provider configuration hash `0f251e14722603e6e39416374467a3598cd72e1d28673e60daf8440dd6115ee2`. The bridge is one-to-one over all 480 IDs and exposes a round-trip identity projection. Initial execution validates all bridge bindings and rejects any effective configuration whose canonical hash differs before scheduling a provider call. Result provenance repeats that hash through `provider_config_id`; admission rejects a missing or mismatched value.
+
+The bridge takes environment, evaluator, runtime, and budget identifiers from the executable M18 v3 constants (`m18_environment_v3`, `m18_evaluator_v3`, `m18_shared_execution_runtime_v3`, and `m18_budget_v3`). Episode construction compares declared provenance to the resolved executable identity and fails closed on any mismatch.

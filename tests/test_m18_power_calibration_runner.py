@@ -11,6 +11,7 @@ from src.evaluation.m18_v2_provider_diagnostics import (
     M18V2ProviderDiagnostic, M18V2ProviderExecutionFailure, M18V2SystematicProviderStop,
 )
 from src.evaluation.m18_shared_provider import M18SharedProviderConfiguration
+from src.evaluation.m18_v3_semantics import M18_V3_BUDGET_ID, M18_V3_ENVIRONMENT_ID, M18_V3_EVALUATOR_ID, M18_V3_RUNTIME_ID
 from src.evaluation.m18_v2_pilot_runner import M18V2PilotIntegrityError
 
 
@@ -33,6 +34,9 @@ class M18PowerCalibrationRunnerTests(unittest.TestCase):
         bridge = plan.bridge()
         self.assertEqual(480, len(bridge)); self.assertEqual(480, len({row.run_id for row in bridge}))
         self.assertEqual({"mind_lite_v11": 240, "direct_tool_calling": 240}, {name: sum(row.identity.comparator_id == name for row in bridge) for name in M18_POWER_CALIBRATION_COMPARATORS})
+        self.assertTrue(all(row.identity.to_dict()["environment_id"] == M18_V3_ENVIRONMENT_ID and row.case.environment_id == M18_V3_ENVIRONMENT_ID for row in bridge))
+        self.assertTrue(all(row.identity.to_dict()["evaluator_id"] == M18_V3_EVALUATOR_ID and row.case.evaluator_id == M18_V3_EVALUATOR_ID for row in bridge))
+        self.assertTrue(all(row.identity.to_dict()["runtime_id"] == M18_V3_RUNTIME_ID and row.identity.to_dict()["budget_id"] == M18_V3_BUDGET_ID for row in bridge))
 
     def test_provider_hash_and_bridge_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:

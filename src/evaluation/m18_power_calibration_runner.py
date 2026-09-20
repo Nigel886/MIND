@@ -24,7 +24,10 @@ from src.evaluation.m18_shared_provider import M18SharedProviderConfiguration
 from src.evaluation.m18_task_generation import M18Cohort, M18Difficulty, M18Namespace
 from src.evaluation.m18_v2_semantics import M18V2Case, M18V2PublicCase, generate_m18_v2_case
 from src.evaluation.m18_v3_runtime import M18V3DirectAdapter, M18V3MINDAdapter
-from src.evaluation.m18_v3_semantics import M18V3Case
+from src.evaluation.m18_v3_semantics import (
+    M18V3Case, M18_V3_BUDGET_ID, M18_V3_ENVIRONMENT_ID, M18_V3_EVALUATOR_ID,
+    M18_V3_RUNTIME_ID,
+)
 
 M18_POWER_CALIBRATION_ID = "m18_power_calibration_v1"
 M18_POWER_CALIBRATION_DESIGN_VERSION = "m18_power_calibration_design_v1"
@@ -68,7 +71,12 @@ class M18PowerCalibrationEpisode:
     def __post_init__(self) -> None:
         identity = self.provenance.identity
         expected_adapter = M18V3MINDAdapter if identity.comparator_id == "mind_lite_v11" else M18V3DirectAdapter
+        declared = identity.to_dict()
         if (not isinstance(self.case, M18V3Case) or self.case.case_id != identity.case_id or
+                declared["environment_id"] != self.case.environment_id or
+                declared["evaluator_id"] != self.case.evaluator_id or
+                declared["runtime_id"] != M18_V3_RUNTIME_ID or declared["budget_id"] != M18_V3_BUDGET_ID or
+                declared["comparator_contract_id"] != M18_POWER_CALIBRATION_CONTRACT or
                 self.adapter_type is not expected_adapter or self.provider_config_hash != M18_POWER_CALIBRATION_PROVIDER_HASH):
             raise M18PowerCalibrationPreflightError("calibration executable bridge rejected")
 
@@ -140,9 +148,9 @@ class M18PowerCalibrationIdentity:
                 "calibration_design_id": M18_POWER_CALIBRATION_DESIGN_VERSION, "case_id": self.case_id,
                 "source_family": self.source_family, "difficulty_stratum": self.difficulty,
                 "comparator_id": self.comparator_id, "repetition": self.repetition, "paired_cell_key": self.paired_cell_key,
-                "suite_id": M18_POWER_CALIBRATION_ID, "environment_id": "m18_v3_environment_v1",
-                "evaluator_id": "m18_v3_evaluator_v1", "runtime_id": "m18_v3_runtime_v1",
-                "budget_id": "m18_v3_budget_v1", "public_action_contract_id": "m18_v3_public_action_contract_v1",
+                "suite_id": M18_POWER_CALIBRATION_ID, "environment_id": M18_V3_ENVIRONMENT_ID,
+                "evaluator_id": M18_V3_EVALUATOR_ID, "runtime_id": M18_V3_RUNTIME_ID,
+                "budget_id": M18_V3_BUDGET_ID, "public_action_contract_id": "m18_v3_public_action_contract_v1",
                 "comparator_contract_id": M18_POWER_CALIBRATION_CONTRACT, "provider_config_id": self.provider_config_id}
     @property
     def run_id(self) -> str: return M18_POWER_CALIBRATION_PREFIX + canonical_hash(self.to_dict())
