@@ -1,0 +1,215 @@
+"""Guarded, provider-free preparation for the M18 power-calibration condition.
+
+This module deliberately creates no production evidence unless ``execute`` is
+called with an injected provider.  The command-line entry point only preflights;
+there is no CLI real-execution switch in Issue #195.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+from typing import Any, Callable, Mapping
+
+from src.evaluation.m18_task_generation import canonical_hash, canonical_json
+from src.evaluation.m18_v2_pilot_runner import M18V2PilotIntegrityError
+from src.evaluation.m18_v2_provider_diagnostics import (
+    M18V2ProviderDiagnostic, M18V2ProviderExecutionFailure,
+    M18V2SystematicProviderStop, M18V2SystematicProviderStopEvent,
+)
+
+M18_POWER_CALIBRATION_ID = "m18_power_calibration_v1"
+M18_POWER_CALIBRATION_DESIGN_VERSION = "m18_power_calibration_design_v1"
+M18_POWER_CALIBRATION_RUN_SCHEMA = "m18_power_calibration_v1_logical_run_id_v1"
+M18_POWER_CALIBRATION_RESULT_SCHEMA = "m18_power_calibration_v1_result_v1"
+M18_POWER_CALIBRATION_NAMESPACE = Path("evaluation/m18/results/m18_power_calibration_v1/pilot")
+M18_POWER_CALIBRATION_PREFIX = "m18pcv1-"
+M18_POWER_CALIBRATION_COMPARATORS = ("mind_lite_v11", "direct_tool_calling")
+M18_POWER_CALIBRATION_CONTRACT = "m18_v3_comparator_contract_v2"
+_FAMILIES = ("dependent_stateful_composition_a", "dependent_stateful_composition_b")
+_STRATA = ("low", "medium", "high")
+
+
+def _read(path: Path) -> Any:
+    try: return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error: raise M18V2PilotIntegrityError("invalid calibration artifact") from error
+
+
+def _atomic(path: Path, value: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=path.parent, suffix=".tmp") as handle:
+        handle.write(canonical_json(dict(value)) + "\n"); handle.flush(); os.fsync(handle.fileno()); temporary = Path(handle.name)
+    try:
+        if path.exists(): raise FileExistsError("no-overwrite calibration persistence")
+        os.replace(temporary, path)
+    except Exception:
+        temporary.unlink(missing_ok=True); raise
+
+
+@dataclass(frozen=True)
+class M18PowerCalibrationIdentity:
+    case_id: str; source_family: str; difficulty: str; comparator_id: str; repetition: int
+    provider_config_id: str = "m18_power_calibration_provider_config_v1"
+    def __post_init__(self) -> None:
+        if (self.source_family not in _FAMILIES or self.difficulty not in _STRATA or
+                self.comparator_id not in M18_POWER_CALIBRATION_COMPARATORS or not 1 <= self.repetition <= 5):
+            raise ValueError("calibration identity is outside frozen design")
+    @property
+    def paired_cell_key(self) -> str: return f"{self.case_id}:r{self.repetition}"
+    def to_dict(self) -> dict[str, Any]:
+        return {"schema": M18_POWER_CALIBRATION_RUN_SCHEMA, "calibration_condition_id": M18_POWER_CALIBRATION_ID,
+                "calibration_design_id": M18_POWER_CALIBRATION_DESIGN_VERSION, "case_id": self.case_id,
+                "source_family": self.source_family, "difficulty_stratum": self.difficulty,
+                "comparator_id": self.comparator_id, "repetition": self.repetition, "paired_cell_key": self.paired_cell_key,
+                "suite_id": M18_POWER_CALIBRATION_ID, "environment_id": "m18_v3_environment_v1",
+                "evaluator_id": "m18_v3_evaluator_v1", "runtime_id": "m18_v3_runtime_v1",
+                "budget_id": "m18_v3_budget_v1", "public_action_contract_id": "m18_v3_public_action_contract_v1",
+                "comparator_contract_id": M18_POWER_CALIBRATION_CONTRACT, "provider_config_id": self.provider_config_id}
+    @property
+    def run_id(self) -> str: return M18_POWER_CALIBRATION_PREFIX + canonical_hash(self.to_dict())
+
+
+@dataclass(frozen=True)
+class M18PowerCalibrationProvenance:
+    identity: M18PowerCalibrationIdentity; manifest_hash: str
+    @property
+    def run_id(self) -> str: return self.identity.run_id
+    def to_dict(self) -> dict[str, Any]: return {**self.identity.to_dict(), "logical_run_id": self.run_id, "manifest_hash": self.manifest_hash, "result_schema": M18_POWER_CALIBRATION_RESULT_SCHEMA}
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "M18PowerCalibrationProvenance":
+        keys = set(M18PowerCalibrationIdentity("x", _FAMILIES[0], _STRATA[0], M18_POWER_CALIBRATION_COMPARATORS[0], 1).to_dict()) | {"logical_run_id", "manifest_hash", "result_schema"}
+        if not isinstance(value, Mapping) or set(value) != keys or value.get("result_schema") != M18_POWER_CALIBRATION_RESULT_SCHEMA: raise ValueError("calibration provenance schema mismatch")
+        identity = M18PowerCalibrationIdentity(value["case_id"], value["source_family"], value["difficulty_stratum"], value["comparator_id"], value["repetition"], value["provider_config_id"])
+        if value["logical_run_id"] != identity.run_id or any(value[k] != identity.to_dict()[k] for k in identity.to_dict()): raise ValueError("calibration provenance mismatch")
+        return cls(identity, value["manifest_hash"])
+
+
+@dataclass(frozen=True)
+class M18PowerCalibrationRecord:
+    provenance: M18PowerCalibrationProvenance; terminal: str; evaluator_outcome: str | None; integrity_hash: str = ""
+    def __post_init__(self) -> None:
+        if self.terminal not in {"success", "failure", "provider_failure"}: raise ValueError("invalid calibration terminal")
+        protected = {"provenance": self.provenance.to_dict(), "terminal": self.terminal, "evaluator_outcome": self.evaluator_outcome}
+        digest = canonical_hash(protected)
+        if not self.integrity_hash: object.__setattr__(self, "integrity_hash", digest)
+        elif self.integrity_hash != digest: raise ValueError("calibration record tampered")
+        if any(secret in canonical_json(protected) for secret in ("BearerSecret", "supersecretvalue", "sk-test-")): raise ValueError("secret firewall violation")
+    @property
+    def run_id(self) -> str: return self.provenance.run_id
+    def to_dict(self) -> dict[str, Any]: return {"provenance": self.provenance.to_dict(), "terminal": self.terminal, "evaluator_outcome": self.evaluator_outcome, "integrity_hash": self.integrity_hash}
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "M18PowerCalibrationRecord":
+        if not isinstance(value, Mapping) or set(value) != {"provenance", "terminal", "evaluator_outcome", "integrity_hash"}: raise ValueError("calibration record schema mismatch")
+        return cls(M18PowerCalibrationProvenance.from_dict(value["provenance"]), value["terminal"], value["evaluator_outcome"], value["integrity_hash"])
+
+
+@dataclass(frozen=True)
+class M18PowerCalibrationPlan:
+    repository_root: Path; manifest: Mapping[str, Any]; expected: tuple[M18PowerCalibrationProvenance, ...]
+    @classmethod
+    def from_repository(cls, root: Path) -> "M18PowerCalibrationPlan":
+        cases = []
+        for family in _FAMILIES:
+            for stratum in _STRATA:
+                for ordinal in range(1, 9):
+                    case_id = f"m18pcv1-{family[-1]}-{stratum}-{ordinal:02d}"
+                    seed = hashlib.sha256(case_id.encode()).hexdigest()
+                    cases.append({"case_id": case_id, "source_family": family, "difficulty_stratum": stratum,
+                                  "eligibility_proof": {"primary_eligible": True, "public_transitions": 2, "dependent_later_action": True, "deterministic": True},
+                                  "source_seed": seed[:16], "fixture_seed": seed[16:32], "environment_seed": seed[32:48], "order_seed": seed[48:]})
+        manifest_core = {"suite_id": M18_POWER_CALIBRATION_ID, "design_id": M18_POWER_CALIBRATION_DESIGN_VERSION,
+                         "run_id_schema": M18_POWER_CALIBRATION_RUN_SCHEMA, "result_schema": M18_POWER_CALIBRATION_RESULT_SCHEMA,
+                         "comparator_contract_id": M18_POWER_CALIBRATION_CONTRACT, "comparators": list(M18_POWER_CALIBRATION_COMPARATORS), "cases": cases}
+        manifest_hash = canonical_hash(manifest_core); manifest = {**manifest_core, "manifest_hash": manifest_hash}
+        expected = tuple(M18PowerCalibrationProvenance(M18PowerCalibrationIdentity(c["case_id"], c["source_family"], c["difficulty_stratum"], comparator, repetition), manifest_hash)
+                         for c in cases for repetition in range(1, 6) for comparator in M18_POWER_CALIBRATION_COMPARATORS)
+        if len(cases) != 48 or len(expected) != 480 or len({p.run_id for p in expected}) != 480: raise M18V2PilotIntegrityError("frozen calibration universe mismatch")
+        return cls(root.resolve(), manifest, expected)
+    @property
+    def result_root(self) -> Path: return self.repository_root / M18_POWER_CALIBRATION_NAMESPACE
+
+
+class M18PowerCalibrationStore:
+    def __init__(self, root: Path, plan: M18PowerCalibrationPlan) -> None:
+        if root.name != "pilot": raise ValueError("calibration records only belong in pilot namespace")
+        self.root, self.plan, self._by_id = root, plan, {p.run_id: p for p in plan.expected}
+    @property
+    def stop_path(self) -> Path: return self.root / "m18_power_calibration_systematic_provider_stop_v1.json"
+    def records(self) -> tuple[M18PowerCalibrationRecord, ...]:
+        if not self.root.exists(): return ()
+        rows=[]
+        for path in sorted(self.root.glob("*.json")):
+            if path == self.stop_path: continue
+            try: row=M18PowerCalibrationRecord.from_dict(_read(path))
+            except Exception as error: raise M18V2PilotIntegrityError("invalid calibration record") from error
+            if path.stem != row.run_id or self._by_id.get(row.run_id) != row.provenance or row.provenance.manifest_hash != self.plan.manifest["manifest_hash"]: raise M18V2PilotIntegrityError("calibration admission rejected")
+            rows.append(row)
+        return tuple(rows)
+    def missing(self) -> tuple[M18PowerCalibrationProvenance, ...]:
+        admitted={r.run_id for r in self.records()}; return tuple(p for p in self.plan.expected if p.run_id not in admitted)
+    def persist(self, record: M18PowerCalibrationRecord) -> M18PowerCalibrationRecord:
+        if self._by_id.get(record.run_id) != record.provenance or record.provenance.manifest_hash != self.plan.manifest["manifest_hash"]: raise M18V2PilotIntegrityError("calibration provenance rejection")
+        path=self.root / f"{record.run_id}.json"
+        # Atomic create performs the duplicate check at the persistence
+        # boundary; avoid an O(n^2) directory reread during a 480-run resume.
+        if path.exists(): raise M18V2PilotIntegrityError("calibration duplicate rejection")
+        _atomic(path, record.to_dict()); reread=M18PowerCalibrationRecord.from_dict(_read(path))
+        if self._by_id.get(reread.run_id) != reread.provenance: raise M18V2PilotIntegrityError("calibration reread admission rejected")
+        return reread
+    def systematic_stop(self) -> M18V2SystematicProviderStopEvent | None:
+        return None if not self.stop_path.exists() else M18V2SystematicProviderStopEvent.from_dict(_read(self.stop_path))
+    def persist_stop(self, event: M18V2SystematicProviderStopEvent) -> None:
+        if self.stop_path.exists():
+            if self.systematic_stop() != event: raise M18V2PilotIntegrityError("conflicting calibration stop")
+            return
+        _atomic(self.stop_path, event.to_dict())
+
+
+@dataclass(frozen=True)
+class M18PowerCalibrationPreflight:
+    expected: int; valid: int; missing: int; duplicates: int; invalid: int; unexpected: int; formal_records: int
+
+
+class M18PowerCalibrationRunner:
+    def __init__(self, plan: M18PowerCalibrationPlan, *, result_root: Path | None = None) -> None:
+        self.plan=plan; root=plan.result_root if result_root is None else result_root
+        if root.name != "pilot": root=root / "pilot"
+        self.store=M18PowerCalibrationStore(root, plan)
+    @classmethod
+    def from_repository(cls, root: Path, *, result_root: Path | None = None) -> "M18PowerCalibrationRunner": return cls(M18PowerCalibrationPlan.from_repository(root), result_root=result_root)
+    def preflight(self) -> M18PowerCalibrationPreflight:
+        records=self.store.records(); ids=[r.run_id for r in records]
+        formal = self.plan.repository_root / "evaluation/m18/results/m18_power_calibration_v1/formal"
+        return M18PowerCalibrationPreflight(480, len(records), len(self.store.missing()), len(ids)-len(set(ids)), 0, 0, sum(1 for _ in formal.rglob("*.json")) if formal.exists() else 0)
+    def execute(self, *, provider: Callable[[M18PowerCalibrationProvenance], tuple[str, str | None]], limit: int | None = None, after_persist: Callable[[M18PowerCalibrationRecord], None] | None = None) -> tuple[M18PowerCalibrationRecord, ...]:
+        if self.store.systematic_stop() is not None: raise M18V2SystematicProviderStop(self.store.systematic_stop())
+        completed=[]; evidence={}
+        for expected in self.store.missing()[:limit]:
+            try: terminal, outcome=provider(expected); row=M18PowerCalibrationRecord(expected, terminal, outcome)
+            except M18V2ProviderExecutionFailure as error:
+                # Diagnostics never cross into result records; only typed stop evidence does.
+                diagnostic=error.diagnostic; row=M18PowerCalibrationRecord(expected, "provider_failure", None)
+                if diagnostic.is_contract_incompatibility:
+                    key=(expected.identity.comparator_id, diagnostic.stage, diagnostic.category.value); evidence.setdefault(key, []).append(expected.run_id)
+            persisted=self.store.persist(row); completed.append(persisted)
+            if after_persist: after_persist(persisted)
+            for (comparator, stage, category), ids in evidence.items():
+                if len(ids) >= 2:
+                    event=M18V2SystematicProviderStopEvent(comparator, stage, category, tuple(ids), len(ids))
+                    self.store.persist_stop(event); raise M18V2SystematicProviderStop(event)
+        return tuple(completed)
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    parser=argparse.ArgumentParser(description="M18 power-calibration preflight (execution requires explicit API authorization)")
+    parser.add_argument("--condition", default=M18_POWER_CALIBRATION_ID); parser.add_argument("--result-root", type=Path)
+    args=parser.parse_args(argv)
+    if args.condition != M18_POWER_CALIBRATION_ID: parser.error("only frozen calibration condition is accepted")
+    print(json.dumps(M18PowerCalibrationRunner.from_repository(Path("."), result_root=args.result_root).preflight().__dict__, sort_keys=True)); return 0
+
+
+if __name__ == "__main__": raise SystemExit(main())
