@@ -20,10 +20,13 @@ from src.evaluation.m18_v2_provider_diagnostics import (
     M18V2ProviderDiagnostic, M18V2ProviderExecutionFailure,
     M18V2SystematicProviderStop, M18V2SystematicProviderStopEvent,
 )
-from src.evaluation.m18_shared_provider import M18SharedProviderConfiguration
+from src.evaluation.m18_shared_provider import (
+    M18SharedDirectProvider, M18SharedMINDProvider, M18SharedProviderClient,
+    M18SharedProviderConfiguration,
+)
 from src.evaluation.m18_task_generation import M18Cohort, M18Difficulty, M18Namespace
 from src.evaluation.m18_v2_semantics import M18V2Case, M18V2PublicCase, generate_m18_v2_case
-from src.evaluation.m18_v3_runtime import M18V3DirectAdapter, M18V3MINDAdapter
+from src.evaluation.m18_v3_runtime import M18V3DirectAdapter, M18V3MINDAdapter, M18V3SharedExecutionHarness
 from src.evaluation.m18_v3_semantics import (
     M18V3Case, M18_V3_BUDGET_ID, M18_V3_ENVIRONMENT_ID, M18_V3_EVALUATOR_ID,
     M18_V3_RUNTIME_ID,
@@ -175,7 +178,7 @@ class M18PowerCalibrationProvenance:
 class M18PowerCalibrationRecord:
     provenance: M18PowerCalibrationProvenance; terminal: str; evaluator_outcome: str | None; integrity_hash: str = ""
     def __post_init__(self) -> None:
-        if self.terminal not in {"success", "failure", "provider_failure"}: raise ValueError("invalid calibration terminal")
+        if not isinstance(self.terminal, str) or not self.terminal: raise ValueError("invalid calibration terminal")
         protected = {"provenance": self.provenance.to_dict(), "terminal": self.terminal, "evaluator_outcome": self.evaluator_outcome}
         digest = canonical_hash(protected)
         if not self.integrity_hash: object.__setattr__(self, "integrity_hash", digest)
@@ -324,16 +327,28 @@ class M18PowerCalibrationRunner:
             if len(self.plan.bridge()) != 480 or outcome.valid != 0 or outcome.missing != 480 or outcome.formal_records != 0 or collisions or self.store.systematic_stop() is not None:
                 raise M18PowerCalibrationPreflightError("calibration preflight blocked")
         return outcome
-    def execute(self, *, provider: Callable[[M18PowerCalibrationEpisode], tuple[str, str | None]], dispatches: Mapping[str, M18PowerCalibrationDispatch] | None = None, provider_configuration: M18SharedProviderConfiguration | None = None, limit: int | None = None, after_persist: Callable[[M18PowerCalibrationRecord], None] | None = None, historical_ids: Iterable[str] | None = None) -> tuple[M18PowerCalibrationRecord, ...]:
+    @staticmethod
+    def _native_result(episode: M18PowerCalibrationEpisode, client: M18SharedProviderClient):
+        """The only execution path: native adapter, environment, evaluator, and runtime."""
+        if not isinstance(client, M18SharedProviderClient):
+            raise M18PowerCalibrationPreflightError("shared provider client required")
+        provider = M18SharedMINDProvider(client) if episode.identity.comparator_id == "mind_lite_v11" else M18SharedDirectProvider(client)
+        adapter = episode.adapter_type(provider)
+        return M18V3SharedExecutionHarness().dry_run(episode.case, adapter)
+
+    def execute(self, *, provider_client: M18SharedProviderClient, dispatches: Mapping[str, M18PowerCalibrationDispatch] | None = None, limit: int | None = None, after_persist: Callable[[M18PowerCalibrationRecord], None] | None = None, historical_ids: Iterable[str] | None = None) -> tuple[M18PowerCalibrationRecord, ...]:
         self._validate_dispatches(dispatches)
+        self._validate_provider_configuration(provider_client.configuration if isinstance(provider_client, M18SharedProviderClient) else None)
         if self.store.systematic_stop() is not None: raise M18V2SystematicProviderStop(self.store.systematic_stop())
         # The initial execution is the real-execution admission boundary. A
         # resume derives work solely from admitted canonical records.
-        if not self.store.records(): self.preflight(require_empty=True, historical_ids=historical_ids, provider_configuration=provider_configuration)
+        if not self.store.records(): self.preflight(require_empty=True, historical_ids=historical_ids, provider_configuration=provider_client.configuration)
         completed=[]; evidence={}
         for expected in self.store.missing()[:limit]:
             episode = self.plan.resolve(expected)
-            try: terminal, outcome=provider(episode); row=M18PowerCalibrationRecord(expected, terminal, outcome)
+            try:
+                result = self._native_result(episode, provider_client)
+                row=M18PowerCalibrationRecord(expected, result.terminal, result.evaluator_outcome)
             except M18V2ProviderExecutionFailure as error:
                 # Diagnostics never cross into result records; only typed stop evidence does.
                 diagnostic=error.diagnostic; row=M18PowerCalibrationRecord(expected, "provider_failure", None)
