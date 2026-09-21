@@ -1,24 +1,39 @@
 # DR-M18 Power Calibration Execution
 
-## Authorization check
+## Completed calibration
 
-Issue #199 explicitly authorizes real calibration execution for `m18_power_calibration_v1`. The implementation baseline is `9c4a3956765ee2ff13ab5fdaf96beacc7b271714`; `HEAD` and `origin/main` match it. The canonical provider configuration hash was read without exposing credentials: `0f251e14722603e6e39416374467a3598cd72e1d28673e60daf8440dd6115ee2`.
+Issue #199 executed the authorized native M18 power-calibration condition on
+`ff0083f87b457d8535e904932cca8e62097496d1`. Initial preflight was
+`480/0/480/0/0/0`; final disk reconciliation was `480/480/0/0/0/0`.
+The 480 admitted records cover 48 clusters, 240 complete MIND/Direct paired
+cells, and 240 runs per comparator. The canonical digest is
+`872edfe1d9032cd5e92270cd6893f2fa6d88243050395919f6a50be91f2dd558`.
+Authorization followed Issue #205's independent native-harness verification.
 
-## Immediate preflight
+All records are `answer_submitted` / `success`. No provider failure or
+systematic provider stop was persisted. The record schema does not retain
+logical calls, transport attempts, retries, token use, latency, returned
+model, or cache telemetry; these are UNAVAILABLE rather than zero.
 
-The runner's preflight returned expected 480, valid 0, missing 480, duplicates 0, invalid 0, unexpected 0, and formal records 0. The provider credential was present. No provider operation was invoked.
+## Frozen power mapping
 
-## Stop reason
+Calibration-only estimates are MIND `1.0`, Direct `1.0`, `p10=0.0`, and
+`p01=0.0`, with all empirical covariance components zero and correlations
+undefined. The mandatory zero-discordance fallback gives a 97.5% Wilson upper
+total-discordance bound of `0.01575391994155881` over 240 pairs. Since this is
+incompatible with the frozen +0.10 MRE under the degenerate marginal bounds,
+the prescribed scenario envelope is empty. The mechanical mapping therefore
+fails closed: no formal N is selected and no simulation is run.
 
-The committed `M18PowerCalibrationRunner.execute` requires an injected provider callable which receives only calibration provenance and returns an already-derived terminal/outcome pair. Its plan produces case IDs and seed strings but no executable `M18V3Case` fixtures, and the runner does not construct the frozen shared-provider client or corrected MIND/Direct adapters. Its identity's `provider_config_id` is a label, not the frozen configuration digest. There is therefore no authorized, reproducible path from a planned logical ID to an actual corrected comparator/evaluator episode. Creating one now would be an in-execution patch prohibited by Issue #199.
+The power-mapping input package is complete as a fail-closed package. Formal
+execution remains unauthorized. Historical evidence is unchanged and formal
+records remain zero.
 
-## Non-actions and state
+## Lifecycle correction and final validation
 
-- Provider calls: 0
-- Calibration records created: 0
-- Formal records created: 0
-- Calibration result-set digest: unavailable; no admitted records
-- Nuisance estimates/power mapping: unavailable; no calibration outcomes
-- Formal execution: not authorized
-
-No source, test, runtime, comparator, design, provider configuration, or statistical artifact was changed.
+Issue #206 resolved the stale phase-specific test expectation by retaining an
+explicit temporary empty-store guard and adding exact completed-store
+reconciliation. It did not invoke the provider or rerun a calibration ID.
+Focused validation passed 11 tests in 112.446s; full unittest passed 715 tests
+in 710.461s; pytest passed 715 tests in 428.13s; and `git diff --check`
+passed.
