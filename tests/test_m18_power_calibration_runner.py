@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from src.evaluation.m18_power_calibration_runner import (
@@ -12,6 +13,7 @@ from src.evaluation.m18_v2_provider_diagnostics import (
 )
 from src.evaluation.m18_shared_provider import M18SharedProviderConfiguration
 from src.evaluation.m18_shared_provider import M18SharedProviderClient
+from src.evaluation.m18_task_generation import canonical_hash
 from src.evaluation.m18_v3_semantics import M18_V3_BUDGET_ID, M18_V3_ENVIRONMENT_ID, M18_V3_EVALUATOR_ID, M18_V3_RUNTIME_ID
 from src.evaluation.m18_v2_pilot_runner import M18V2PilotIntegrityError
 
@@ -58,7 +60,28 @@ class M18PowerCalibrationRunnerTests(unittest.TestCase):
             self.assertEqual((480, 0, 480, 0, 0, 0), tuple(runner.preflight().__dict__[k] for k in ("expected", "valid", "missing", "duplicates", "invalid", "unexpected")))
             done = runner.execute(provider_client=self.client(), dispatches=self.dispatches())
             self.assertEqual(480, len(done)); self.assertEqual((480, 480, 0), (runner.preflight().expected, runner.preflight().valid, runner.preflight().missing))
-            self.assertEqual(0, sum(1 for _ in (self.root / "evaluation/m18/results/m18_power_calibration_v1/pilot").glob("*.json")) if (self.root / "evaluation/m18/results/m18_power_calibration_v1/pilot").exists() else 0)
+
+    def test_pre_execution_empty_store_guard_remains_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = M18PowerCalibrationRunner.from_repository(self.root, result_root=Path(directory))
+            self.assertEqual((480, 0, 480, 0, 0, 0), tuple(runner.preflight(require_empty=True, provider_configuration=self.config()).__dict__[key] for key in ("expected", "valid", "missing", "duplicates", "invalid", "unexpected")))
+            runner.execute(provider_client=self.client(), dispatches=self.dispatches(), limit=1)
+            with self.assertRaises(M18PowerCalibrationPreflightError):
+                runner.preflight(require_empty=True, provider_configuration=self.config())
+
+    def test_completed_production_store_reconciles_exactly(self):
+        runner = M18PowerCalibrationRunner.from_repository(self.root)
+        preflight = runner.preflight()
+        self.assertEqual((480, 480, 0, 0, 0, 0, 0), tuple(preflight.__dict__[key] for key in ("expected", "valid", "missing", "duplicates", "invalid", "unexpected", "formal_records")))
+        records = runner.store.records()
+        self.assertEqual(480, len(records))
+        self.assertEqual({"mind_lite_v11": 240, "direct_tool_calling": 240}, Counter(record.provenance.identity.comparator_id for record in records))
+        self.assertEqual(48, len({record.provenance.identity.case_id for record in records}))
+        pairs = defaultdict(list)
+        for record in records: pairs[record.provenance.identity.paired_cell_key].append(record)
+        self.assertEqual(240, len(pairs))
+        self.assertTrue(all(len(pair) == 2 and {record.provenance.identity.comparator_id for record in pair} == {"mind_lite_v11", "direct_tool_calling"} for pair in pairs.values()))
+        self.assertEqual("872edfe1d9032cd5e92270cd6893f2fa6d88243050395919f6a50be91f2dd558", canonical_hash([record.to_dict() for record in sorted(records, key=lambda record: record.run_id)]))
 
     def test_missing_only_duplicate_and_tamper_rejection(self):
         with tempfile.TemporaryDirectory() as directory:
