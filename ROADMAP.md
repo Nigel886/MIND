@@ -845,6 +845,19 @@ separately reviewed capability-equivalent execution contract.
 
 ---
 
+# M18 — Advanced Agent Capability Evaluation
+
+**Status:** ✅ Completed
+
+The M18 prospective calibration and frozen formal-progression decision are
+complete. Calibration admitted 480 valid paired records; the frozen nuisance
+mapping produced no MRE-compatible scenario and no valid formal N. Formal
+execution was not performed and remains unauthorized. See
+`docs/evaluation/M18-Milestone-Closure.md` for the closure ledger and claim
+boundaries. This status does not define or begin M19.
+
+---
+
 # Current Development Focus
 
 **Current Version**
