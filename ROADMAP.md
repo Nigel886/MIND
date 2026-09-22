@@ -860,14 +860,15 @@ boundaries.
 
 # M19 — Adaptive Deliberation and Resource-Aware Control
 
-**Status:** 🟡 Specification
+**Status:** ✅ Completed
 
 M19 freezes a provider-neutral, non-executing capability contract for deciding
 whether a bounded runtime should continue reasoning, act, observe, replan,
 answer, or stop from immutable runtime, epistemic, and resource projections.
 It preserves the existing state, policy, action, execution, and evaluator
 boundaries. No M19 runtime implementation, provider interaction, benchmark,
-calibration, or formal execution is delivered by this specification phase.
+calibration, or formal execution is delivered by M19. It is a deterministic
+architectural capability, not a performance claim.
 
 The authoritative contract is
 `docs/specification/M19-Adaptive-Deliberation-Capability-Specification.md`.
@@ -884,7 +885,7 @@ The authoritative contract is
 
 **Current Milestone**
 
-> M19 — Adaptive Deliberation and Resource-Aware Control — Specification
+> M19 — Adaptive Deliberation and Resource-Aware Control — Completed
 
 ---
 
@@ -920,20 +921,20 @@ The authoritative contract is
 - ✅ M14 Phase 1 — Evaluation Foundation
 - ✅ M15 — LLM-enabled Cognitive Agent Runtime
 - ✅ M18 — Advanced Agent Capability Evaluation
+- ✅ M19 — Adaptive Deliberation and Resource-Aware Control
 
 ---
 
 **Upcoming**
 
 - 🟡 M16 — MIND-Lite Agent Quality Evaluation (Protocol Frozen; Benchmark Not Executed)
-- 🟡 M19 — Adaptive Deliberation and Resource-Aware Control (Specification)
 - 🔒 M14 Phase 2 — Agent Quality Benchmark Evaluation (Not Executed / Deferred)
 
 ---
 
 **Next Milestone**
 
-> M19 — Adaptive Deliberation and Resource-Aware Control (Specification)
+> M19 — Adaptive Deliberation and Resource-Aware Control (Completed)
 
 # Architecture Evolution
 
@@ -1164,7 +1165,7 @@ Current Version:
 
 Current Milestone:
 
-**M19 — Adaptive Deliberation and Resource-Aware Control (Specification)**
+**M19 — Adaptive Deliberation and Resource-Aware Control (Completed)**
 
 Maintained by:
 
