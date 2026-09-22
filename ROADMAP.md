@@ -854,7 +854,23 @@ complete. Calibration admitted 480 valid paired records; the frozen nuisance
 mapping produced no MRE-compatible scenario and no valid formal N. Formal
 execution was not performed and remains unauthorized. See
 `docs/evaluation/M18-Milestone-Closure.md` for the closure ledger and claim
-boundaries. This status does not define or begin M19.
+boundaries.
+
+---
+
+# M19 — Adaptive Deliberation and Resource-Aware Control
+
+**Status:** 🟡 Specification
+
+M19 freezes a provider-neutral, non-executing capability contract for deciding
+whether a bounded runtime should continue reasoning, act, observe, replan,
+answer, or stop from immutable runtime, epistemic, and resource projections.
+It preserves the existing state, policy, action, execution, and evaluator
+boundaries. No M19 runtime implementation, provider interaction, benchmark,
+calibration, or formal execution is delivered by this specification phase.
+
+The authoritative contract is
+`docs/specification/M19-Adaptive-Deliberation-Capability-Specification.md`.
 
 ---
 
@@ -868,7 +884,7 @@ boundaries. This status does not define or begin M19.
 
 **Current Milestone**
 
-> M16 — MIND-Lite Agent Quality Evaluation — Protocol Frozen
+> M19 — Adaptive Deliberation and Resource-Aware Control — Specification
 
 ---
 
@@ -903,19 +919,21 @@ boundaries. This status does not define or begin M19.
 - ✅ M13 — LLM-Integrated Meta-Inference
 - ✅ M14 Phase 1 — Evaluation Foundation
 - ✅ M15 — LLM-enabled Cognitive Agent Runtime
+- ✅ M18 — Advanced Agent Capability Evaluation
 
 ---
 
 **Upcoming**
 
 - 🟡 M16 — MIND-Lite Agent Quality Evaluation (Protocol Frozen; Benchmark Not Executed)
+- 🟡 M19 — Adaptive Deliberation and Resource-Aware Control (Specification)
 - 🔒 M14 Phase 2 — Agent Quality Benchmark Evaluation (Not Executed / Deferred)
 
 ---
 
 **Next Milestone**
 
-> M16 — MIND-Lite Agent Quality Evaluation (Protocol Frozen; Benchmark Not Executed)
+> M19 — Adaptive Deliberation and Resource-Aware Control (Specification)
 
 # Architecture Evolution
 
@@ -1146,7 +1164,7 @@ Current Version:
 
 Current Milestone:
 
-**M16 — Agent Quality Evaluation Protocol Frozen**
+**M19 — Adaptive Deliberation and Resource-Aware Control (Specification)**
 
 Maintained by:
 
