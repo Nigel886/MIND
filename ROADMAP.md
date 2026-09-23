@@ -875,6 +875,18 @@ The authoritative contract is
 
 ---
 
+# M20 — Adaptive Deliberation Empirical Evaluation
+
+**Status:** 🟡 Specification
+
+M20 prospectively defines whether adaptive deliberation changes resource
+efficiency while preserving prospectively defined task quality under a frozen
+MIND-Adaptive versus MIND-Fixed contrast. It begins with claim and design
+constraints only; no M20 benchmark, provider execution, pilot, formal run, or
+statistical result is delivered by this phase.
+
+---
+
 # Current Development Focus
 
 **Current Version**
@@ -885,7 +897,7 @@ The authoritative contract is
 
 **Current Milestone**
 
-> M19 — Adaptive Deliberation and Resource-Aware Control — Completed
+> M20 — Adaptive Deliberation Empirical Evaluation — Specification
 
 ---
 
@@ -928,13 +940,14 @@ The authoritative contract is
 **Upcoming**
 
 - 🟡 M16 — MIND-Lite Agent Quality Evaluation (Protocol Frozen; Benchmark Not Executed)
+- 🟡 M20 — Adaptive Deliberation Empirical Evaluation (Specification)
 - 🔒 M14 Phase 2 — Agent Quality Benchmark Evaluation (Not Executed / Deferred)
 
 ---
 
 **Next Milestone**
 
-> M19 — Adaptive Deliberation and Resource-Aware Control (Completed)
+> M20 — Adaptive Deliberation Empirical Evaluation (Specification)
 
 # Architecture Evolution
 
@@ -1165,7 +1178,7 @@ Current Version:
 
 Current Milestone:
 
-**M19 — Adaptive Deliberation and Resource-Aware Control (Completed)**
+**M20 — Adaptive Deliberation Empirical Evaluation (Specification)**
 
 Maintained by:
 
