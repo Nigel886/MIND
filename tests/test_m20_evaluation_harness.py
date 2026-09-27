@@ -9,7 +9,8 @@ from src.evaluation.m20_harness import (
     M20AdaptiveAdapter, M20Case, M20Condition, M20ConditionRegistry,
     M20EnvironmentResult, M20EvidenceStore, M20ExecutionSpec, M20FixedAdapter,
     M20Harness, M20Manifest, M20Namespace, M20Outcome, M20PrivateCase,
-    M20Proposal, M20ProposalKind, M20ProviderConfiguration, M20PublicCase,
+    M20PairingMetadata, M20Proposal, M20ProposalKind, M20ProviderConfiguration, M20PublicCase,
+    M20ResourceCeiling, M20ResourceDelta, M20ResourceTelemetry,
     M20_FIXED_SCHEDULE_ID, canonical_hash,
 )
 
@@ -51,7 +52,12 @@ def case() -> M20Case:
 
 
 def manifest() -> M20Manifest:
-    return M20Manifest("m20_suite_v1", "m20_environment_v1", "m20_evaluator_v1", (case(),), "m20_generation_v1")
+    current = case()
+    ceiling = M20ResourceCeiling("m20_ceiling_v1", 8, 8, 8, 8)
+    pairing = M20PairingMetadata(current.public.case_id, current.cluster_id, current.payload_digest,
+                                 current.environment_id, current.evaluator_id, ceiling.identity)
+    return M20Manifest("m20_suite_v1", "m20_environment_v1", "m20_evaluator_v1", (current,),
+                       "m20_generation_v1", (pairing,), ceiling)
 
 
 def provider_hash() -> str:
@@ -60,7 +66,10 @@ def provider_hash() -> str:
 
 def spec(condition=M20Condition.MIND_FIXED, namespace=M20Namespace.FAKE, replacement_of=None):
     current = manifest()
-    return M20ExecutionSpec(current.suite_id, case().public.case_id, 1, condition, namespace, current.digest, provider_hash(), replacement_of)
+    item = case()
+    return M20ExecutionSpec(current.suite_id, item.public.case_id, 1, condition, namespace, current.digest,
+                            provider_hash(), item.cluster_id, item.payload_digest, item.environment_id,
+                            item.evaluator_id, current.resource_ceiling.identity, replacement_of)
 
 
 class M20HarnessTest(unittest.TestCase):
@@ -86,11 +95,14 @@ class M20HarnessTest(unittest.TestCase):
             self.assertFalse(hasattr(adapter, forbidden))
 
     def test_manifest_duplicate_and_identity_mismatch_fail_closed(self):
+        current = manifest()
         with self.assertRaises(ValueError):
-            M20Manifest("m20_suite_v1", "m20_environment_v1", "m20_evaluator_v1", (case(), case()), "g")
+            M20Manifest("m20_suite_v1", "m20_environment_v1", "m20_evaluator_v1", (case(), case()),
+                        "g", current.pairing, current.resource_ceiling)
         wrong = M20Case(case().public, case().private, "other_environment", "m20_evaluator_v1")
         with self.assertRaises(ValueError):
-            M20Manifest("m20_suite_v1", "m20_environment_v1", "m20_evaluator_v1", (wrong,), "g")
+            M20Manifest("m20_suite_v1", "m20_environment_v1", "m20_evaluator_v1", (wrong,), "g",
+                        current.pairing, current.resource_ceiling)
 
     def test_reachability_is_private_and_public_contract_only(self):
         harness = self.harness()
@@ -110,6 +122,7 @@ class M20HarnessTest(unittest.TestCase):
         record = self.harness().run(spec(M20Condition.MIND_ADAPTIVE), M20AdaptiveAdapter(provider))
         self.assertEqual(record.outcome, M20Outcome.FAILURE_OR_INCORRECT)
         self.assertEqual(record.adapter_id, "m20_m19_adaptive_adapter_v1")
+        self.assertEqual(provider.proposals, [])
 
     def test_invalid_and_infrastructure_outcomes_remain_typed(self):
         invalid = self.harness().run(spec(), M20FixedAdapter(QueueProvider([M20Proposal(M20ProposalKind.ACT, "missing")])))
@@ -139,13 +152,17 @@ class M20HarnessTest(unittest.TestCase):
     def test_formal_namespace_and_manifest_mismatch_are_guarded(self):
         with self.assertRaises(PermissionError):
             self.harness().preflight(spec(namespace=M20Namespace.FORMAL))
-        invalid = M20ExecutionSpec("wrong", case().public.case_id, 1, M20Condition.MIND_FIXED,
-                                   M20Namespace.FAKE, manifest().digest, provider_hash())
+        item = case(); current = manifest()
+        invalid = M20ExecutionSpec("wrong", item.public.case_id, 1, M20Condition.MIND_FIXED,
+                                   M20Namespace.FAKE, current.digest, provider_hash(), item.cluster_id,
+                                   item.payload_digest, item.environment_id, item.evaluator_id,
+                                   current.resource_ceiling.identity)
         with self.assertRaises(Exception):
             self.harness().preflight(invalid)
-        wrong_provider = M20ExecutionSpec(manifest().suite_id, case().public.case_id, 1,
+        wrong_provider = M20ExecutionSpec(current.suite_id, item.public.case_id, 1,
                                            M20Condition.MIND_FIXED, M20Namespace.FAKE,
-                                           manifest().digest, "a" * 64)
+                                           current.digest, "a" * 64, item.cluster_id, item.payload_digest,
+                                           item.environment_id, item.evaluator_id, current.resource_ceiling.identity)
         with self.assertRaises(Exception):
             self.harness().preflight(wrong_provider)
 
@@ -164,6 +181,26 @@ class M20HarnessTest(unittest.TestCase):
             self.assertEqual(len(store.records()), 1)
             with self.assertRaises(PermissionError):
                 M20EvidenceStore(Path(directory) / "formal", manifest(), M20Namespace.FORMAL)
+
+    def test_pairing_delta_retry_and_partial_lifecycle_fail_closed(self):
+        current = manifest(); harness = self.harness(); item = case()
+        bad = M20ExecutionSpec(current.suite_id, item.public.case_id, 1, M20Condition.MIND_FIXED,
+                               M20Namespace.FAKE, current.digest, provider_hash(), "wrong_cluster",
+                               item.payload_digest, item.environment_id, item.evaluator_id,
+                               current.resource_ceiling.identity)
+        with self.assertRaises(Exception):
+            harness.preflight(bad)
+        with TemporaryDirectory() as directory:
+            store = M20EvidenceStore(Path(directory), current, M20Namespace.FAKE)
+            zero = M20ResourceTelemetry()
+            store.mark_partial(spec(), zero)
+            self.assertEqual(store.reconcile((spec(),))["incomplete"], 1)
+            store.resume_partial(spec())
+            self.assertEqual(store.reconcile((spec(),))["missing"], 1)
+            charged = M20ResourceTelemetry(reasoning_steps=1, deltas=(M20ResourceDelta("r", reasoning_steps=1),))
+            store.mark_partial(spec(), charged)
+            with self.assertRaises(Exception):
+                store.resume_partial(spec())
 
     def test_pair_identity_condition_uniqueness_and_provenance(self):
         fixed = spec(M20Condition.MIND_FIXED)
