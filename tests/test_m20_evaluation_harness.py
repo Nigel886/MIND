@@ -119,10 +119,36 @@ class M20HarnessTest(unittest.TestCase):
 
     def test_adaptive_binding_uses_same_official_evaluator(self):
         provider = QueueProvider([M20Proposal(M20ProposalKind.ACT, "step"), M20Proposal(M20ProposalKind.ANSWER, payload=0)])
-        record = self.harness().run(spec(M20Condition.MIND_ADAPTIVE), M20AdaptiveAdapter(provider))
+        adapter = M20AdaptiveAdapter(provider)
+        record = self.harness().run(spec(M20Condition.MIND_ADAPTIVE), adapter)
         self.assertEqual(record.outcome, M20Outcome.FAILURE_OR_INCORRECT)
         self.assertEqual(record.adapter_id, "m20_m19_adaptive_adapter_v1")
+        self.assertEqual(adapter.native_decision_count, 2)
+        self.assertEqual(record.resource_pre["allocation_identity"], record.resource_post["allocation_identity"])
         self.assertEqual(provider.proposals, [])
+
+    def test_pair_admission_and_native_bypass_fail_closed(self):
+        harness = self.harness()
+        fixed, adaptive = spec(), spec(M20Condition.MIND_ADAPTIVE)
+        harness.admit_pair(fixed, adaptive)
+        with self.assertRaises(Exception):
+            harness.admit_pair(fixed, fixed)
+        corrupted = M20ExecutionSpec(manifest().suite_id, case().public.case_id, 2, M20Condition.MIND_ADAPTIVE,
+                                     M20Namespace.FAKE, manifest().digest, provider_hash(), case().cluster_id,
+                                     case().payload_digest, case().environment_id, case().evaluator_id,
+                                     manifest().resource_ceiling.identity)
+        with self.assertRaises(Exception):
+            harness.admit_pair(fixed, corrupted)
+        with self.assertRaises(Exception):
+            M20AdaptiveAdapter(QueueProvider([])).propose(case().public, {"value": 0})
+
+    def test_resource_state_mismatch_prevents_finalization(self):
+        current = manifest()
+        initial = current.resource_ceiling.resource_state("audit")
+        changed = initial.consume(__import__("src.core.resource_accounting", fromlist=["ResourceDimension"]).ResourceDimension.REASONING_STEP, 1, "audit")
+        telemetry = M20ResourceTelemetry()
+        with self.assertRaises(Exception):
+            telemetry.reconcile(current.resource_ceiling, initial, changed)
 
     def test_invalid_and_infrastructure_outcomes_remain_typed(self):
         invalid = self.harness().run(spec(), M20FixedAdapter(QueueProvider([M20Proposal(M20ProposalKind.ACT, "missing")])))
@@ -196,7 +222,8 @@ class M20HarnessTest(unittest.TestCase):
             store.mark_partial(spec(), zero)
             self.assertEqual(store.reconcile((spec(),))["incomplete"], 1)
             store.resume_partial(spec())
-            self.assertEqual(store.reconcile((spec(),))["missing"], 1)
+            self.assertTrue((Path(directory) / (spec().execution_id + ".partial.resolved.json")).exists())
+            self.assertEqual(store.reconcile((spec(),))["missing"], 0)
             charged = M20ResourceTelemetry(reasoning_steps=1, deltas=(M20ResourceDelta("r", reasoning_steps=1),))
             store.mark_partial(spec(), charged)
             with self.assertRaises(Exception):

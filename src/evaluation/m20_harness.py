@@ -357,8 +357,17 @@ class M20AdaptiveAdapter:
         self._provider = provider
         self.native_decision_count = 0
 
-    def propose(self, public_case: M20PublicCase, public_state: Mapping[str, Any]) -> M20Proposal:
-        """Exercise the native M19 policy and runtime before public proposal."""
+    def native_propose(self, public_case: M20PublicCase, public_state: Mapping[str, Any],
+                       resources: ResourceState) -> tuple[M20Proposal, object]:
+        """The only Adaptive proposal path: native M19 admits the provider call."""
+        if not isinstance(resources, ResourceState):
+            raise TypeError("Adaptive execution requires the harness ResourceState")
+        proposal: M20Proposal | None = None
+
+        def observe() -> None:
+            nonlocal proposal
+            proposal = self._provider.propose(public_case, public_state)
+
         available = EpistemicSignal(SignalAvailability.AVAILABLE, 1.0, SignalSource.RUNTIME_DERIVED, "m20_fake", "v1")
         deliberation = DeliberationState(
             "m20:" + public_case.case_id,
@@ -366,22 +375,21 @@ class M20AdaptiveAdapter:
             FailureRecoveryProjection((), "m19_history_v1", "m20_history"),
             "m19_deliberation_v1", "m20_deliberation",
         )
-        resources = ResourceState(tuple(ResourceAllocation(dimension, 2) for dimension in ResourceDimension),
-                                  "m20_native_adaptive", "m19_resource_v1", "m20_native_initial")
         projection = MetaControlRuntimeProjection("m20:" + public_case.case_id, RuntimeTerminalState.ACTIVE,
-                                                  False, True, False, False)
+                                                  False, False, True, False)
         config = MetaControlPolicyConfig("m19_policy_v1", "m19_formalism_v1", 0, 0, 0, 0, 0, 0, 1)
         decision = self.policy.decide(MetaControlPolicyInput(deliberation, resources, projection), config)
         runtime = MetaControlRuntimeState(deliberation, resources, MetaControlRuntimePhase.ACTIVE, "m20_native_initial")
         result = MetaControlRuntimeIntegrator.execute(
-            decision, runtime, MetaControlExecutionContext("m20_native_execute", execute_action=lambda: None,
-                                                            acquire_observation=lambda: None,
-                                                            advance_reasoning=lambda: None, replan=lambda: None),
+            decision, runtime, MetaControlExecutionContext("m20_native_execute", acquire_observation=observe),
         )
-        if result.outcome_code != "executed":
+        if result.outcome_code != "executed" or proposal is None:
             raise M20IntegrityError("native M19 adaptive execution rejected")
         self.native_decision_count += 1
-        return self._provider.propose(public_case, public_state)
+        return proposal, result
+
+    def propose(self, public_case: M20PublicCase, public_state: Mapping[str, Any]) -> M20Proposal:
+        raise M20IntegrityError("Adaptive proposals must traverse the harness-owned native M19 path")
 
 
 class M20FixedAdapter:
@@ -472,7 +480,8 @@ class M20ResourceTelemetry:
                ("reasoning_steps", "tool_attempts", "provider_interactions", "decision_cycles", "provider_transport_attempts")):
             raise ValueError("resource counts must be non-negative ints")
 
-    def reconcile(self, ceiling: M20ResourceCeiling) -> None:
+    def reconcile(self, ceiling: M20ResourceCeiling, pre: ResourceState | None = None,
+                  post: ResourceState | None = None) -> None:
         totals = {
             "reasoning_steps": sum(item.reasoning_steps for item in self.deltas),
             "tool_attempts": sum(item.tool_attempts for item in self.deltas),
@@ -483,6 +492,17 @@ class M20ResourceTelemetry:
             raise M20IntegrityError("resource delta total mismatch")
         if any(totals[key] > getattr(ceiling, key) for key in totals):
             raise M20IntegrityError("resource ceiling exceeded")
+        if (pre is None) != (post is None):
+            raise M20IntegrityError("resource state reconciliation requires pre and post")
+        if pre is not None and post is not None:
+            if pre.allocation_identity != post.allocation_identity or pre.version != post.version:
+                raise M20IntegrityError("resource state identity changed")
+            expected = {ResourceDimension.REASONING_STEP: totals["reasoning_steps"],
+                        ResourceDimension.TOOL_ATTEMPT: totals["tool_attempts"],
+                        ResourceDimension.PROVIDER_INTERACTION: totals["provider_interactions"]}
+            for dimension, amount in expected.items():
+                if post.allocation(dimension).consumed - pre.allocation(dimension).consumed != amount:
+                    raise M20IntegrityError("resource state/delta mismatch")
         logical = {item.logical_operation_id for item in self.retries}
         if self.provider_transport_attempts != len(self.retries) or any(
             sum(item.logical_operation_id == operation for item in self.retries if item.owner is M20RetryOwner.PROVIDER_CLIENT) < 1
@@ -502,6 +522,8 @@ class M20ExecutionRecord:
     evaluator_id: str
     adapter_id: str
     provenance: Mapping[str, str]
+    resource_pre: Mapping[str, Any] | None = None
+    resource_post: Mapping[str, Any] | None = None
     replacement_reason: str | None = None
     schema: str = M20_RECORD_SCHEMA
 
@@ -518,6 +540,7 @@ class M20ExecutionRecord:
                 "outcome": self.outcome.value, "telemetry": asdict(self.telemetry),
                 "environment_id": self.environment_id, "evaluator_id": self.evaluator_id,
                 "adapter_id": self.adapter_id, "provenance": dict(self.provenance),
+                "resource_pre": dict(self.resource_pre or {}), "resource_post": dict(self.resource_post or {}),
                 "replacement_reason": self.replacement_reason, "schema": self.schema}
 
     @property
@@ -581,13 +604,15 @@ class M20EvidenceStore:
         if any((telemetry.reasoning_steps, telemetry.tool_attempts, telemetry.provider_interactions,
                 telemetry.decision_cycles, telemetry.provider_transport_attempts)):
             raise M20IntegrityError("committed partial execution cannot be resumed by guessing")
-        path.unlink()
+        # Preserve the interruption evidence; a resumed episode may never erase
+        # the fact that it was interrupted before committing a resource.
+        path.replace(self.root / (spec.execution_id + ".partial.resolved.json"))
 
     def records(self) -> tuple[dict[str, Any], ...]:
         result: list[dict[str, Any]] = []
         seen: set[str] = set()
         for path in sorted(self.root.glob("*.json")):
-            if path.name == "manifest.json" or path.name.endswith(".partial.json"):
+            if path.name == "manifest.json" or path.name.endswith(".partial.json") or path.name.endswith(".partial.resolved.json"):
                 continue
             value = json.loads(path.read_text(encoding="utf-8"))
             if value.get("execution_id") in seen or path.stem != value.get("execution_id"):
@@ -606,8 +631,9 @@ class M20EvidenceStore:
         ids = self.completed_ids()
         expected_ids = {item.execution_id for item in expected}
         partial_ids = {path.name.removesuffix(".partial.json") for path in self.root.glob("*.partial.json")}
+        resolved_ids = {path.name.removesuffix(".partial.resolved.json") for path in self.root.glob("*.partial.resolved.json")}
         return {"expected": len(expected_ids), "completed": len(ids & expected_ids),
-                "missing": len(expected_ids - ids - partial_ids), "incomplete": len(partial_ids), "invalid": 0,
+                "missing": len(expected_ids - ids - partial_ids - resolved_ids), "incomplete": len(partial_ids), "invalid": 0,
                 "duplicates": 0, "replacement_linked": sum(item.replacement_of is not None for item in expected),
                 "namespace_contamination": 0}
 
@@ -651,6 +677,17 @@ class M20Harness:
             raise M20IntegrityError("case reference witness is not reachable")
         return case
 
+    def admit_pair(self, first: M20ExecutionSpec, second: M20ExecutionSpec) -> tuple[M20Case, M20Case]:
+        """Canonical paired admission; callers cannot mark a pair valid manually."""
+        left, right = self.preflight(first), self.preflight(second)
+        if first.condition is second.condition:
+            raise M20IntegrityError("paired conditions must be distinct")
+        keys = ("suite_id", "case_id", "repetition", "cluster_id", "payload_digest", "environment_id",
+                "evaluator_id", "resource_ceiling_identity")
+        if any(getattr(first, key) != getattr(second, key) for key in keys):
+            raise M20IntegrityError("paired execution metadata mismatch")
+        return left, right
+
     def run(self, spec: M20ExecutionSpec, adapter: M20AdaptiveAdapter | M20FixedAdapter) -> M20ExecutionRecord:
         case = self.preflight(spec)
         binding = self.registry.binding(spec.condition)
@@ -661,8 +698,9 @@ class M20Harness:
         retries: list[M20RetryAttempt] = []
         counts = {"reasoning_steps": 0, "tool_attempts": 0, "provider_interactions": 0, "decision_cycles": 0}
         resources = self.manifest.resource_ceiling.resource_state(spec.execution_id)
+        initial_resources = resources
         recoverable = False
-        for _ in range(32):
+        for _ in range(self.manifest.resource_ceiling.decision_cycles):
             if isinstance(adapter, M20FixedAdapter):
                 if recoverable:
                     resources = resources.consume(ResourceDimension.REASONING_STEP, 1, "replan")
@@ -670,28 +708,35 @@ class M20Harness:
                 resources = resources.consume(ResourceDimension.REASONING_STEP, 1, "reason")
                 counts["reasoning_steps"] += 1; deltas.append(M20ResourceDelta("reason", reasoning_steps=1))
             try:
-                proposal = adapter.propose(case.public, state)
+                if isinstance(adapter, M20AdaptiveAdapter):
+                    proposal, native_result = adapter.native_propose(case.public, state, resources)
+                    resources = native_result.state.resource_state
+                    counts["provider_interactions"] += 1; counts["decision_cycles"] += 1
+                    deltas.append(M20ResourceDelta("native:" + resources.transition_identity,
+                                                    provider_interactions=1, decision_cycles=1))
+                else:
+                    proposal = adapter.propose(case.public, state)
+                    resources = resources.consume(ResourceDimension.PROVIDER_INTERACTION, 1, "proposal")
+                    counts["provider_interactions"] += 1; counts["decision_cycles"] += 1
+                    deltas.append(M20ResourceDelta("proposal", provider_interactions=1, decision_cycles=1))
             except Exception:
-                return self._record(spec, M20Outcome.PROVIDER_FAILURE, self._telemetry(counts, deltas, retries), binding.adapter_id)
-            resources = resources.consume(ResourceDimension.PROVIDER_INTERACTION, 1, "proposal")
-            counts["provider_interactions"] += 1; counts["decision_cycles"] += 1
-            deltas.append(M20ResourceDelta("proposal", provider_interactions=1, decision_cycles=1))
+                return self._record(spec, M20Outcome.PROVIDER_FAILURE, self._telemetry(counts, deltas, retries), binding.adapter_id, initial_resources, resources)
             logical = canonical_hash({"execution": spec.execution_id, "cycle": counts["decision_cycles"]})
             retries.append(M20RetryAttempt(logical, logical + ":0", 0, M20RetryOwner.PROVIDER_CLIENT, None, True))
             if proposal.kind is M20ProposalKind.ANSWER:
                 outcome = self.evaluator.evaluate(case, state, proposal.payload)
-                return self._record(spec, outcome, self._telemetry(counts, deltas, retries), binding.adapter_id)
+                return self._record(spec, outcome, self._telemetry(counts, deltas, retries), binding.adapter_id, initial_resources, resources)
             if proposal.action_id not in case.public.actions:
-                return self._record(spec, M20Outcome.INVALID_INTERACTION, self._telemetry(counts, deltas, retries), binding.adapter_id)
+                return self._record(spec, M20Outcome.INVALID_INTERACTION, self._telemetry(counts, deltas, retries), binding.adapter_id, initial_resources, resources)
             resources = resources.consume(ResourceDimension.TOOL_ATTEMPT, 1, "action")
             counts["tool_attempts"] += 1; deltas.append(M20ResourceDelta("action", tool_attempts=1))
             result = self.environment.apply(case.public, state, proposal)
             if result.infrastructure_failure:
-                return self._record(spec, M20Outcome.INFRASTRUCTURE_FAILURE, self._telemetry(counts, deltas, retries), binding.adapter_id)
+                return self._record(spec, M20Outcome.INFRASTRUCTURE_FAILURE, self._telemetry(counts, deltas, retries), binding.adapter_id, initial_resources, resources)
             state, recoverable = result.state, result.recoverable
             if result.terminal:
-                return self._record(spec, M20Outcome.FAILURE_OR_INCORRECT, self._telemetry(counts, deltas, retries), binding.adapter_id)
-        return self._record(spec, M20Outcome.INCOMPLETE, self._telemetry(counts, deltas, retries), binding.adapter_id)
+                return self._record(spec, M20Outcome.FAILURE_OR_INCORRECT, self._telemetry(counts, deltas, retries), binding.adapter_id, initial_resources, resources)
+        return self._record(spec, M20Outcome.INCOMPLETE, self._telemetry(counts, deltas, retries), binding.adapter_id, initial_resources, resources)
 
     @staticmethod
     def _telemetry(counts: Mapping[str, int], deltas: list[M20ResourceDelta],
@@ -711,12 +756,13 @@ class M20Harness:
                                 failed.spec.resource_ceiling_identity, failed.execution_id)
 
     def _record(self, spec: M20ExecutionSpec, outcome: M20Outcome, telemetry: M20ResourceTelemetry,
-                adapter_id: str) -> M20ExecutionRecord:
+                adapter_id: str, pre: ResourceState, post: ResourceState) -> M20ExecutionRecord:
         provenance = {"harness": M20_HARNESS_ID, "provenance_schema": M20_PROVENANCE_SCHEMA,
                       "suite": self.manifest.suite_id, "environment": self.manifest.environment_id,
                       "evaluator": self.manifest.evaluator_id, "condition": spec.condition.value,
                       "provider_hash": spec.provider_hash, "metrics": M20_METRIC_VERSION,
                       "protocol": M20_PROTOCOL_ID, "manifest": self.manifest.digest, "adapter": adapter_id}
-        telemetry.reconcile(self.manifest.resource_ceiling)
+        telemetry.reconcile(self.manifest.resource_ceiling, pre, post)
         return M20ExecutionRecord(spec.execution_id, spec.pair_id, spec, outcome, telemetry,
-                                  self.manifest.environment_id, self.manifest.evaluator_id, adapter_id, provenance)
+                                  self.manifest.environment_id, self.manifest.evaluator_id, adapter_id, provenance,
+                                  pre.to_dict(), post.to_dict())
