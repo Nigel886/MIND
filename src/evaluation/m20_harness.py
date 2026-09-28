@@ -70,7 +70,8 @@ class M20ProposalKind(str, Enum):
 
 class M20LifecycleState(str, Enum):
     NOT_STARTED = "not_started"
-    PARTIAL = "partial"
+    ZERO_COMMIT_PARTIAL = "zero_commit_partial"
+    CHARGED_PARTIAL = "charged_partial"
     COMPLETED = "completed"
     INVALID = "invalid"
 
@@ -319,6 +320,13 @@ class M20ProposalProvider(Protocol):
     def propose(self, public_case: M20PublicCase, public_state: Mapping[str, Any]) -> M20Proposal: ...
 
 
+class M20ProviderAttemptError(RuntimeError):
+    """Typed deterministic provider-boundary failure; provider client owns retry."""
+    def __init__(self, reason: str, retryable: bool = True) -> None:
+        super().__init__(reason)
+        self.reason, self.retryable = reason, retryable
+
+
 @dataclass(frozen=True)
 class M20ConditionBinding:
     condition: M20Condition
@@ -358,7 +366,7 @@ class M20AdaptiveAdapter:
         self.native_decision_count = 0
 
     def native_propose(self, public_case: M20PublicCase, public_state: Mapping[str, Any],
-                       resources: ResourceState) -> tuple[M20Proposal, object]:
+                       resources: ResourceState, provider_call: Any = None) -> tuple[M20Proposal, object]:
         """The only Adaptive proposal path: native M19 admits the provider call."""
         if not isinstance(resources, ResourceState):
             raise TypeError("Adaptive execution requires the harness ResourceState")
@@ -366,7 +374,8 @@ class M20AdaptiveAdapter:
 
         def observe() -> None:
             nonlocal proposal
-            proposal = self._provider.propose(public_case, public_state)
+            proposal = (provider_call() if provider_call is not None
+                        else self._provider.propose(public_case, public_state))
 
         available = EpistemicSignal(SignalAvailability.AVAILABLE, 1.0, SignalSource.RUNTIME_DERIVED, "m20_fake", "v1")
         deliberation = DeliberationState(
@@ -522,13 +531,16 @@ class M20ExecutionRecord:
     evaluator_id: str
     adapter_id: str
     provenance: Mapping[str, str]
+    cohort: str
+    lifecycle: M20LifecycleState = M20LifecycleState.COMPLETED
     resource_pre: Mapping[str, Any] | None = None
     resource_post: Mapping[str, Any] | None = None
     replacement_reason: str | None = None
     schema: str = M20_RECORD_SCHEMA
 
     def canonical(self) -> dict[str, Any]:
-        return {"execution_id": self.execution_id, "pair_id": self.pair_id,
+        return {"execution_id": self.execution_id, "pair_id": self.pair_id, "cohort": self.cohort,
+                "lifecycle": self.lifecycle.value,
                 "spec": {"suite_id": self.spec.suite_id, "case_id": self.spec.case_id,
                          "repetition": self.spec.repetition, "condition": self.spec.condition.value,
                          "namespace": self.spec.namespace.value, "manifest_digest": self.spec.manifest_digest,
@@ -585,6 +597,15 @@ class M20EvidenceStore:
             raise FileExistsError("completed execution already exists")
         self._atomic(path, {**record.canonical(), "digest": record.digest})
 
+    def lifecycle(self, spec: M20ExecutionSpec) -> M20LifecycleState:
+        if (self.root / (spec.execution_id + ".json")).exists():
+            return M20LifecycleState.COMPLETED
+        path = self.root / (spec.execution_id + ".partial.json")
+        if not path.exists():
+            return M20LifecycleState.NOT_STARTED
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return M20LifecycleState(value["lifecycle"])
+
     def mark_partial(self, spec: M20ExecutionSpec, telemetry: M20ResourceTelemetry) -> None:
         """Preserve interruption; continuation is allowed only with zero committed delta."""
         if spec.namespace is not self.namespace or spec.manifest_digest != self.manifest.digest:
@@ -592,7 +613,10 @@ class M20EvidenceStore:
         path = self.root / (spec.execution_id + ".partial.json")
         if path.exists() or (self.root / (spec.execution_id + ".json")).exists():
             raise FileExistsError("execution lifecycle already recorded")
-        self._atomic(path, {"lifecycle": M20LifecycleState.PARTIAL.value, "execution_id": spec.execution_id,
+        lifecycle = (M20LifecycleState.ZERO_COMMIT_PARTIAL if not any((telemetry.reasoning_steps, telemetry.tool_attempts,
+                     telemetry.provider_interactions, telemetry.decision_cycles, telemetry.provider_transport_attempts))
+                     else M20LifecycleState.CHARGED_PARTIAL)
+        self._atomic(path, {"lifecycle": lifecycle.value, "execution_id": spec.execution_id,
                             "spec": spec.execution_id, "telemetry": asdict(telemetry)})
 
     def resume_partial(self, spec: M20ExecutionSpec) -> None:
@@ -601,12 +625,28 @@ class M20EvidenceStore:
             return
         value = json.loads(path.read_text(encoding="utf-8"))
         telemetry = M20ResourceTelemetry(**value["telemetry"])
-        if any((telemetry.reasoning_steps, telemetry.tool_attempts, telemetry.provider_interactions,
+        if value["lifecycle"] != M20LifecycleState.ZERO_COMMIT_PARTIAL.value or any((telemetry.reasoning_steps, telemetry.tool_attempts, telemetry.provider_interactions,
                 telemetry.decision_cycles, telemetry.provider_transport_attempts)):
             raise M20IntegrityError("committed partial execution cannot be resumed by guessing")
         # Preserve the interruption evidence; a resumed episode may never erase
         # the fact that it was interrupted before committing a resource.
         path.replace(self.root / (spec.execution_id + ".partial.resolved.json"))
+
+    @staticmethod
+    def statistical_input(record: Mapping[str, Any]) -> dict[str, Any]:
+        """Fail-closed #221 schema projection from persisted canonical evidence."""
+        required = ("pair_id", "cohort", "lifecycle", "outcome", "telemetry", "spec", "provenance")
+        if any(key not in record for key in required):
+            raise M20IntegrityError("statistical evidence field missing")
+        spec, telemetry, provenance = record["spec"], record["telemetry"], record["provenance"]
+        fields = ("case_id", "repetition", "cluster_id", "condition", "replacement_of", "payload_digest",
+                  "environment_id", "evaluator_id", "resource_ceiling_identity")
+        if any(key not in spec for key in fields) or "provider_interactions" not in telemetry or "retries" not in telemetry:
+            raise M20IntegrityError("statistical execution evidence missing")
+        if "metrics" not in provenance or "protocol" not in provenance:
+            raise M20IntegrityError("statistical protocol evidence missing")
+        return {"pair_id": record["pair_id"], "cohort": record["cohort"], "outcome": record["outcome"],
+                "lifecycle": record["lifecycle"], "spec": spec, "telemetry": telemetry, "provenance": provenance}
 
     def records(self) -> tuple[dict[str, Any], ...]:
         result: list[dict[str, Any]] = []
@@ -637,6 +677,21 @@ class M20EvidenceStore:
                 "duplicates": 0, "replacement_linked": sum(item.replacement_of is not None for item in expected),
                 "namespace_contamination": 0}
 
+    @staticmethod
+    def reconstruct_pair(records: tuple[Mapping[str, Any], ...]) -> dict[str, Any]:
+        """Admit one persisted primary pair without relying on manifest objects."""
+        if len(records) != 2 or any("pair_id" not in item or "cohort" not in item for item in records):
+            raise M20IntegrityError("persisted pair evidence missing")
+        if len({item["pair_id"] for item in records}) != 1:
+            raise M20IntegrityError("persisted pair identity mismatch")
+        specs = [item.get("spec") for item in records]
+        keys = ("suite_id", "case_id", "repetition", "cluster_id", "payload_digest", "environment_id", "evaluator_id", "resource_ceiling_identity")
+        if any(not isinstance(spec, Mapping) for spec in specs) or any(any(spec[key] != specs[0][key] for spec in specs[1:]) for key in keys):
+            raise M20IntegrityError("persisted pair metadata mismatch")
+        if len({item["cohort"] for item in records}) != 1 or {spec["condition"] for spec in specs} != {M20Condition.MIND_ADAPTIVE.value, M20Condition.MIND_FIXED.value}:
+            raise M20IntegrityError("persisted pair condition/cohort mismatch")
+        return {"pair_id": records[0]["pair_id"], "cohort": records[0]["cohort"], "adaptive": next(item for item in records if item["spec"]["condition"] == M20Condition.MIND_ADAPTIVE.value), "fixed": next(item for item in records if item["spec"]["condition"] == M20Condition.MIND_FIXED.value)}
+
 
 class M20Harness:
     """Official adapter -> environment -> evaluator -> evidence path."""
@@ -646,6 +701,7 @@ class M20Harness:
         if environment.environment_id != manifest.environment_id or evaluator.evaluator_id != manifest.evaluator_id:
             raise M20IntegrityError("environment/evaluator identity mismatch")
         self.manifest, self.registry, self.environment, self.evaluator = manifest, registry, environment, evaluator
+        self._active_store: M20EvidenceStore | None = None
 
     def validate_reachability(self, case: M20Case) -> bool:
         state = self.environment.initial_public_state(case.public)
@@ -688,7 +744,46 @@ class M20Harness:
             raise M20IntegrityError("paired execution metadata mismatch")
         return left, right
 
-    def run(self, spec: M20ExecutionSpec, adapter: M20AdaptiveAdapter | M20FixedAdapter) -> M20ExecutionRecord:
+    @staticmethod
+    def _provider_attempt(adapter: Any, public: M20PublicCase, state: Mapping[str, Any],
+                          logical: str, retries: list[M20RetryAttempt]) -> M20Proposal:
+        """Single provider-client retry owner; evidence is emitted at each call."""
+        ceiling = getattr(adapter._provider, "retry_ceiling", 0)
+        for index in range(ceiling + 1):
+            try:
+                proposal = adapter._provider.propose(public, state)
+                if not isinstance(proposal, M20Proposal):
+                    raise M20ProviderAttemptError("malformed_response", False)
+                retries.append(M20RetryAttempt(logical, logical + f":{index}", index,
+                                                M20RetryOwner.PROVIDER_CLIENT,
+                                                None if index == 0 else "provider_retry", True))
+                return proposal
+            except M20ProviderAttemptError as error:
+                retries.append(M20RetryAttempt(logical, logical + f":{index}", index,
+                                                M20RetryOwner.PROVIDER_CLIENT, error.reason,
+                                                not error.retryable or index == ceiling))
+                if not error.retryable or index == ceiling:
+                    raise
+        raise M20IntegrityError("unreachable retry state")
+
+    def run(self, spec: M20ExecutionSpec, adapter: M20AdaptiveAdapter | M20FixedAdapter,
+            store: M20EvidenceStore | None = None, interrupt_before_execution: bool = False,
+            interrupt_after_commit: bool = False) -> M20ExecutionRecord:
+        """Canonical execution owns optional durable lifecycle persistence and resume."""
+        if store is not None:
+            state = store.lifecycle(spec)
+            if state is M20LifecycleState.COMPLETED:
+                for value in store.records():
+                    if value["execution_id"] == spec.execution_id:
+                        raise M20IntegrityError("completed canonical execution is immutable; reload through evidence")
+            if state is M20LifecycleState.CHARGED_PARTIAL:
+                raise M20IntegrityError("charged partial cannot be resumed safely")
+            if state is M20LifecycleState.ZERO_COMMIT_PARTIAL:
+                store.resume_partial(spec)
+            if interrupt_before_execution:
+                store.mark_partial(spec, M20ResourceTelemetry())
+                raise InterruptedError("canonical zero-commit interruption")
+        self._active_store = store
         case = self.preflight(spec)
         binding = self.registry.binding(spec.condition)
         if adapter.condition is not spec.condition or adapter.adapter_id != binding.adapter_id:
@@ -709,20 +804,27 @@ class M20Harness:
                 counts["reasoning_steps"] += 1; deltas.append(M20ResourceDelta("reason", reasoning_steps=1))
             try:
                 if isinstance(adapter, M20AdaptiveAdapter):
-                    proposal, native_result = adapter.native_propose(case.public, state, resources)
+                    logical = canonical_hash({"execution": spec.execution_id, "cycle": counts["decision_cycles"] + 1})
+                    proposal, native_result = adapter.native_propose(
+                        case.public, state, resources,
+                        lambda: self._provider_attempt(adapter, case.public, state, logical, retries))
                     resources = native_result.state.resource_state
                     counts["provider_interactions"] += 1; counts["decision_cycles"] += 1
                     deltas.append(M20ResourceDelta("native:" + resources.transition_identity,
                                                     provider_interactions=1, decision_cycles=1))
                 else:
-                    proposal = adapter.propose(case.public, state)
+                    logical = canonical_hash({"execution": spec.execution_id, "cycle": counts["decision_cycles"] + 1})
+                    proposal = self._provider_attempt(adapter, case.public, state, logical, retries)
                     resources = resources.consume(ResourceDimension.PROVIDER_INTERACTION, 1, "proposal")
                     counts["provider_interactions"] += 1; counts["decision_cycles"] += 1
                     deltas.append(M20ResourceDelta("proposal", provider_interactions=1, decision_cycles=1))
+                if interrupt_after_commit and store is not None:
+                    store.mark_partial(spec, self._telemetry(counts, deltas, retries))
+                    raise InterruptedError("canonical charged interruption")
+            except InterruptedError:
+                raise
             except Exception:
                 return self._record(spec, M20Outcome.PROVIDER_FAILURE, self._telemetry(counts, deltas, retries), binding.adapter_id, initial_resources, resources)
-            logical = canonical_hash({"execution": spec.execution_id, "cycle": counts["decision_cycles"]})
-            retries.append(M20RetryAttempt(logical, logical + ":0", 0, M20RetryOwner.PROVIDER_CLIENT, None, True))
             if proposal.kind is M20ProposalKind.ANSWER:
                 outcome = self.evaluator.evaluate(case, state, proposal.payload)
                 return self._record(spec, outcome, self._telemetry(counts, deltas, retries), binding.adapter_id, initial_resources, resources)
@@ -763,6 +865,10 @@ class M20Harness:
                       "provider_hash": spec.provider_hash, "metrics": M20_METRIC_VERSION,
                       "protocol": M20_PROTOCOL_ID, "manifest": self.manifest.digest, "adapter": adapter_id}
         telemetry.reconcile(self.manifest.resource_ceiling, pre, post)
-        return M20ExecutionRecord(spec.execution_id, spec.pair_id, spec, outcome, telemetry,
-                                  self.manifest.environment_id, self.manifest.evaluator_id, adapter_id, provenance,
-                                  pre.to_dict(), post.to_dict())
+        record = M20ExecutionRecord(spec.execution_id, spec.pair_id, spec, outcome, telemetry,
+                                    self.manifest.environment_id, self.manifest.evaluator_id, adapter_id, provenance,
+                                    self.manifest.case(spec.case_id).public.cohort, M20LifecycleState.COMPLETED,
+                                    pre.to_dict(), post.to_dict())
+        if self._active_store is not None:
+            self._active_store.persist(record)
+        return record

@@ -11,6 +11,7 @@ from src.evaluation.m20_harness import (
     M20Harness, M20Manifest, M20Namespace, M20Outcome, M20PrivateCase,
     M20PairingMetadata, M20Proposal, M20ProposalKind, M20ProviderConfiguration, M20PublicCase,
     M20ResourceCeiling, M20ResourceDelta, M20ResourceTelemetry,
+    M20ProviderAttemptError,
     M20_FIXED_SCHEDULE_ID, canonical_hash,
 )
 
@@ -207,6 +208,80 @@ class M20HarnessTest(unittest.TestCase):
             self.assertEqual(len(store.records()), 1)
             with self.assertRaises(PermissionError):
                 M20EvidenceStore(Path(directory) / "formal", manifest(), M20Namespace.FORMAL)
+
+    def test_canonical_runner_persists_cohort_lifecycle_and_statistical_input(self):
+        with TemporaryDirectory() as directory:
+            store = M20EvidenceStore(Path(directory), manifest(), M20Namespace.FAKE)
+            record = self.harness().run(spec(), M20FixedAdapter(QueueProvider([
+                M20Proposal(M20ProposalKind.ACT, "step"), M20Proposal(M20ProposalKind.ANSWER, payload=7)
+            ])), store)
+            persisted = store.records()[0]
+            self.assertEqual((persisted["cohort"], persisted["lifecycle"]), (case().public.cohort, "completed"))
+            evidence = M20EvidenceStore.statistical_input(persisted)
+            self.assertEqual(evidence["pair_id"], record.pair_id)
+            with self.assertRaises(Exception):
+                self.harness().run(spec(), M20FixedAdapter(QueueProvider([])), store)
+
+    def test_canonical_charged_partial_and_persisted_pair_reconstruction(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory); store = M20EvidenceStore(root, manifest(), M20Namespace.FAKE)
+            with self.assertRaises(InterruptedError):
+                self.harness().run(spec(), M20FixedAdapter(QueueProvider([M20Proposal(M20ProposalKind.ANSWER, payload=7)])), store, interrupt_after_commit=True)
+            self.assertEqual(store.lifecycle(spec()).value, "charged_partial")
+            reloaded = M20EvidenceStore(root, manifest(), M20Namespace.FAKE)
+            with self.assertRaises(Exception):
+                self.harness().run(spec(), M20FixedAdapter(QueueProvider([])), reloaded)
+        with TemporaryDirectory() as directory:
+            store = M20EvidenceStore(Path(directory), manifest(), M20Namespace.FAKE)
+            self.harness().run(spec(), M20FixedAdapter(QueueProvider([M20Proposal(M20ProposalKind.ANSWER, payload=0)])), store)
+            self.harness().run(spec(M20Condition.MIND_ADAPTIVE), M20AdaptiveAdapter(QueueProvider([M20Proposal(M20ProposalKind.ANSWER, payload=0)])), store)
+            pair = M20EvidenceStore.reconstruct_pair(store.records())
+            self.assertEqual(pair["adaptive"]["pair_id"], pair["fixed"]["pair_id"])
+
+    def test_provider_attempt_transitions_are_persisted_without_double_charge(self):
+        class RetryingProvider:
+            retry_ceiling = 1
+            def __init__(self): self.calls = 0
+            def propose(self, public_case, public_state):
+                self.calls += 1
+                if self.calls == 1: raise M20ProviderAttemptError("transport", True)
+                return M20Proposal(M20ProposalKind.ANSWER, payload=0)
+        with TemporaryDirectory() as directory:
+            store = M20EvidenceStore(Path(directory), manifest(), M20Namespace.FAKE)
+            record = self.harness().run(spec(), M20FixedAdapter(RetryingProvider()), store)
+            self.assertEqual((record.telemetry.provider_interactions, record.telemetry.provider_transport_attempts), (1, 2))
+            attempts = store.records()[0]["telemetry"]["retries"]
+            self.assertEqual([item["retry_index"] for item in attempts], [0, 1])
+            self.assertEqual(attempts[0]["reason"], "transport")
+
+    def test_adaptive_native_callback_uses_same_retry_boundary(self):
+        class RetryingProvider:
+            retry_ceiling = 1
+            def __init__(self): self.calls = 0
+            def propose(self, public_case, public_state):
+                self.calls += 1
+                if self.calls == 1: raise M20ProviderAttemptError("transport", True)
+                return M20Proposal(M20ProposalKind.ANSWER, payload=0)
+        with TemporaryDirectory() as directory:
+            store = M20EvidenceStore(Path(directory), manifest(), M20Namespace.FAKE)
+            record = self.harness().run(spec(M20Condition.MIND_ADAPTIVE), M20AdaptiveAdapter(RetryingProvider()), store)
+            self.assertEqual((record.telemetry.provider_interactions, record.telemetry.provider_transport_attempts), (1, 2))
+            self.assertEqual([item["retry_index"] for item in store.records()[0]["telemetry"]["retries"]], [0, 1])
+
+    def test_retry_exhaustion_and_malformed_are_terminal_persisted_attempts(self):
+        class Exhausted:
+            retry_ceiling = 1
+            def propose(self, public_case, public_state): raise M20ProviderAttemptError("transport", True)
+        class Malformed:
+            retry_ceiling = 1
+            def propose(self, public_case, public_state): return object()
+        for provider, attempts, reason in ((Exhausted(), 2, "transport"), (Malformed(), 1, "malformed_response")):
+            with TemporaryDirectory() as directory:
+                store = M20EvidenceStore(Path(directory), manifest(), M20Namespace.FAKE)
+                record = self.harness().run(spec(), M20FixedAdapter(provider), store)
+                self.assertEqual(record.outcome, M20Outcome.PROVIDER_FAILURE)
+                chain = store.records()[0]["telemetry"]["retries"]
+                self.assertEqual((len(chain), chain[-1]["reason"], chain[-1]["terminal"]), (attempts, reason, True))
 
     def test_pairing_delta_retry_and_partial_lifecycle_fail_closed(self):
         current = manifest(); harness = self.harness(); item = case()
