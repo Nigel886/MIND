@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from copy import deepcopy
 from tempfile import TemporaryDirectory
 import unittest
 
@@ -282,6 +283,36 @@ class M20HarnessTest(unittest.TestCase):
                 self.assertEqual(record.outcome, M20Outcome.PROVIDER_FAILURE)
                 chain = store.records()[0]["telemetry"]["retries"]
                 self.assertEqual((len(chain), chain[-1]["reason"], chain[-1]["terminal"]), (attempts, reason, True))
+
+    def test_disk_only_pair_retry_and_statistical_corruption_fail_closed(self):
+        class Retrying:
+            retry_ceiling = 1
+            def __init__(self): self.calls = 0
+            def propose(self, public_case, public_state):
+                self.calls += 1
+                if self.calls == 1: raise M20ProviderAttemptError("transport", True)
+                return M20Proposal(M20ProposalKind.ANSWER, payload=0)
+        with TemporaryDirectory() as directory:
+            root = Path(directory); store = M20EvidenceStore(root, manifest(), M20Namespace.FAKE)
+            self.harness().run(spec(), M20FixedAdapter(Retrying()), store)
+            self.harness().run(spec(M20Condition.MIND_ADAPTIVE), M20AdaptiveAdapter(Retrying()), store)
+            reloaded = M20EvidenceStore(root, manifest(), M20Namespace.FAKE).records()
+            pair = M20EvidenceStore.reconstruct_pair(reloaded)
+            self.assertEqual(set(pair), {"pair_id", "cohort", "adaptive", "fixed"})
+            for record in reloaded:
+                self.assertIn("protocol", M20EvidenceStore.statistical_input(record)["provenance"])
+            for mutate in (
+                lambda value: value.pop("cohort"),
+                lambda value: value.__setitem__("lifecycle", "invalid"),
+                lambda value: value["telemetry"]["retries"][1].__setitem__("retry_index", 3),
+                lambda value: value["telemetry"].__setitem__("provider_interactions", 2),
+                lambda value: value["provenance"].pop("metrics"),
+                lambda value: value["provenance"].pop("protocol"),
+            ):
+                corrupt = deepcopy(reloaded[0]); mutate(corrupt)
+                with self.assertRaises(Exception): M20EvidenceStore.statistical_input(corrupt)
+            corrupt_pair = list(deepcopy(reloaded)); corrupt_pair[1]["spec"]["cluster_id"] = "wrong"
+            with self.assertRaises(Exception): M20EvidenceStore.reconstruct_pair(tuple(corrupt_pair))
 
     def test_pairing_delta_retry_and_partial_lifecycle_fail_closed(self):
         current = manifest(); harness = self.harness(); item = case()

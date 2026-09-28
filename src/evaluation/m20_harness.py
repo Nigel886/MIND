@@ -645,8 +645,39 @@ class M20EvidenceStore:
             raise M20IntegrityError("statistical execution evidence missing")
         if "metrics" not in provenance or "protocol" not in provenance:
             raise M20IntegrityError("statistical protocol evidence missing")
+        M20EvidenceStore.validate_persisted(record)
         return {"pair_id": record["pair_id"], "cohort": record["cohort"], "outcome": record["outcome"],
                 "lifecycle": record["lifecycle"], "spec": spec, "telemetry": telemetry, "provenance": provenance}
+
+    @staticmethod
+    def validate_persisted(record: Mapping[str, Any]) -> None:
+        """Canonical fail-closed validation of evidence after storage reload."""
+        if record.get("lifecycle") != M20LifecycleState.COMPLETED.value or not record.get("cohort") or not record.get("pair_id"):
+            raise M20IntegrityError("completed lifecycle/pair/cohort evidence invalid")
+        spec, telemetry = record.get("spec"), record.get("telemetry")
+        if not isinstance(spec, Mapping) or not isinstance(telemetry, Mapping):
+            raise M20IntegrityError("persisted execution evidence invalid")
+        required = ("suite_id", "case_id", "repetition", "cluster_id", "condition", "payload_digest", "environment_id", "evaluator_id", "resource_ceiling_identity")
+        if any(not spec.get(key) for key in required):
+            raise M20IntegrityError("persisted execution identity incomplete")
+        attempts = telemetry.get("retries")
+        if not isinstance(attempts, list) or not attempts:
+            raise M20IntegrityError("retry evidence absent")
+        logical: dict[str, list[Mapping[str, Any]]] = {}
+        physical: set[str] = set()
+        for item in attempts:
+            if not isinstance(item, Mapping) or not all(item.get(key) for key in ("logical_operation_id", "physical_attempt_id", "owner")):
+                raise M20IntegrityError("retry attempt identity invalid")
+            if item["physical_attempt_id"] in physical or item["owner"] != M20RetryOwner.PROVIDER_CLIENT.value:
+                raise M20IntegrityError("retry attempt ownership/uniqueness invalid")
+            physical.add(item["physical_attempt_id"]); logical.setdefault(item["logical_operation_id"], []).append(item)
+        for chain in logical.values():
+            if [item.get("retry_index") for item in chain] != list(range(len(chain))) or sum(bool(item.get("terminal")) for item in chain) != 1 or not chain[-1].get("terminal"):
+                raise M20IntegrityError("retry chain ordering/terminal state invalid")
+            if any(item.get("terminal") for item in chain[:-1]):
+                raise M20IntegrityError("retry attempt follows terminal state")
+        if telemetry.get("provider_interactions") != len(logical) or telemetry.get("provider_transport_attempts") != len(attempts):
+            raise M20IntegrityError("retry/resource accounting mismatch")
 
     def records(self) -> tuple[dict[str, Any], ...]:
         result: list[dict[str, Any]] = []
@@ -660,6 +691,7 @@ class M20EvidenceStore:
             digest = value.pop("digest", None)
             if digest != canonical_hash(value):
                 raise M20IntegrityError("evidence digest mismatch")
+            self.validate_persisted(value)
             seen.add(value["execution_id"])
             result.append(value)
         return tuple(result)
@@ -824,6 +856,12 @@ class M20Harness:
             except InterruptedError:
                 raise
             except Exception:
+                # A provider-client accepted logical operation is charged once,
+                # even when all physical attempts fail before a proposal exists.
+                if retries and counts["provider_interactions"] == 0:
+                    resources = resources.consume(ResourceDimension.PROVIDER_INTERACTION, 1, "provider_failure")
+                    counts["provider_interactions"] += 1; counts["decision_cycles"] += 1
+                    deltas.append(M20ResourceDelta("provider_failure", provider_interactions=1, decision_cycles=1))
                 return self._record(spec, M20Outcome.PROVIDER_FAILURE, self._telemetry(counts, deltas, retries), binding.adapter_id, initial_resources, resources)
             if proposal.kind is M20ProposalKind.ANSWER:
                 outcome = self.evaluator.evaluate(case, state, proposal.payload)
