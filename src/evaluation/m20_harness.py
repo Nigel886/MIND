@@ -699,6 +699,28 @@ class M20EvidenceStore:
     def completed_ids(self) -> frozenset[str]:
         return frozenset(item["execution_id"] for item in self.records())
 
+    def completed_record(self, spec: M20ExecutionSpec) -> M20ExecutionRecord:
+        """Reload one immutable completed record after persisted validation."""
+        value = next((item for item in self.records() if item["execution_id"] == spec.execution_id), None)
+        if value is None or value.get("lifecycle") != M20LifecycleState.COMPLETED.value:
+            raise M20IntegrityError("completed evidence is absent or invalid")
+        if value["spec"] != M20ExecutionRecord(spec.execution_id, spec.pair_id, spec, M20Outcome.SUCCESS,
+                M20ResourceTelemetry(), spec.environment_id, spec.evaluator_id, "placeholder", {}, "placeholder").canonical()["spec"]:
+            raise M20IntegrityError("completed evidence/request identity mismatch")
+        telemetry = value["telemetry"]
+        retries = tuple(M20RetryAttempt(item["logical_operation_id"], item["physical_attempt_id"], item["retry_index"],
+                                        M20RetryOwner(item["owner"]), item.get("reason"), item["terminal"])
+                        for item in telemetry["retries"])
+        deltas = tuple(M20ResourceDelta(**item) for item in telemetry["deltas"])
+        rebuilt = M20ResourceTelemetry(telemetry["reasoning_steps"], telemetry["tool_attempts"],
+            telemetry["provider_interactions"], telemetry["decision_cycles"], telemetry["provider_transport_attempts"],
+            telemetry.get("token_status", "TOKEN_USAGE_UNAVAILABLE"), telemetry.get("cost_status", "COST_NOT_COMPUTABLE"),
+            telemetry.get("latency_status", "LATENCY_NOT_RELIABLE"), deltas, retries)
+        return M20ExecutionRecord(value["execution_id"], value["pair_id"], spec, M20Outcome(value["outcome"]), rebuilt,
+            value["environment_id"], value["evaluator_id"], value["adapter_id"], value["provenance"], value["cohort"],
+            M20LifecycleState(value["lifecycle"]), value.get("resource_pre"), value.get("resource_post"),
+            value.get("replacement_reason"), value.get("schema", M20_RECORD_SCHEMA))
+
     def reconcile(self, expected: tuple[M20ExecutionSpec, ...]) -> dict[str, int]:
         ids = self.completed_ids()
         expected_ids = {item.execution_id for item in expected}
@@ -805,9 +827,7 @@ class M20Harness:
         if store is not None:
             state = store.lifecycle(spec)
             if state is M20LifecycleState.COMPLETED:
-                for value in store.records():
-                    if value["execution_id"] == spec.execution_id:
-                        raise M20IntegrityError("completed canonical execution is immutable; reload through evidence")
+                return store.completed_record(spec)
             if state is M20LifecycleState.CHARGED_PARTIAL:
                 raise M20IntegrityError("charged partial cannot be resumed safely")
             if state is M20LifecycleState.ZERO_COMMIT_PARTIAL:

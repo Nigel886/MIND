@@ -220,8 +220,9 @@ class M20HarnessTest(unittest.TestCase):
             self.assertEqual((persisted["cohort"], persisted["lifecycle"]), (case().public.cohort, "completed"))
             evidence = M20EvidenceStore.statistical_input(persisted)
             self.assertEqual(evidence["pair_id"], record.pair_id)
-            with self.assertRaises(Exception):
-                self.harness().run(spec(), M20FixedAdapter(QueueProvider([])), store)
+            replay_provider = QueueProvider([])
+            replay = self.harness().run(spec(), M20FixedAdapter(replay_provider), store)
+            self.assertEqual((replay.digest, replay_provider.seen), (record.digest, []))
 
     def test_canonical_charged_partial_and_persisted_pair_reconstruction(self):
         with TemporaryDirectory() as directory:
