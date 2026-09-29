@@ -221,9 +221,12 @@ class M20Case:
     evaluator_id: str = "m20_evaluator_v1"
     generation_identity: str = "m20_generation_v1"
     cluster_id: str = "m20_cluster_v1"
+    frozen_payload_digest: str | None = None
 
     @property
     def payload_digest(self) -> str:
+        if self.frozen_payload_digest is not None:
+            return self.frozen_payload_digest
         return canonical_hash(self.public.to_dict())
 
 
@@ -237,6 +240,7 @@ class M20Manifest:
     pairing: tuple[M20PairingMetadata, ...]
     resource_ceiling: M20ResourceCeiling
     schema_version: str = M20_MANIFEST_SCHEMA
+    execution_manifest_digest: str | None = None
 
     def __post_init__(self) -> None:
         if not all(isinstance(value, str) and value for value in (self.suite_id, self.environment_id, self.evaluator_id, self.generation_identity, self.schema_version)):
@@ -261,9 +265,13 @@ class M20Manifest:
                                                          self.environment_id, self.evaluator_id,
                                                          self.resource_ceiling.identity):
                 raise ValueError("pairing metadata mismatch")
+        if self.execution_manifest_digest is not None and (not isinstance(self.execution_manifest_digest, str) or len(self.execution_manifest_digest) != 64):
+            raise ValueError("external execution manifest digest is invalid")
 
     @property
     def digest(self) -> str:
+        if self.execution_manifest_digest is not None:
+            return self.execution_manifest_digest
         return canonical_hash({"suite_id": self.suite_id, "environment_id": self.environment_id,
                                "evaluator_id": self.evaluator_id, "generation_identity": self.generation_identity,
                                "schema_version": self.schema_version,
@@ -439,6 +447,7 @@ class M20ExecutionSpec:
     evaluator_id: str
     resource_ceiling_identity: str
     replacement_of: str | None = None
+    frozen_pair_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.condition, M20Condition) or not isinstance(self.namespace, M20Namespace):
@@ -451,6 +460,8 @@ class M20ExecutionSpec:
             raise ValueError("execution identity is invalid")
         if self.replacement_of is not None and (not isinstance(self.replacement_of, str) or not self.replacement_of):
             raise ValueError("replacement identity is invalid")
+        if self.frozen_pair_id is not None and (not isinstance(self.frozen_pair_id, str) or len(self.frozen_pair_id) != 64):
+            raise ValueError("frozen pair identity is invalid")
 
     @property
     def execution_id(self) -> str:
@@ -460,11 +471,13 @@ class M20ExecutionSpec:
                                "cluster": self.cluster_id, "payload": self.payload_digest,
                                "environment": self.environment_id, "evaluator": self.evaluator_id,
                                "ceiling": self.resource_ceiling_identity,
-                               "replacement_of": self.replacement_of, "schema": M20_RECORD_SCHEMA,
+                               "replacement_of": self.replacement_of, "frozen_pair_id": self.frozen_pair_id, "schema": M20_RECORD_SCHEMA,
                                "harness": M20_HARNESS_ID})
 
     @property
     def pair_id(self) -> str:
+        if self.frozen_pair_id is not None:
+            return self.frozen_pair_id
         return canonical_hash({"suite": self.suite_id, "case": self.case_id, "repetition": self.repetition,
                                "manifest": self.manifest_digest, "cluster": self.cluster_id,
                                "payload": self.payload_digest, "environment": self.environment_id,
@@ -548,7 +561,7 @@ class M20ExecutionRecord:
                          "payload_digest": self.spec.payload_digest, "environment_id": self.spec.environment_id,
                          "evaluator_id": self.spec.evaluator_id,
                          "resource_ceiling_identity": self.spec.resource_ceiling_identity,
-                         "replacement_of": self.spec.replacement_of},
+                         "replacement_of": self.spec.replacement_of, "frozen_pair_id": self.spec.frozen_pair_id},
                 "outcome": self.outcome.value, "telemetry": asdict(self.telemetry),
                 "environment_id": self.environment_id, "evaluator_id": self.evaluator_id,
                 "adapter_id": self.adapter_id, "provenance": dict(self.provenance),

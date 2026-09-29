@@ -59,7 +59,7 @@ class M20RealCaseDefinition:
     def to_case(self) -> M20Case:
         public = M20PublicCase(self.case_id, self.cohort, self.initial_state["task"], self.initial_state, self.actions)
         return M20Case(public, M20PrivateCase(self.target, self.witness), cluster_id=self.cluster_id,
-                       generation_identity=M20_REAL_CASE_SOURCE_VERSION)
+                       generation_identity=M20_REAL_CASE_SOURCE_VERSION, frozen_payload_digest=self.payload_digest)
 
 
 class M20RealEnvironment:
