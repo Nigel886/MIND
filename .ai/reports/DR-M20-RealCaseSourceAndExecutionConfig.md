@@ -4,6 +4,12 @@
 
 #236 was blocked because no canonical real M20 case source existed. #237 introduces the deterministic, provider-free `m20_real_case_source_v1` source; it is not the `m20.fake.case.1` fixture and contains no provider outputs or performance outcomes.
 
+## Partial-delivery ledger
+
+**DELIVERED:** canonical real case source; authored provenance; all-six-cohort coverage; deterministic witness reachability; secret-free provider-configuration schema; and resource-ceiling schema.
+
+**BLOCKED:** concrete provider/backend; exact model/version; API/decoding configuration; concrete provider hash; concrete shared real-execution resource limits; resource-ceiling identity; and calibration-manifest freeze. These fields are prospective experimental decisions and must not be selected arbitrarily by implementation code.
+
 ## Real case source
 
 The source materializes two explicitly authored deterministic cases for each frozen cohort: `multi_step_stateful`, `information_acquisition`, `distractor_unnecessary_action`, `recovery_replanning`, `answer_ready_early_stop`, and `resource_constrained` (12 eligible cases total). Every case binds a case ID, public payload digest, cohort, cluster, public actions/state, private evaluator target, private reference witness, eligibility state, and authorship/template/enumeration provenance. The prospective repetition structure is five matched repetitions per case; primary pair construction remains condition-specific over the same case/repetition/cluster identity.
