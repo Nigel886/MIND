@@ -16,12 +16,15 @@ M20_PROVIDER_RETRY_OWNER = "provider_client"
 class M20FrozenProviderConfiguration:
     provider: str
     model: str
+    documented_model_version: str
+    base_url: str
     api_mode: str
     reasoning_effort: str
     temperature: float
     top_p: float
     max_output_tokens: int
     structured_output: str
+    thinking: str
     tool_mode: str
     hosted_tools: str
     streaming: bool
@@ -33,13 +36,15 @@ class M20FrozenProviderConfiguration:
     version: str = M20_REAL_EXECUTION_CONFIG_VERSION
 
     def __post_init__(self) -> None:
-        required = ("provider", "model", "api_mode", "reasoning_effort", "structured_output", "tool_mode",
+        required = ("provider", "model", "documented_model_version", "base_url", "api_mode", "reasoning_effort", "structured_output", "thinking", "tool_mode",
                     "hosted_tools", "retry_owner", "service_tier", "version")
         if any(not isinstance(getattr(self, key), str) or not getattr(self, key) for key in required):
             raise ValueError("provider configuration is incomplete")
-        if self.temperature != 0 or self.top_p != 1.0 or self.max_output_tokens < 1 or self.timeout_seconds < 1:
+        if self.provider != "deepseek_api" or self.model != "deepseek-flash" or self.documented_model_version != "DeepSeek-V4.1-Flash" or self.base_url != "https://api.deepseek.com/":
+            raise ValueError("provider identity mismatch")
+        if self.temperature != 0 or self.top_p != 1.0 or self.max_output_tokens != 512 or self.timeout_seconds != 60 or self.thinking != "disabled":
             raise ValueError("provider configuration violates frozen settings")
-        if self.retry_owner != M20_PROVIDER_RETRY_OWNER or self.retry_ceiling != 1:
+        if self.retry_owner != M20_PROVIDER_RETRY_OWNER or self.retry_ceiling != 2:
             raise ValueError("provider retry ownership/ceiling mismatch")
         if self.streaming or self.hosted_tools != "disabled" or self.service_tier != "standard/default":
             raise ValueError("provider execution tier/tool/streaming mismatch")
@@ -77,10 +82,11 @@ class M20FrozenResourceCeiling:
 
 
 M20_REAL_PROVIDER_CONFIGURATION = M20FrozenProviderConfiguration(
-    provider="openai_api", model="gpt-5.6-sol", api_mode="responses_api", reasoning_effort="medium",
-    temperature=0, top_p=1.0, max_output_tokens=2048, structured_output="enabled_when_contract_required",
+    provider="deepseek_api", model="deepseek-flash", documented_model_version="DeepSeek-V4.1-Flash", base_url="https://api.deepseek.com/", api_mode="openai_compatible_chat_completions", reasoning_effort="disabled",
+    temperature=0, top_p=1.0, max_output_tokens=512, structured_output="json_object",
+    thinking="disabled",
     tool_mode="frozen_m20_public_surface_only", hosted_tools="disabled", streaming=False, timeout_seconds=60,
-    retry_owner=M20_PROVIDER_RETRY_OWNER, retry_ceiling=1, deterministic_seed=None, service_tier="standard/default",
+    retry_owner=M20_PROVIDER_RETRY_OWNER, retry_ceiling=2, deterministic_seed=None, service_tier="standard/default",
 )
 M20_REAL_RESOURCE_CEILING = M20FrozenResourceCeiling(8, 4, 4, 8)
 

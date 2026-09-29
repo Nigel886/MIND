@@ -13,6 +13,8 @@ class M20CalibrationManifestTest(unittest.TestCase):
   for key in ("provider_hash","resource_ceiling_identity","environment_id","metric_version","statistical_protocol"):
    changed=json.loads(json.dumps(value)); changed[key]="wrong"
    with self.assertRaises(ValueError): validate_manifest(changed)
+  changed=json.loads(json.dumps(value)); changed["provider_hash"]="910b2b5bf28308d6491af4010e3cc108a38e6dbb49613e27bbc9e4493d41c8f1"
+  with self.assertRaises(ValueError): validate_manifest(changed)
   changed=json.loads(json.dumps(value)); changed["pairs"].pop()
   with self.assertRaises(ValueError): validate_manifest(changed)
   with self.assertRaises(PermissionError): require_manifest(value)

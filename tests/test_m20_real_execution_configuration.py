@@ -13,8 +13,7 @@ from src.evaluation.m20_real_execution_configuration import (
 class M20RealExecutionConfigurationTest(unittest.TestCase):
     def test_provider_identity_is_deterministic_and_sensitive(self):
         self.assertEqual(M20_REAL_PROVIDER_CONFIGURATION.identity_hash, M20_REAL_PROVIDER_CONFIGURATION.identity_hash)
-        self.assertNotEqual(M20_REAL_PROVIDER_CONFIGURATION.identity_hash,
-                            replace(M20_REAL_PROVIDER_CONFIGURATION, model="gpt-5.6-sol-next").identity_hash)
+        with self.assertRaises(ValueError): replace(M20_REAL_PROVIDER_CONFIGURATION, model="other")
         with self.assertRaises(ValueError): replace(M20_REAL_PROVIDER_CONFIGURATION, model="")
 
     def test_secret_free_provider_and_ceiling_identity(self):

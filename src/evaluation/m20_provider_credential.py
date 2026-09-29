@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 
-M20_PROVIDER_CREDENTIAL_ENV = "OPENAI_API_KEY"
+M20_PROVIDER_CREDENTIAL_ENV = "DEEPSEEK_API_KEY"
 
 def credential_status(environment: Mapping[str, str] | None = None) -> str:
     value = (os.environ if environment is None else environment).get(M20_PROVIDER_CREDENTIAL_ENV)
