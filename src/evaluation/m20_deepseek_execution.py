@@ -17,12 +17,18 @@ from src.evaluation.m20_real_execution_configuration import M20_REAL_PROVIDER_CO
 
 M20_DEEPSEEK_REQUEST_CONTRACT = "m20_deepseek_public_proposal_v1"
 M20_DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
+M20_PROVIDER_VISIBLE_STATE_FIELDS = ("progress", "observed", "recovered", "resource_note")
 Transport = Callable[[Mapping[str, Any], int], Mapping[str, Any]]
 
 
 def _public_request(case: Any, state: Mapping[str, Any]) -> dict[str, Any]:
     """The only wire payload: public task, legal actions, and current public state."""
-    public = {"case_id": case.case_id, "task": case.task_text, "actions": sorted(case.actions), "state": dict(state)}
+    if not isinstance(state, Mapping):
+        raise M20ProviderAttemptError("invalid_public_state", False)
+    # This explicit projection is deliberately not a copy of initial/current state:
+    # evaluator success predicates can exist in the case model but have no wire path.
+    projected_state = {key: state[key] for key in M20_PROVIDER_VISIBLE_STATE_FIELDS if key in state}
+    public = {"task": case.task_text, "actions": sorted(case.actions), "state": projected_state}
     instruction = ("Return exactly one JSON object with either {\"kind\":\"act\",\"action_id\":<legal action>} "
                    "or {\"kind\":\"answer\",\"payload\":<answer>}. Use only listed actions. "
                    "No explanation. Public input: " + json.dumps(public, sort_keys=True, separators=(",", ":")))

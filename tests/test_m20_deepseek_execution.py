@@ -16,10 +16,16 @@ class M20DeepSeekExecutionTest(unittest.TestCase):
         seen = []
         adapter = M20DeepSeekProposalAdapter(lambda body, timeout: seen.append((body, timeout)) or response({"kind": "act", "action_id": "advance"}))
         case = M20DeepSeekCalibrationRunner().manifest.cases[0]
-        proposal = adapter.propose(case.public, {"progress": 0})
+        proposal = adapter.propose(case.public, {"progress": 0, "required_progress": "CANARY_SUCCESS",
+                                                  "requires_observation": "CANARY_TARGET",
+                                                  "private_witness": "CANARY_WITNESS", "future_state": "CANARY_FUTURE"})
         self.assertEqual(proposal.action_id, "advance")
         wire = json.dumps(seen[0][0], sort_keys=True)
         self.assertNotIn(case.private.target, wire); self.assertNotIn("reference_witness", wire)
+        for forbidden in ("required_progress", "requires_observation", "requires_recovery", "private_witness",
+                          "future_state", "CANARY_SUCCESS", "CANARY_TARGET", "CANARY_WITNESS", "CANARY_FUTURE"):
+            self.assertNotIn(forbidden, wire)
+        self.assertEqual(json.loads(seen[0][0]["messages"][1]["content"].split("Public input: ", 1)[1])["state"], {"progress": 0})
         self.assertEqual(seen[0][1], 60)
         for invalid in ({"kind": "act", "action_id": "not_legal"}, {"kind": "answer", "extra": 1}, {"kind": "unknown", "x": 1}):
             with self.assertRaises(M20ProviderAttemptError):
@@ -49,6 +55,20 @@ class M20DeepSeekExecutionTest(unittest.TestCase):
             reconstructed = M20EvidenceStore.reconstruct_pair(store.records())
             self.assertEqual(reconstructed["pair_id"], item.pair_id)
             self.assertIn("protocol", M20EvidenceStore.statistical_input(store.records()[0])["provenance"])
+
+    def test_adaptive_and_fixed_share_isolated_schema(self):
+        runner, item, requests = M20DeepSeekCalibrationRunner(), M20DeepSeekCalibrationRunner().work_items()[0], []
+        def fake(body, _timeout):
+            requests.append(body)
+            return response({"kind": "answer", "payload": "wrong"})
+        with TemporaryDirectory() as directory:
+            runner.run_work_item(item, fake, M20EvidenceStore(Path(directory), runner.manifest, M20Namespace.CALIBRATION))
+        self.assertEqual(len(requests), 2)
+        public_inputs = [json.loads(body["messages"][1]["content"].split("Public input: ", 1)[1]) for body in requests]
+        self.assertEqual(public_inputs[0], public_inputs[1])
+        for value in public_inputs:
+            self.assertEqual(set(value), {"task", "actions", "state"})
+            self.assertTrue(set(value["state"]).issubset({"progress", "observed", "recovered", "resource_note"}))
 
 
 if __name__ == "__main__":
