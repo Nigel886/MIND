@@ -330,9 +330,11 @@ class M20ProposalProvider(Protocol):
 
 class M20ProviderAttemptError(RuntimeError):
     """Typed deterministic provider-boundary failure; provider client owns retry."""
-    def __init__(self, reason: str, retryable: bool = True) -> None:
+    def __init__(self, reason: str, retryable: bool = True,
+                 diagnostic: Mapping[str, Any] | None = None) -> None:
         super().__init__(reason)
         self.reason, self.retryable = reason, retryable
+        self.diagnostic = dict(diagnostic or {})
 
 
 @dataclass(frozen=True)
@@ -496,11 +498,14 @@ class M20ResourceTelemetry:
     latency_status: str = "LATENCY_NOT_RELIABLE"
     deltas: tuple[M20ResourceDelta, ...] = ()
     retries: tuple[M20RetryAttempt, ...] = ()
+    response_diagnostics: tuple[Mapping[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         if any(not isinstance(getattr(self, key), int) or getattr(self, key) < 0 for key in
                ("reasoning_steps", "tool_attempts", "provider_interactions", "decision_cycles", "provider_transport_attempts")):
             raise ValueError("resource counts must be non-negative ints")
+        if any(not isinstance(item, Mapping) for item in self.response_diagnostics):
+            raise ValueError("response diagnostics must be mappings")
 
     def reconcile(self, ceiling: M20ResourceCeiling, pre: ResourceState | None = None,
                   post: ResourceState | None = None) -> None:
@@ -552,6 +557,11 @@ class M20ExecutionRecord:
     schema: str = M20_RECORD_SCHEMA
 
     def canonical(self) -> dict[str, Any]:
+        telemetry = asdict(self.telemetry)
+        # The optional field was introduced after the historical #250 records.
+        # Omitting it when empty preserves their canonical payloads and digests.
+        if not telemetry["response_diagnostics"]:
+            del telemetry["response_diagnostics"]
         return {"execution_id": self.execution_id, "pair_id": self.pair_id, "cohort": self.cohort,
                 "lifecycle": self.lifecycle.value,
                 "spec": {"suite_id": self.spec.suite_id, "case_id": self.spec.case_id,
@@ -562,7 +572,7 @@ class M20ExecutionRecord:
                          "evaluator_id": self.spec.evaluator_id,
                          "resource_ceiling_identity": self.spec.resource_ceiling_identity,
                          "replacement_of": self.spec.replacement_of, "frozen_pair_id": self.spec.frozen_pair_id},
-                "outcome": self.outcome.value, "telemetry": asdict(self.telemetry),
+                "outcome": self.outcome.value, "telemetry": telemetry,
                 "environment_id": self.environment_id, "evaluator_id": self.evaluator_id,
                 "adapter_id": self.adapter_id, "provenance": dict(self.provenance),
                 "resource_pre": dict(self.resource_pre or {}), "resource_post": dict(self.resource_post or {}),
@@ -728,7 +738,8 @@ class M20EvidenceStore:
         rebuilt = M20ResourceTelemetry(telemetry["reasoning_steps"], telemetry["tool_attempts"],
             telemetry["provider_interactions"], telemetry["decision_cycles"], telemetry["provider_transport_attempts"],
             telemetry.get("token_status", "TOKEN_USAGE_UNAVAILABLE"), telemetry.get("cost_status", "COST_NOT_COMPUTABLE"),
-            telemetry.get("latency_status", "LATENCY_NOT_RELIABLE"), deltas, retries)
+            telemetry.get("latency_status", "LATENCY_NOT_RELIABLE"), deltas, retries,
+            tuple(telemetry.get("response_diagnostics", ())))
         return M20ExecutionRecord(value["execution_id"], value["pair_id"], spec, M20Outcome(value["outcome"]), rebuilt,
             value["environment_id"], value["evaluator_id"], value["adapter_id"], value["provenance"], value["cohort"],
             M20LifecycleState(value["lifecycle"]), value.get("resource_pre"), value.get("resource_post"),
@@ -813,7 +824,8 @@ class M20Harness:
 
     @staticmethod
     def _provider_attempt(adapter: Any, public: M20PublicCase, state: Mapping[str, Any],
-                          logical: str, retries: list[M20RetryAttempt]) -> M20Proposal:
+                          logical: str, retries: list[M20RetryAttempt],
+                          diagnostics: list[Mapping[str, Any]]) -> M20Proposal:
         """Single provider-client retry owner; evidence is emitted at each call."""
         ceiling = getattr(adapter._provider, "retry_ceiling", 0)
         for index in range(ceiling + 1):
@@ -821,11 +833,16 @@ class M20Harness:
                 proposal = adapter._provider.propose(public, state)
                 if not isinstance(proposal, M20Proposal):
                     raise M20ProviderAttemptError("malformed_response", False)
+                diagnostic = getattr(adapter._provider, "last_diagnostic", None)
+                if isinstance(diagnostic, Mapping):
+                    diagnostics.append(dict(diagnostic))
                 retries.append(M20RetryAttempt(logical, logical + f":{index}", index,
                                                 M20RetryOwner.PROVIDER_CLIENT,
                                                 None if index == 0 else "provider_retry", True))
                 return proposal
             except M20ProviderAttemptError as error:
+                if error.diagnostic:
+                    diagnostics.append(dict(error.diagnostic))
                 retries.append(M20RetryAttempt(logical, logical + f":{index}", index,
                                                 M20RetryOwner.PROVIDER_CLIENT, error.reason,
                                                 not error.retryable or index == ceiling))
@@ -856,6 +873,7 @@ class M20Harness:
         state = self.environment.initial_public_state(case.public)
         deltas: list[M20ResourceDelta] = []
         retries: list[M20RetryAttempt] = []
+        diagnostics: list[Mapping[str, Any]] = []
         counts = {"reasoning_steps": 0, "tool_attempts": 0, "provider_interactions": 0, "decision_cycles": 0}
         resources = self.manifest.resource_ceiling.resource_state(spec.execution_id)
         initial_resources = resources
@@ -872,19 +890,19 @@ class M20Harness:
                     logical = canonical_hash({"execution": spec.execution_id, "cycle": counts["decision_cycles"] + 1})
                     proposal, native_result = adapter.native_propose(
                         case.public, state, resources,
-                        lambda: self._provider_attempt(adapter, case.public, state, logical, retries))
+                        lambda: self._provider_attempt(adapter, case.public, state, logical, retries, diagnostics))
                     resources = native_result.state.resource_state
                     counts["provider_interactions"] += 1; counts["decision_cycles"] += 1
                     deltas.append(M20ResourceDelta("native:" + resources.transition_identity,
                                                     provider_interactions=1, decision_cycles=1))
                 else:
                     logical = canonical_hash({"execution": spec.execution_id, "cycle": counts["decision_cycles"] + 1})
-                    proposal = self._provider_attempt(adapter, case.public, state, logical, retries)
+                    proposal = self._provider_attempt(adapter, case.public, state, logical, retries, diagnostics)
                     resources = resources.consume(ResourceDimension.PROVIDER_INTERACTION, 1, "proposal")
                     counts["provider_interactions"] += 1; counts["decision_cycles"] += 1
                     deltas.append(M20ResourceDelta("proposal", provider_interactions=1, decision_cycles=1))
                 if interrupt_after_commit and store is not None:
-                    store.mark_partial(spec, self._telemetry(counts, deltas, retries))
+                    store.mark_partial(spec, self._telemetry(counts, deltas, retries, diagnostics))
                     raise InterruptedError("canonical charged interruption")
             except InterruptedError:
                 raise
@@ -895,27 +913,28 @@ class M20Harness:
                     resources = resources.consume(ResourceDimension.PROVIDER_INTERACTION, 1, "provider_failure")
                     counts["provider_interactions"] += 1; counts["decision_cycles"] += 1
                     deltas.append(M20ResourceDelta("provider_failure", provider_interactions=1, decision_cycles=1))
-                return self._record(spec, M20Outcome.PROVIDER_FAILURE, self._telemetry(counts, deltas, retries), binding.adapter_id, initial_resources, resources)
+                return self._record(spec, M20Outcome.PROVIDER_FAILURE, self._telemetry(counts, deltas, retries, diagnostics), binding.adapter_id, initial_resources, resources)
             if proposal.kind is M20ProposalKind.ANSWER:
                 outcome = self.evaluator.evaluate(case, state, proposal.payload)
-                return self._record(spec, outcome, self._telemetry(counts, deltas, retries), binding.adapter_id, initial_resources, resources)
+                return self._record(spec, outcome, self._telemetry(counts, deltas, retries, diagnostics), binding.adapter_id, initial_resources, resources)
             if proposal.action_id not in case.public.actions:
-                return self._record(spec, M20Outcome.INVALID_INTERACTION, self._telemetry(counts, deltas, retries), binding.adapter_id, initial_resources, resources)
+                return self._record(spec, M20Outcome.INVALID_INTERACTION, self._telemetry(counts, deltas, retries, diagnostics), binding.adapter_id, initial_resources, resources)
             resources = resources.consume(ResourceDimension.TOOL_ATTEMPT, 1, "action")
             counts["tool_attempts"] += 1; deltas.append(M20ResourceDelta("action", tool_attempts=1))
             result = self.environment.apply(case.public, state, proposal)
             if result.infrastructure_failure:
-                return self._record(spec, M20Outcome.INFRASTRUCTURE_FAILURE, self._telemetry(counts, deltas, retries), binding.adapter_id, initial_resources, resources)
+                return self._record(spec, M20Outcome.INFRASTRUCTURE_FAILURE, self._telemetry(counts, deltas, retries, diagnostics), binding.adapter_id, initial_resources, resources)
             state, recoverable = result.state, result.recoverable
             if result.terminal:
-                return self._record(spec, M20Outcome.FAILURE_OR_INCORRECT, self._telemetry(counts, deltas, retries), binding.adapter_id, initial_resources, resources)
-        return self._record(spec, M20Outcome.INCOMPLETE, self._telemetry(counts, deltas, retries), binding.adapter_id, initial_resources, resources)
+                return self._record(spec, M20Outcome.FAILURE_OR_INCORRECT, self._telemetry(counts, deltas, retries, diagnostics), binding.adapter_id, initial_resources, resources)
+        return self._record(spec, M20Outcome.INCOMPLETE, self._telemetry(counts, deltas, retries, diagnostics), binding.adapter_id, initial_resources, resources)
 
     @staticmethod
     def _telemetry(counts: Mapping[str, int], deltas: list[M20ResourceDelta],
-                   retries: list[M20RetryAttempt]) -> M20ResourceTelemetry:
+                   retries: list[M20RetryAttempt], diagnostics: list[Mapping[str, Any]] | None = None) -> M20ResourceTelemetry:
         return M20ResourceTelemetry(**counts, provider_transport_attempts=len(retries),
-                                    deltas=tuple(deltas), retries=tuple(retries))
+                                    deltas=tuple(deltas), retries=tuple(retries),
+                                    response_diagnostics=tuple(dict(item) for item in (diagnostics or ())))
 
     def replacement(self, failed: M20ExecutionRecord) -> M20ExecutionSpec:
         if failed.outcome not in {M20Outcome.PROVIDER_FAILURE, M20Outcome.INFRASTRUCTURE_FAILURE}:

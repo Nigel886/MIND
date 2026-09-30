@@ -3,12 +3,17 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from src.evaluation.m20_deepseek_execution import M20DeepSeekCalibrationRunner, M20DeepSeekProposalAdapter
+from src.evaluation.m20_deepseek_execution import (M20DeepSeekCalibrationRunner,
+    M20DeepSeekProposalAdapter, M20ResponseRejection)
 from src.evaluation.m20_harness import M20EvidenceStore, M20Namespace, M20ProviderAttemptError
 
 
 def response(value):
     return {"model": "deepseek-flash", "choices": [{"message": {"content": json.dumps(value)}}]}
+
+
+def raw_response(content):
+    return {"model": "deepseek-flash", "choices": [{"message": {"content": content}}]}
 
 
 class M20DeepSeekExecutionTest(unittest.TestCase):
@@ -37,6 +42,35 @@ class M20DeepSeekExecutionTest(unittest.TestCase):
         wrong = dict(runner.frozen); wrong["provider_hash"] = "0" * 64
         with self.assertRaises(ValueError): M20DeepSeekCalibrationRunner(wrong)
 
+    def test_response_shape_taxonomy_is_structural_and_fail_closed(self):
+        case = M20DeepSeekCalibrationRunner().manifest.cases[0]
+        matrix = (
+            ("", M20ResponseRejection.EMPTY_RESPONSE),
+            ("not-json", M20ResponseRejection.NON_JSON_RESPONSE),
+            ("[]", M20ResponseRejection.JSON_TOP_LEVEL_TYPE_INVALID),
+            ("{}", M20ResponseRejection.MISSING_REQUIRED_FIELD),
+            ('{"kind":"unknown"}', M20ResponseRejection.UNKNOWN_RESPONSE_KIND),
+            ('{"kind":"act","action_id":"not-legal"}', M20ResponseRejection.ACTION_NOT_LEGAL_IN_PUBLIC_STATE),
+            ('{"kind":"act","action_id":1}', M20ResponseRejection.ACTION_PAYLOAD_INVALID),
+            ('{"kind":"answer","payload":"x","extra":1}', M20ResponseRejection.ANSWER_PAYLOAD_INVALID),
+        )
+        for content, category in matrix:
+            adapter = M20DeepSeekProposalAdapter(lambda *_args, value=content: raw_response(value))
+            with self.assertRaises(M20ProviderAttemptError) as raised:
+                adapter.propose(case.public, {})
+            self.assertEqual(raised.exception.reason, category.value)
+            self.assertEqual(adapter.last_diagnostic["rejection_category"], category.value)
+        secret = "CANARY_RESPONSE_SECRET"
+        adapter = M20DeepSeekProposalAdapter(
+            lambda *_args: response({"kind": "unknown", "x": secret}))
+        with self.assertRaises(M20ProviderAttemptError):
+            adapter.propose(case.public, {})
+        self.assertNotIn(secret, json.dumps(adapter.last_diagnostic, sort_keys=True))
+        for value in ({"kind": "act", "action_id": "advance"}, {"kind": "answer", "payload": "wrong"}):
+            adapter = M20DeepSeekProposalAdapter(lambda *_args, result=value: response(result))
+            self.assertTrue(adapter.propose(case.public, {}).kind)
+            self.assertTrue(adapter.last_diagnostic["admitted_proposal"])
+
     def test_fake_e2e_retry_persistence_and_reinvocation(self):
         runner, item = M20DeepSeekCalibrationRunner(), M20DeepSeekCalibrationRunner().work_items()[0]
         calls = []
@@ -49,6 +83,9 @@ class M20DeepSeekExecutionTest(unittest.TestCase):
             adaptive, fixed = runner.run_work_item(item, fake, store)
             self.assertEqual((adaptive.spec.pair_id, fixed.spec.pair_id), (item.pair_id, item.pair_id))
             self.assertEqual((adaptive.telemetry.provider_interactions, adaptive.telemetry.provider_transport_attempts), (1, 2))
+            self.assertEqual(len(adaptive.telemetry.response_diagnostics), 2)
+            self.assertEqual(adaptive.telemetry.response_diagnostics[0]["rejection_category"], "PROVIDER_TRANSPORT_FAILURE")
+            self.assertTrue(adaptive.telemetry.response_diagnostics[1]["admitted_proposal"])
             self.assertEqual(len(store.records()), 2)
             again = runner.run_work_item(item, fake, store)
             self.assertEqual((again[0].digest, again[1].digest), (adaptive.digest, fixed.digest))

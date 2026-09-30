@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -19,6 +20,19 @@ M20_DEEPSEEK_REQUEST_CONTRACT = "m20_deepseek_public_proposal_v1"
 M20_DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
 M20_PROVIDER_VISIBLE_STATE_FIELDS = ("progress", "observed", "recovered", "resource_note")
 Transport = Callable[[Mapping[str, Any], int], Mapping[str, Any]]
+
+class M20ResponseRejection(str, Enum):
+    EMPTY_RESPONSE = "EMPTY_RESPONSE"
+    NON_JSON_RESPONSE = "NON_JSON_RESPONSE"
+    JSON_TOP_LEVEL_TYPE_INVALID = "JSON_TOP_LEVEL_TYPE_INVALID"
+    MISSING_REQUIRED_FIELD = "MISSING_REQUIRED_FIELD"
+    UNKNOWN_RESPONSE_KIND = "UNKNOWN_RESPONSE_KIND"
+    UNKNOWN_ACTION_ID = "UNKNOWN_ACTION_ID"
+    ACTION_PAYLOAD_INVALID = "ACTION_PAYLOAD_INVALID"
+    ACTION_NOT_LEGAL_IN_PUBLIC_STATE = "ACTION_NOT_LEGAL_IN_PUBLIC_STATE"
+    ANSWER_PAYLOAD_INVALID = "ANSWER_PAYLOAD_INVALID"
+    PROVIDER_TRANSPORT_FAILURE = "PROVIDER_TRANSPORT_FAILURE"
+    OTHER_CONTRACT_REJECTION = "OTHER_CONTRACT_REJECTION"
 
 
 def _public_request(case: Any, state: Mapping[str, Any]) -> dict[str, Any]:
@@ -38,21 +52,64 @@ def _public_request(case: Any, state: Mapping[str, Any]) -> dict[str, Any]:
             "stream": False, "thinking": {"type": "disabled"}}
 
 
-def _parse(raw: Mapping[str, Any], case: Any) -> M20Proposal:
+def _parse(raw: Mapping[str, Any], case: Any) -> tuple[M20Proposal, dict[str, Any]]:
+    """Parse only the frozen public contract and retain no raw response content."""
+    diagnostic = {
+        "response_present": bool(raw), "response_mode": "json_object",
+        "json_parse_success": False, "top_level_type": None, "field_names": [],
+        "kind": None, "required_field_mask": [], "payload_top_level_type": None,
+        "parser_stage": "envelope", "rejection_category": None,
+        "legality_result": None, "admitted_proposal": False,
+    }
     try:
         if set(raw) - {"model", "choices", "usage"} or raw["model"] != M20_REAL_PROVIDER_CONFIGURATION.model:
             raise ValueError("unexpected provider envelope")
         content = raw["choices"][0]["message"]["content"]
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError(M20ResponseRejection.EMPTY_RESPONSE.value)
+        diagnostic["parser_stage"] = "json_decode"
         value = json.loads(content)
-        if not isinstance(value, dict) or set(value) not in ({"kind", "action_id"}, {"kind", "payload"}):
-            raise ValueError("unexpected proposal shape")
-        if value["kind"] == "act" and isinstance(value["action_id"], str) and value["action_id"] in case.actions:
-            return M20Proposal(M20ProposalKind.ACT, value["action_id"])
-        if value["kind"] == "answer" and "payload" in value:
-            return M20Proposal(M20ProposalKind.ANSWER, payload=value["payload"])
-        raise ValueError("illegal proposal")
-    except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as error:
-        raise M20ProviderAttemptError("malformed_or_illegal_m20_proposal", False) from error
+        diagnostic["json_parse_success"] = True
+        diagnostic["top_level_type"] = type(value).__name__
+        if not isinstance(value, dict):
+            raise ValueError(M20ResponseRejection.JSON_TOP_LEVEL_TYPE_INVALID.value)
+        diagnostic["field_names"] = sorted(value)
+        diagnostic["kind"] = value.get("kind")
+        diagnostic["parser_stage"] = "schema"
+        if "kind" not in value:
+            raise ValueError(M20ResponseRejection.MISSING_REQUIRED_FIELD.value)
+        if value["kind"] == "act":
+            diagnostic["required_field_mask"] = ["kind", "action_id"]
+            if "action_id" not in value:
+                raise ValueError(M20ResponseRejection.MISSING_REQUIRED_FIELD.value)
+            if set(value) != {"kind", "action_id"} or not isinstance(value["action_id"], str):
+                raise ValueError(M20ResponseRejection.ACTION_PAYLOAD_INVALID.value)
+            diagnostic["parser_stage"] = "legality"
+            diagnostic["legality_result"] = value["action_id"] in case.actions
+            if not diagnostic["legality_result"]:
+                raise ValueError(M20ResponseRejection.ACTION_NOT_LEGAL_IN_PUBLIC_STATE.value)
+            diagnostic["admitted_proposal"] = True
+            return M20Proposal(M20ProposalKind.ACT, value["action_id"]), diagnostic
+        if value["kind"] == "answer":
+            diagnostic["required_field_mask"] = ["kind", "payload"]
+            if "payload" not in value:
+                raise ValueError(M20ResponseRejection.MISSING_REQUIRED_FIELD.value)
+            if set(value) != {"kind", "payload"}:
+                raise ValueError(M20ResponseRejection.ANSWER_PAYLOAD_INVALID.value)
+            diagnostic["payload_top_level_type"] = type(value["payload"]).__name__
+            diagnostic["admitted_proposal"] = True
+            return M20Proposal(M20ProposalKind.ANSWER, payload=value["payload"]), diagnostic
+        raise ValueError(M20ResponseRejection.UNKNOWN_RESPONSE_KIND.value)
+    except json.JSONDecodeError as error:
+        diagnostic["rejection_category"] = M20ResponseRejection.NON_JSON_RESPONSE.value
+        raise M20ProviderAttemptError(diagnostic["rejection_category"], False, diagnostic) from error
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        category = str(error)
+        diagnostic["rejection_category"] = (
+            category if category in M20ResponseRejection._value2member_map_
+            else M20ResponseRejection.OTHER_CONTRACT_REJECTION.value
+        )
+        raise M20ProviderAttemptError(diagnostic["rejection_category"], False, diagnostic) from error
 
 
 class M20DeepSeekProposalAdapter:
@@ -64,17 +121,32 @@ class M20DeepSeekProposalAdapter:
             raise ValueError("frozen DeepSeek configuration mismatch")
         self._transport = transport
         self.requests: list[dict[str, Any]] = []
+        self.last_diagnostic: dict[str, Any] | None = None
 
     def propose(self, public_case: Any, public_state: Mapping[str, Any]) -> M20Proposal:
         request = _public_request(public_case, public_state)
         self.requests.append(request)
         try:
             raw = self._transport(request, M20_REAL_PROVIDER_CONFIGURATION.timeout_seconds)
-        except M20ProviderAttemptError:
+        except M20ProviderAttemptError as error:
+            self.last_diagnostic = dict(error.diagnostic)
             raise
         except (TimeoutError, OSError) as error:
-            raise M20ProviderAttemptError("transport_failure", True) from error
-        return _parse(raw, public_case)
+            self.last_diagnostic = {
+                "response_present": False, "response_mode": "json_object",
+                "json_parse_success": False, "top_level_type": None, "field_names": [],
+                "kind": None, "required_field_mask": [], "payload_top_level_type": None,
+                "parser_stage": "transport", "rejection_category": M20ResponseRejection.PROVIDER_TRANSPORT_FAILURE.value,
+                "legality_result": None, "admitted_proposal": False,
+            }
+            raise M20ProviderAttemptError(M20ResponseRejection.PROVIDER_TRANSPORT_FAILURE.value, True,
+                                          self.last_diagnostic) from error
+        try:
+            proposal, self.last_diagnostic = _parse(raw, public_case)
+            return proposal
+        except M20ProviderAttemptError as error:
+            self.last_diagnostic = dict(error.diagnostic)
+            raise
 
 
 def live_deepseek_transport(body: Mapping[str, Any], timeout_seconds: int) -> Mapping[str, Any]:
