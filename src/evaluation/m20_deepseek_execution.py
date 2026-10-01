@@ -19,6 +19,7 @@ from src.evaluation.m20_real_execution_configuration import M20_REAL_PROVIDER_CO
 M20_DEEPSEEK_REQUEST_CONTRACT = "m20_deepseek_public_proposal_v1"
 M20_DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
 M20_PROVIDER_VISIBLE_STATE_FIELDS = ("progress", "observed", "recovered", "resource_note")
+M20_PUBLIC_ACTION_IDS = frozenset({"advance", "observe", "recover", "distract"})
 Transport = Callable[[Mapping[str, Any], int], Mapping[str, Any]]
 
 class M20ResponseRejection(str, Enum):
@@ -85,6 +86,8 @@ def _parse(raw: Mapping[str, Any], case: Any) -> tuple[M20Proposal, dict[str, An
             if set(value) != {"kind", "action_id"} or not isinstance(value["action_id"], str):
                 raise ValueError(M20ResponseRejection.ACTION_PAYLOAD_INVALID.value)
             diagnostic["parser_stage"] = "legality"
+            if value["action_id"] not in M20_PUBLIC_ACTION_IDS:
+                raise ValueError(M20ResponseRejection.UNKNOWN_ACTION_ID.value)
             diagnostic["legality_result"] = value["action_id"] in case.actions
             if not diagnostic["legality_result"]:
                 raise ValueError(M20ResponseRejection.ACTION_NOT_LEGAL_IN_PUBLIC_STATE.value)

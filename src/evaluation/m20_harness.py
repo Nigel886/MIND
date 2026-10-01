@@ -49,6 +49,7 @@ class M20Namespace(str, Enum):
     FAKE = "m20_fake_v1"
     PILOT = "m20_pilot_v1"
     CALIBRATION = "m20_calibration_v1"
+    DIAGNOSTIC = "m20_real_provider_diagnostic_v1"
     FORMAL = "m20_formal_v1"
 
 
@@ -775,11 +776,16 @@ class M20Harness:
     """Official adapter -> environment -> evaluator -> evidence path."""
 
     def __init__(self, manifest: M20Manifest, registry: M20ConditionRegistry,
-                 environment: M20Environment, evaluator: M20Evaluator) -> None:
+                 environment: M20Environment, evaluator: M20Evaluator,
+                 provenance_overrides: Mapping[str, str] | None = None) -> None:
         if environment.environment_id != manifest.environment_id or evaluator.evaluator_id != manifest.evaluator_id:
             raise M20IntegrityError("environment/evaluator identity mismatch")
         self.manifest, self.registry, self.environment, self.evaluator = manifest, registry, environment, evaluator
         self._active_store: M20EvidenceStore | None = None
+        self._provenance_overrides = dict(provenance_overrides or {})
+        if any(not isinstance(key, str) or not key or not isinstance(value, str) or not value
+               for key, value in self._provenance_overrides.items()):
+            raise ValueError("provenance overrides must be non-empty strings")
 
     def validate_reachability(self, case: M20Case) -> bool:
         state = self.environment.initial_public_state(case.public)
@@ -954,6 +960,7 @@ class M20Harness:
                       "evaluator": self.manifest.evaluator_id, "condition": spec.condition.value,
                       "provider_hash": spec.provider_hash, "metrics": M20_METRIC_VERSION,
                       "protocol": M20_PROTOCOL_ID, "manifest": self.manifest.digest, "adapter": adapter_id}
+        provenance.update(self._provenance_overrides)
         telemetry.reconcile(self.manifest.resource_ceiling, pre, post)
         record = M20ExecutionRecord(spec.execution_id, spec.pair_id, spec, outcome, telemetry,
                                     self.manifest.environment_id, self.manifest.evaluator_id, adapter_id, provenance,

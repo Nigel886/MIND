@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 
 from src.evaluation.m20_deepseek_execution import (M20DeepSeekCalibrationRunner,
@@ -50,7 +51,7 @@ class M20DeepSeekExecutionTest(unittest.TestCase):
             ("[]", M20ResponseRejection.JSON_TOP_LEVEL_TYPE_INVALID),
             ("{}", M20ResponseRejection.MISSING_REQUIRED_FIELD),
             ('{"kind":"unknown"}', M20ResponseRejection.UNKNOWN_RESPONSE_KIND),
-            ('{"kind":"act","action_id":"not-legal"}', M20ResponseRejection.ACTION_NOT_LEGAL_IN_PUBLIC_STATE),
+            ('{"kind":"act","action_id":"not-legal"}', M20ResponseRejection.UNKNOWN_ACTION_ID),
             ('{"kind":"act","action_id":1}', M20ResponseRejection.ACTION_PAYLOAD_INVALID),
             ('{"kind":"answer","payload":"x","extra":1}', M20ResponseRejection.ANSWER_PAYLOAD_INVALID),
         )
@@ -60,6 +61,11 @@ class M20DeepSeekExecutionTest(unittest.TestCase):
                 adapter.propose(case.public, {})
             self.assertEqual(raised.exception.reason, category.value)
             self.assertEqual(adapter.last_diagnostic["rejection_category"], category.value)
+        limited_case = SimpleNamespace(task_text=case.public.task_text, actions={"observe": {}})
+        adapter = M20DeepSeekProposalAdapter(lambda *_args: response({"kind": "act", "action_id": "advance"}))
+        with self.assertRaises(M20ProviderAttemptError) as raised:
+            adapter.propose(limited_case, {})
+        self.assertEqual(raised.exception.reason, M20ResponseRejection.ACTION_NOT_LEGAL_IN_PUBLIC_STATE.value)
         secret = "CANARY_RESPONSE_SECRET"
         adapter = M20DeepSeekProposalAdapter(
             lambda *_args: response({"kind": "unknown", "x": secret}))
