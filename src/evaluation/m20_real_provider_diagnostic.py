@@ -34,6 +34,8 @@ M20_POST_ENVELOPE_DIAGNOSTIC_PROTOCOL = "m20_real_provider_diagnostic_v2"
 M20_POST_ENVELOPE_DIAGNOSTIC_PATH = Path("evaluation/results/m20_real_provider_diagnostic_v2")
 M20_POST_ENVELOPE_DIAGNOSTIC_V3_PROTOCOL = "m20_real_provider_diagnostic_v3"
 M20_POST_ENVELOPE_DIAGNOSTIC_V3_PATH = Path("evaluation/results/m20_real_provider_diagnostic_v3")
+M20_POST_ENVELOPE_DIAGNOSTIC_V4_PROTOCOL = "m20_real_provider_diagnostic_v4"
+M20_POST_ENVELOPE_DIAGNOSTIC_V4_PATH = Path("evaluation/results/m20_real_provider_diagnostic_v4")
 M20_RESPONSE_TELEMETRY_SCHEMA = "m20_deepseek_response_shape_telemetry_v1"
 M20_DIAGNOSTIC_CASE_ID = "m20.real.multi_step_stateful.01"
 M20_DIAGNOSTIC_COHORT = "multi_step_stateful"
@@ -60,6 +62,10 @@ M20_DIAGNOSTIC_GENERATION_V2 = M20DiagnosticGeneration(
 M20_DIAGNOSTIC_GENERATION_V3 = M20DiagnosticGeneration(
     M20_POST_ENVELOPE_DIAGNOSTIC_V3_PROTOCOL, M20_POST_ENVELOPE_DIAGNOSTIC_V3_PATH,
     "m20_post_envelope_v3_live_diagnostic_authorization_v1", M20Namespace.DIAGNOSTIC_V3,
+)
+M20_DIAGNOSTIC_GENERATION_V4 = M20DiagnosticGeneration(
+    M20_POST_ENVELOPE_DIAGNOSTIC_V4_PROTOCOL, M20_POST_ENVELOPE_DIAGNOSTIC_V4_PATH,
+    "m20_post_envelope_v4_live_diagnostic_authorization_v1", M20Namespace.DIAGNOSTIC_V4,
 )
 
 
@@ -91,6 +97,10 @@ def build_post_envelope_diagnostic_protocol() -> dict[str, Any]:
 
 def build_post_envelope_v3_diagnostic_protocol() -> dict[str, Any]:
     return _build_protocol(M20_DIAGNOSTIC_GENERATION_V3)
+
+
+def build_post_envelope_v4_diagnostic_protocol() -> dict[str, Any]:
+    return _build_protocol(M20_DIAGNOSTIC_GENERATION_V4)
 
 
 def _build_protocol(generation: M20DiagnosticGeneration) -> dict[str, Any]:
@@ -196,7 +206,7 @@ class M20RealProviderDiagnosticRunner:
     def __init__(self, protocol: Mapping[str, Any] | None = None,
                  generation: M20DiagnosticGeneration = M20_DIAGNOSTIC_GENERATION_V1) -> None:
         if generation not in (M20_DIAGNOSTIC_GENERATION_V1, M20_DIAGNOSTIC_GENERATION_V2,
-                              M20_DIAGNOSTIC_GENERATION_V3):
+                              M20_DIAGNOSTIC_GENERATION_V3, M20_DIAGNOSTIC_GENERATION_V4):
             raise ValueError("unsupported diagnostic generation")
         self.generation = generation
         self.protocol = dict(_build_protocol(generation) if protocol is None else protocol)
@@ -271,20 +281,22 @@ class M20RealProviderDiagnosticRunner:
 
     @staticmethod
     def namespace_accounting(store: M20DiagnosticEvidenceStore) -> dict[str, int]:
-        if store.namespace not in (M20Namespace.DIAGNOSTIC, M20Namespace.DIAGNOSTIC_V3):
+        if store.namespace not in (M20Namespace.DIAGNOSTIC, M20Namespace.DIAGNOSTIC_V3,
+                                   M20Namespace.DIAGNOSTIC_V4):
             raise ValueError("diagnostic accounting requires diagnostic namespace")
         return {"diagnostic": len(store.records()), "pilot": 0, "calibration": 0, "formal": 0}
 
 
 __all__ = [
     "M20DiagnosticEvidenceStore", "M20DiagnosticGeneration", "M20DiagnosticWorkItem", "M20FakeDiagnosticTransport",
-    "M20_DIAGNOSTIC_GENERATION_V1", "M20_DIAGNOSTIC_GENERATION_V2", "M20_DIAGNOSTIC_GENERATION_V3",
+    "M20_DIAGNOSTIC_GENERATION_V1", "M20_DIAGNOSTIC_GENERATION_V2", "M20_DIAGNOSTIC_GENERATION_V3", "M20_DIAGNOSTIC_GENERATION_V4",
     "M20LiveDiagnosticTransport", "M20_LIVE_DIAGNOSTIC_AUTHORIZATION_VERSION",
     "M20_POST_ENVELOPE_DIAGNOSTIC_PATH", "M20_POST_ENVELOPE_DIAGNOSTIC_PROTOCOL",
     "M20_POST_ENVELOPE_DIAGNOSTIC_V3_PATH", "M20_POST_ENVELOPE_DIAGNOSTIC_V3_PROTOCOL",
+    "M20_POST_ENVELOPE_DIAGNOSTIC_V4_PATH", "M20_POST_ENVELOPE_DIAGNOSTIC_V4_PROTOCOL",
     "M20_REAL_PROVIDER_DIAGNOSTIC_PATH", "M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL",
     "M20_RESPONSE_TELEMETRY_SCHEMA", "M20RealProviderDiagnosticRunner",
     "M20ResponseRejection", "build_diagnostic_protocol", "build_post_envelope_diagnostic_protocol",
-    "build_post_envelope_v3_diagnostic_protocol", "expected_live_authorization_artifact",
+    "build_post_envelope_v3_diagnostic_protocol", "build_post_envelope_v4_diagnostic_protocol", "expected_live_authorization_artifact",
     "load_live_authorization_artifact", "validate_diagnostic_protocol",
 ]

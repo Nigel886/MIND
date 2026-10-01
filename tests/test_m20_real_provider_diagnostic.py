@@ -4,14 +4,18 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from src.evaluation.m20_harness import M20Condition, M20IntegrityError, M20LifecycleState, M20Namespace
+from src.evaluation.m20_harness import (
+    M20Condition, M20IntegrityError, M20LifecycleState, M20Namespace,
+    M20ProviderAttemptError,
+)
 from src.evaluation.m20_real_provider_diagnostic import (
     M20DiagnosticWorkItem, M20FakeDiagnosticTransport,
-    M20_DIAGNOSTIC_GENERATION_V2, M20_DIAGNOSTIC_GENERATION_V3,
+    M20_DIAGNOSTIC_GENERATION_V2, M20_DIAGNOSTIC_GENERATION_V3, M20_DIAGNOSTIC_GENERATION_V4,
     M20LiveDiagnosticTransport,
     M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL, M20_RESPONSE_TELEMETRY_SCHEMA,
     M20RealProviderDiagnosticRunner, build_diagnostic_protocol,
     build_post_envelope_diagnostic_protocol, build_post_envelope_v3_diagnostic_protocol,
+    build_post_envelope_v4_diagnostic_protocol,
     expected_live_authorization_artifact,
 )
 
@@ -21,6 +25,69 @@ def response(value):
 
 
 class M20RealProviderDiagnosticTest(unittest.TestCase):
+    def test_v4_is_a_new_isolated_generation_with_shared_retry_persistence(self):
+        v1 = M20RealProviderDiagnosticRunner()
+        v2 = M20RealProviderDiagnosticRunner(generation=M20_DIAGNOSTIC_GENERATION_V2)
+        v3 = M20RealProviderDiagnosticRunner(generation=M20_DIAGNOSTIC_GENERATION_V3)
+        v4 = M20RealProviderDiagnosticRunner(generation=M20_DIAGNOSTIC_GENERATION_V4)
+        generations = (v1, v2, v3, v4)
+        self.assertEqual(v4.protocol["protocol"], "m20_real_provider_diagnostic_v4")
+        self.assertEqual(v4.protocol["namespace"], "m20_real_provider_diagnostic_v4")
+        self.assertEqual(v4.protocol["result_path"], "evaluation/results/m20_real_provider_diagnostic_v4")
+        self.assertEqual(v4.protocol, build_post_envelope_v4_diagnostic_protocol())
+        self.assertEqual(len(v4.work_items()), 2)
+        self.assertEqual({item.spec.condition for item in v4.work_items()},
+                         {M20Condition.MIND_ADAPTIVE, M20Condition.MIND_FIXED})
+        self.assertEqual({item.spec.namespace for item in v4.work_items()}, {M20Namespace.DIAGNOSTIC_V4})
+        self.assertEqual({item.spec.repetition for item in v4.work_items()}, {1})
+        v4_ids = {item.work_id for item in v4.work_items()}
+        self.assertEqual(len(v4_ids), 2)
+        for runner in (v1, v2, v3):
+            self.assertTrue(v4_ids.isdisjoint(item.work_id for item in runner.work_items()))
+            self.assertNotEqual(v4.protocol["digest"], runner.protocol["digest"])
+
+        artifacts = [expected_live_authorization_artifact(runner.generation) for runner in generations]
+        with TemporaryDirectory() as directory:
+            root, store = Path(directory), v4.store(Path(directory) / "v4")
+            fake = M20FakeDiagnosticTransport(lambda *_: response({"kind": "answer", "payload": "wrong"}))
+            for runner in (v1, v2, v3):
+                with self.assertRaises(ValueError):
+                    v4.run_fake(runner.work_items()[0], fake, store)
+                with self.assertRaises(ValueError):
+                    runner.run_fake(v4.work_items()[0], fake, runner.store(root / runner.generation.protocol))
+            artifact = root / "authorization.json"
+            live = M20LiveDiagnosticTransport(lambda *_: response({"kind": "answer", "payload": "wrong"}), True)
+            for stale in artifacts[:-1]:
+                artifact.write_text(json.dumps(stale), encoding="utf-8")
+                with self.assertRaises(PermissionError):
+                    v4.run_live(v4.work_items()[0], live, store, artifact)
+
+        for field, value in (("digest", "0" * 64),
+                             ("result_path", "evaluation/results/m20_real_provider_diagnostic_v3")):
+            invalid = build_post_envelope_v4_diagnostic_protocol(); invalid[field] = value
+            with self.assertRaises(ValueError):
+                M20RealProviderDiagnosticRunner(invalid, M20_DIAGNOSTIC_GENERATION_V4)
+
+        class RetryOnce:
+            def __init__(self): self.calls = 0
+            def __call__(self, *_):
+                self.calls += 1
+                if self.calls == 1:
+                    raise M20ProviderAttemptError("transport", True)
+                return {"id": "metadata-only", **response({"kind": "answer", "payload": "wrong"})}
+
+        with TemporaryDirectory() as directory:
+            retry, store = RetryOnce(), v4.store(Path(directory) / "v4-retry")
+            record = v4.run_fake(v4.work_items()[1], M20FakeDiagnosticTransport(retry), store)
+            persisted = store.records()[0]
+            attempts = persisted["telemetry"]["retries"]
+            self.assertEqual((record.telemetry.provider_interactions, record.telemetry.provider_transport_attempts), (1, 2))
+            self.assertEqual([attempt["retry_index"] for attempt in attempts], [0, 1])
+            self.assertEqual(len({attempt["logical_operation_id"] for attempt in attempts}), 1)
+            self.assertEqual(len({attempt["physical_attempt_id"] for attempt in attempts}), 2)
+            self.assertEqual({attempt["owner"] for attempt in attempts}, {"provider_client"})
+            self.assertTrue(persisted["telemetry"]["response_diagnostics"][0]["admitted_proposal"])
+
     def test_v3_namespace_binding_supersedes_blocked_v2_without_mutation(self):
         v1 = M20RealProviderDiagnosticRunner()
         v2 = M20RealProviderDiagnosticRunner(generation=M20_DIAGNOSTIC_GENERATION_V2)
