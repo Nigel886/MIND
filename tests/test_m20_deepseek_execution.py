@@ -43,6 +43,18 @@ class M20DeepSeekExecutionTest(unittest.TestCase):
         wrong = dict(runner.frozen); wrong["provider_hash"] = "0" * 64
         with self.assertRaises(ValueError): M20DeepSeekCalibrationRunner(wrong)
 
+    def test_openai_compatible_envelope_metadata_is_normalized_fail_closed(self):
+        case = M20DeepSeekCalibrationRunner().manifest.cases[0]
+        envelope = response({"kind": "answer", "payload": "wrong"})
+        envelope.update({"id": "chatcmpl-test", "object": "chat.completion", "created": 1,
+                         "system_fingerprint": "opaque", "service_tier": "default"})
+        proposal = M20DeepSeekProposalAdapter(lambda *_: envelope).propose(case.public, {})
+        self.assertEqual(proposal.payload, "wrong")
+        for invalid in ({"model": "deepseek-flash", "id": "only-metadata"}, [],
+                        {"model": "deepseek-flash", "choices": [], "unexpected": True}):
+            with self.assertRaises(M20ProviderAttemptError):
+                M20DeepSeekProposalAdapter(lambda *_args, value=invalid: value).propose(case.public, {})
+
     def test_response_shape_taxonomy_is_structural_and_fail_closed(self):
         case = M20DeepSeekCalibrationRunner().manifest.cases[0]
         matrix = (

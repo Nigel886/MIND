@@ -20,6 +20,7 @@ M20_DEEPSEEK_REQUEST_CONTRACT = "m20_deepseek_public_proposal_v1"
 M20_DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
 M20_PROVIDER_VISIBLE_STATE_FIELDS = ("progress", "observed", "recovered", "resource_note")
 M20_PUBLIC_ACTION_IDS = frozenset({"advance", "observe", "recover", "distract"})
+M20_DEEPSEEK_ENVELOPE_METADATA_FIELDS = frozenset({"id", "object", "created", "system_fingerprint", "service_tier"})
 Transport = Callable[[Mapping[str, Any], int], Mapping[str, Any]]
 
 class M20ResponseRejection(str, Enum):
@@ -115,6 +116,21 @@ def _parse(raw: Mapping[str, Any], case: Any) -> tuple[M20Proposal, dict[str, An
         raise M20ProviderAttemptError(diagnostic["rejection_category"], False, diagnostic) from error
 
 
+def _normalize_deepseek_envelope(raw: Any) -> Mapping[str, Any]:
+    """Discard only documented transport metadata before the unchanged strict parser."""
+    diagnostic = {"response_present": bool(raw), "response_mode": "json_object",
+                  "json_parse_success": False, "top_level_type": None, "field_names": [],
+                  "kind": None, "required_field_mask": [], "payload_top_level_type": None,
+                  "parser_stage": "envelope", "rejection_category": M20ResponseRejection.OTHER_CONTRACT_REJECTION.value,
+                  "legality_result": None, "admitted_proposal": False}
+    if not isinstance(raw, Mapping):
+        raise M20ProviderAttemptError(M20ResponseRejection.OTHER_CONTRACT_REJECTION.value, False, diagnostic)
+    allowed = {"model", "choices", "usage"} | M20_DEEPSEEK_ENVELOPE_METADATA_FIELDS
+    if set(raw) - allowed:
+        raise M20ProviderAttemptError(M20ResponseRejection.OTHER_CONTRACT_REJECTION.value, False, diagnostic)
+    return {key: raw[key] for key in ("model", "choices", "usage") if key in raw}
+
+
 class M20DeepSeekProposalAdapter:
     """A provider boundary that cannot receive evaluator/private case objects."""
     retry_ceiling = 2
@@ -145,7 +161,7 @@ class M20DeepSeekProposalAdapter:
             raise M20ProviderAttemptError(M20ResponseRejection.PROVIDER_TRANSPORT_FAILURE.value, True,
                                           self.last_diagnostic) from error
         try:
-            proposal, self.last_diagnostic = _parse(raw, public_case)
+            proposal, self.last_diagnostic = _parse(_normalize_deepseek_envelope(raw), public_case)
             return proposal
         except M20ProviderAttemptError as error:
             self.last_diagnostic = dict(error.diagnostic)
