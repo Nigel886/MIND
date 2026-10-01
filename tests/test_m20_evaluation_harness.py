@@ -256,6 +256,83 @@ class M20HarnessTest(unittest.TestCase):
             self.assertEqual([item["retry_index"] for item in attempts], [0, 1])
             self.assertEqual(attempts[0]["reason"], "transport")
 
+    def test_provider_retry_identity_is_one_logical_chain_per_operation(self):
+        class FourOperationsOneRetry:
+            retry_ceiling = 2
+            def __init__(self): self.calls = 0
+            def propose(self, public_case, public_state):
+                self.calls += 1
+                if self.calls == 2:
+                    raise M20ProviderAttemptError("transport", True)
+                return (
+                    M20Proposal(M20ProposalKind.ACT, "recover") if self.calls in (1, 3) else
+                    M20Proposal(M20ProposalKind.ACT, "step") if self.calls == 4 else
+                    M20Proposal(M20ProposalKind.ANSWER, payload=7)
+                )
+
+        with TemporaryDirectory() as directory:
+            store = M20EvidenceStore(Path(directory), manifest(), M20Namespace.FAKE)
+            record = self.harness().run(spec(), M20FixedAdapter(FourOperationsOneRetry()), store)
+            persisted = store.records()[0]
+            attempts = persisted["telemetry"]["retries"]
+            self.assertEqual(record.outcome, M20Outcome.SUCCESS)
+            self.assertEqual((record.telemetry.provider_interactions, len(attempts)), (4, 5))
+            self.assertEqual(len({item["logical_operation_id"] for item in attempts}), 4)
+            self.assertEqual([item["retry_index"] for item in attempts].count(1), 1)
+            retry = next(item for item in attempts if item["retry_index"] == 1)
+            initial = next(item for item in attempts if item["logical_operation_id"] == retry["logical_operation_id"] and item["retry_index"] == 0)
+            self.assertNotEqual(initial["physical_attempt_id"], retry["physical_attempt_id"])
+            M20EvidenceStore.validate_persisted(persisted)
+
+    def test_two_provider_retries_remain_one_logical_operation(self):
+        class ThreeAttempts:
+            retry_ceiling = 2
+            def __init__(self): self.calls = 0
+            def propose(self, public_case, public_state):
+                self.calls += 1
+                if self.calls < 3:
+                    raise M20ProviderAttemptError("transport", True)
+                return M20Proposal(M20ProposalKind.ANSWER, payload=0)
+
+        with TemporaryDirectory() as directory:
+            store = M20EvidenceStore(Path(directory), manifest(), M20Namespace.FAKE)
+            record = self.harness().run(spec(), M20FixedAdapter(ThreeAttempts()), store)
+            attempts = store.records()[0]["telemetry"]["retries"]
+            self.assertEqual((record.telemetry.provider_interactions, len(attempts)), (1, 3))
+            self.assertEqual([item["retry_index"] for item in attempts], [0, 1, 2])
+            self.assertEqual(len({item["logical_operation_id"] for item in attempts}), 1)
+
+    def test_retry_identity_negative_matrix_fails_closed(self):
+        class Retrying:
+            retry_ceiling = 1
+            def __init__(self): self.calls = 0
+            def propose(self, public_case, public_state):
+                self.calls += 1
+                if self.calls == 1:
+                    raise M20ProviderAttemptError("transport", True)
+                return M20Proposal(M20ProposalKind.ANSWER, payload=0)
+
+        with TemporaryDirectory() as directory:
+            store = M20EvidenceStore(Path(directory), manifest(), M20Namespace.FAKE)
+            self.harness().run(spec(), M20FixedAdapter(Retrying()), store)
+            baseline = store.records()[0]
+
+        def changed(change):
+            value = deepcopy(baseline)
+            change(value)
+            with self.assertRaises(Exception):
+                M20EvidenceStore.validate_persisted(value)
+
+        changed(lambda value: value["telemetry"]["retries"][1].__setitem__("logical_operation_id", "wrong-parent"))
+        changed(lambda value: value["telemetry"]["retries"][1].__setitem__("retry_index", 0))
+        changed(lambda value: value["telemetry"].__setitem__("retries", list(reversed(value["telemetry"]["retries"]))))
+        changed(lambda value: value["telemetry"]["retries"][1].__setitem__("physical_attempt_id", value["telemetry"]["retries"][0]["physical_attempt_id"]))
+        changed(lambda value: (value["telemetry"].__setitem__("retries", value["telemetry"]["retries"][1:]), value["telemetry"].__setitem__("provider_transport_attempts", 1)))
+        changed(lambda value: value["telemetry"].__setitem__("provider_interactions", 2))
+        changed(lambda value: value["telemetry"].__setitem__("provider_interactions", 0))
+        changed(lambda value: value["telemetry"].__setitem__("provider_transport_attempts", 1))
+        changed(lambda value: value["telemetry"]["retries"][1].__setitem__("owner", "caller_rerun"))
+
     def test_adaptive_native_callback_uses_same_retry_boundary(self):
         class RetryingProvider:
             retry_ceiling = 1

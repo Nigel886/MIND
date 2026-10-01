@@ -185,6 +185,33 @@ class M20RetryAttempt:
 
 
 @dataclass(frozen=True)
+class M20ProviderOperation:
+    """One logical provider interaction and its provider-client attempts.
+
+    The operation is allocated once by the harness before the transport is
+    entered.  A retry may only derive a new physical-attempt identity from
+    this object; it may not allocate a new logical interaction.
+    """
+    logical_operation_id: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.logical_operation_id, str) or not self.logical_operation_id:
+            raise ValueError("logical provider operation identity is required")
+
+    def attempt(self, retry_index: int, reason: str | None, terminal: bool) -> M20RetryAttempt:
+        if not isinstance(retry_index, int) or retry_index < 0:
+            raise ValueError("provider retry index is invalid")
+        return M20RetryAttempt(
+            self.logical_operation_id,
+            canonical_hash({"logical_operation_id": self.logical_operation_id, "retry_index": retry_index}),
+            retry_index,
+            M20RetryOwner.PROVIDER_CLIENT,
+            reason,
+            terminal,
+        )
+
+
+@dataclass(frozen=True)
 class M20PublicCase:
     case_id: str
     cohort: str
@@ -831,7 +858,7 @@ class M20Harness:
 
     @staticmethod
     def _provider_attempt(adapter: Any, public: M20PublicCase, state: Mapping[str, Any],
-                          logical: str, retries: list[M20RetryAttempt],
+                          operation: M20ProviderOperation, retries: list[M20RetryAttempt],
                           diagnostics: list[Mapping[str, Any]]) -> M20Proposal:
         """Single provider-client retry owner; evidence is emitted at each call."""
         ceiling = getattr(adapter._provider, "retry_ceiling", 0)
@@ -843,16 +870,12 @@ class M20Harness:
                 diagnostic = getattr(adapter._provider, "last_diagnostic", None)
                 if isinstance(diagnostic, Mapping):
                     diagnostics.append(dict(diagnostic))
-                retries.append(M20RetryAttempt(logical, logical + f":{index}", index,
-                                                M20RetryOwner.PROVIDER_CLIENT,
-                                                None if index == 0 else "provider_retry", True))
+                retries.append(operation.attempt(index, None if index == 0 else "provider_retry", True))
                 return proposal
             except M20ProviderAttemptError as error:
                 if error.diagnostic:
                     diagnostics.append(dict(error.diagnostic))
-                retries.append(M20RetryAttempt(logical, logical + f":{index}", index,
-                                                M20RetryOwner.PROVIDER_CLIENT, error.reason,
-                                                not error.retryable or index == ceiling))
+                retries.append(operation.attempt(index, error.reason, not error.retryable or index == ceiling))
                 if not error.retryable or index == ceiling:
                     raise
         raise M20IntegrityError("unreachable retry state")
@@ -894,17 +917,23 @@ class M20Harness:
                 counts["reasoning_steps"] += 1; deltas.append(M20ResourceDelta("reason", reasoning_steps=1))
             try:
                 if isinstance(adapter, M20AdaptiveAdapter):
-                    logical = canonical_hash({"execution": spec.execution_id, "cycle": counts["decision_cycles"] + 1})
+                    operation = M20ProviderOperation(canonical_hash({
+                        "execution": spec.execution_id,
+                        "logical_provider_interaction": counts["provider_interactions"] + 1,
+                    }))
                     proposal, native_result = adapter.native_propose(
                         case.public, state, resources,
-                        lambda: self._provider_attempt(adapter, case.public, state, logical, retries, diagnostics))
+                        lambda: self._provider_attempt(adapter, case.public, state, operation, retries, diagnostics))
                     resources = native_result.state.resource_state
                     counts["provider_interactions"] += 1; counts["decision_cycles"] += 1
                     deltas.append(M20ResourceDelta("native:" + resources.transition_identity,
                                                     provider_interactions=1, decision_cycles=1))
                 else:
-                    logical = canonical_hash({"execution": spec.execution_id, "cycle": counts["decision_cycles"] + 1})
-                    proposal = self._provider_attempt(adapter, case.public, state, logical, retries, diagnostics)
+                    operation = M20ProviderOperation(canonical_hash({
+                        "execution": spec.execution_id,
+                        "logical_provider_interaction": counts["provider_interactions"] + 1,
+                    }))
+                    proposal = self._provider_attempt(adapter, case.public, state, operation, retries, diagnostics)
                     resources = resources.consume(ResourceDimension.PROVIDER_INTERACTION, 1, "proposal")
                     counts["provider_interactions"] += 1; counts["decision_cycles"] += 1
                     deltas.append(M20ResourceDelta("proposal", provider_interactions=1, decision_cycles=1))
