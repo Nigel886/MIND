@@ -30,6 +30,8 @@ from src.evaluation.m20_real_execution_configuration import (
 
 M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL = "m20_real_provider_diagnostic_v1"
 M20_REAL_PROVIDER_DIAGNOSTIC_PATH = Path("evaluation/results/m20_real_provider_diagnostic_v1")
+M20_POST_ENVELOPE_DIAGNOSTIC_PROTOCOL = "m20_real_provider_diagnostic_v2"
+M20_POST_ENVELOPE_DIAGNOSTIC_PATH = Path("evaluation/results/m20_real_provider_diagnostic_v2")
 M20_RESPONSE_TELEMETRY_SCHEMA = "m20_deepseek_response_shape_telemetry_v1"
 M20_DIAGNOSTIC_CASE_ID = "m20.real.multi_step_stateful.01"
 M20_DIAGNOSTIC_COHORT = "multi_step_stateful"
@@ -37,9 +39,26 @@ M20_DIAGNOSTIC_PAYLOAD_DIGEST = "b977a2170893e1c1cfc7d7571e275df3f47d95259b29415
 M20_LIVE_DIAGNOSTIC_AUTHORIZATION_VERSION = "m20_live_diagnostic_authorization_v1"
 
 
-def _expected_protocol() -> dict[str, Any]:
+@dataclass(frozen=True)
+class M20DiagnosticGeneration:
+    protocol: str
+    result_path: Path
+    authorization_version: str
+
+
+M20_DIAGNOSTIC_GENERATION_V1 = M20DiagnosticGeneration(
+    M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL, M20_REAL_PROVIDER_DIAGNOSTIC_PATH,
+    M20_LIVE_DIAGNOSTIC_AUTHORIZATION_VERSION,
+)
+M20_DIAGNOSTIC_GENERATION_V2 = M20DiagnosticGeneration(
+    M20_POST_ENVELOPE_DIAGNOSTIC_PROTOCOL, M20_POST_ENVELOPE_DIAGNOSTIC_PATH,
+    "m20_post_envelope_live_diagnostic_authorization_v1",
+)
+
+
+def _expected_protocol(generation: M20DiagnosticGeneration = M20_DIAGNOSTIC_GENERATION_V1) -> dict[str, Any]:
     return {
-        "protocol": M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL,
+        "protocol": generation.protocol,
         "case_source": M20_REAL_CASE_SOURCE_VERSION,
         "case_source_digest": real_case_source_digest(),
         "case_id": M20_DIAGNOSTIC_CASE_ID,
@@ -51,19 +70,28 @@ def _expected_protocol() -> dict[str, Any]:
         "resource_ceiling_identity": M20_REAL_RESOURCE_CEILING.identity,
         "telemetry_schema": M20_RESPONSE_TELEMETRY_SCHEMA,
         "namespace": M20Namespace.DIAGNOSTIC.value,
-        "result_path": M20_REAL_PROVIDER_DIAGNOSTIC_PATH.as_posix(),
+        "result_path": generation.result_path.as_posix(),
     }
 
 
 def build_diagnostic_protocol() -> dict[str, Any]:
-    value = _expected_protocol()
+    return _build_protocol(M20_DIAGNOSTIC_GENERATION_V1)
+
+
+def build_post_envelope_diagnostic_protocol() -> dict[str, Any]:
+    return _build_protocol(M20_DIAGNOSTIC_GENERATION_V2)
+
+
+def _build_protocol(generation: M20DiagnosticGeneration) -> dict[str, Any]:
+    value = _expected_protocol(generation)
     return {**value, "digest": canonical_hash(value)}
 
 
-def validate_diagnostic_protocol(value: Mapping[str, Any]) -> None:
+def validate_diagnostic_protocol(value: Mapping[str, Any],
+                                 generation: M20DiagnosticGeneration = M20_DIAGNOSTIC_GENERATION_V1) -> None:
     candidate = dict(value)
     digest = candidate.pop("digest", None)
-    expected = _expected_protocol()
+    expected = _expected_protocol(generation)
     if digest != canonical_hash(expected) or candidate != expected:
         raise ValueError("diagnostic protocol identity mismatch")
     selected = real_case_definitions()[0]
@@ -73,29 +101,31 @@ def validate_diagnostic_protocol(value: Mapping[str, Any]) -> None:
         raise ValueError("canonical diagnostic representative mismatch")
 
 
-def _authorization_payload() -> dict[str, Any]:
-    protocol = build_diagnostic_protocol()
-    return {"version": M20_LIVE_DIAGNOSTIC_AUTHORIZATION_VERSION,
+def _authorization_payload(generation: M20DiagnosticGeneration = M20_DIAGNOSTIC_GENERATION_V1) -> dict[str, Any]:
+    protocol = _build_protocol(generation)
+    return {"version": generation.authorization_version,
             "protocol_digest": protocol["digest"], "provider_hash": protocol["provider_hash"],
             "resource_ceiling_identity": protocol["resource_ceiling_identity"],
             "telemetry_schema": protocol["telemetry_schema"], "namespace": protocol["namespace"],
-            "work_ids": [item.work_id for item in M20RealProviderDiagnosticRunner().work_items()],
+            "work_ids": [item.work_id for item in M20RealProviderDiagnosticRunner(generation=generation).work_items()],
             "decision": "REAL-PROVIDER CONTRACT DIAGNOSTIC AUTHORIZED"}
 
 
-def expected_live_authorization_artifact() -> dict[str, Any]:
-    payload = _authorization_payload()
+def expected_live_authorization_artifact(
+        generation: M20DiagnosticGeneration = M20_DIAGNOSTIC_GENERATION_V1) -> dict[str, Any]:
+    payload = _authorization_payload(generation)
     return {**payload, "identity": canonical_hash(payload)}
 
 
-def load_live_authorization_artifact(path: Path) -> dict[str, Any]:
+def load_live_authorization_artifact(
+        path: Path, generation: M20DiagnosticGeneration = M20_DIAGNOSTIC_GENERATION_V1) -> dict[str, Any]:
     if not path.is_file():
         raise PermissionError("live diagnostic authorization artifact is absent")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise PermissionError("live diagnostic authorization artifact is invalid") from error
-    expected = expected_live_authorization_artifact()
+    expected = expected_live_authorization_artifact(generation)
     if value != expected:
         raise PermissionError("live diagnostic authorization identity mismatch")
     return value
@@ -142,8 +172,8 @@ class M20LiveDiagnosticTransport:
 class M20DiagnosticEvidenceStore(M20EvidenceStore):
     """Append-only isolated store; it rejects every non-diagnostic namespace."""
 
-    def __init__(self, root: Path, manifest: M20Manifest) -> None:
-        if manifest.execution_manifest_digest != build_diagnostic_protocol()["digest"]:
+    def __init__(self, root: Path, manifest: M20Manifest, protocol_digest: str) -> None:
+        if manifest.execution_manifest_digest != protocol_digest:
             raise ValueError("diagnostic store protocol binding mismatch")
         super().__init__(root, manifest, M20Namespace.DIAGNOSTIC)
 
@@ -151,22 +181,26 @@ class M20DiagnosticEvidenceStore(M20EvidenceStore):
 class M20RealProviderDiagnosticRunner:
     """Two-work-item diagnostic contract, deliberately restricted to fake transports."""
 
-    def __init__(self, protocol: Mapping[str, Any] | None = None) -> None:
-        self.protocol = dict(build_diagnostic_protocol() if protocol is None else protocol)
-        validate_diagnostic_protocol(self.protocol)
+    def __init__(self, protocol: Mapping[str, Any] | None = None,
+                 generation: M20DiagnosticGeneration = M20_DIAGNOSTIC_GENERATION_V1) -> None:
+        if generation not in (M20_DIAGNOSTIC_GENERATION_V1, M20_DIAGNOSTIC_GENERATION_V2):
+            raise ValueError("unsupported diagnostic generation")
+        self.generation = generation
+        self.protocol = dict(_build_protocol(generation) if protocol is None else protocol)
+        validate_diagnostic_protocol(self.protocol, generation)
         definition = real_case_definitions()[0]
         case = definition.to_case()
         ceiling = M20ResourceCeiling(M20_REAL_RESOURCE_CEILING.identity, 8, 4, 4, 8)
         pairing = (M20PairingMetadata(case.public.case_id, case.cluster_id, case.payload_digest,
                                       case.environment_id, case.evaluator_id, ceiling.identity),)
-        self.manifest = M20Manifest(M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL,
+        self.manifest = M20Manifest(self.generation.protocol,
                                     "m20_environment_v1", "m20_evaluator_v1", (case,),
                                     M20_REAL_CASE_SOURCE_VERSION, pairing, ceiling,
                                     execution_manifest_digest=self.protocol["digest"])
         self.harness = M20Harness(
             self.manifest, M20ConditionRegistry(M20_REAL_PROVIDER_CONFIGURATION.identity_hash),
             M20RealEnvironment(), M20RealEvaluator(),
-            {"diagnostic_protocol": M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL,
+            {"diagnostic_protocol": self.generation.protocol,
              "response_telemetry_schema": M20_RESPONSE_TELEMETRY_SCHEMA},
         )
 
@@ -176,7 +210,7 @@ class M20RealProviderDiagnosticRunner:
                                   "repetition": 1, "conditions": self.protocol["conditions"]})
         items = tuple(M20DiagnosticWorkItem(
             self.protocol["digest"],
-            M20ExecutionSpec(M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL, case.public.case_id, 1, condition,
+            M20ExecutionSpec(self.generation.protocol, case.public.case_id, 1, condition,
                              M20Namespace.DIAGNOSTIC, self.protocol["digest"],
                              M20_REAL_PROVIDER_CONFIGURATION.identity_hash, case.cluster_id,
                              case.payload_digest, case.environment_id, case.evaluator_id,
@@ -190,7 +224,7 @@ class M20RealProviderDiagnosticRunner:
         return items
 
     def store(self, root: Path) -> M20DiagnosticEvidenceStore:
-        return M20DiagnosticEvidenceStore(root, self.manifest)
+        return M20DiagnosticEvidenceStore(root, self.manifest, self.protocol["digest"])
 
     def run_fake(self, item: M20DiagnosticWorkItem, transport: M20FakeDiagnosticTransport,
                  store: M20DiagnosticEvidenceStore, interrupt_before_execution: bool = False) -> Any:
@@ -209,7 +243,7 @@ class M20RealProviderDiagnosticRunner:
             raise PermissionError("live diagnostic credential is not ready")
         if not isinstance(store, M20DiagnosticEvidenceStore) or store.manifest.digest != self.manifest.digest:
             raise ValueError("diagnostic store identity mismatch")
-        load_live_authorization_artifact(authorization_artifact)
+        load_live_authorization_artifact(authorization_artifact, self.generation)
         return self._run(item, transport, store, False)
 
     def _run(self, item: M20DiagnosticWorkItem, transport: Transport,
@@ -230,10 +264,12 @@ class M20RealProviderDiagnosticRunner:
 
 
 __all__ = [
-    "M20DiagnosticEvidenceStore", "M20DiagnosticWorkItem", "M20FakeDiagnosticTransport",
+    "M20DiagnosticEvidenceStore", "M20DiagnosticGeneration", "M20DiagnosticWorkItem", "M20FakeDiagnosticTransport",
+    "M20_DIAGNOSTIC_GENERATION_V1", "M20_DIAGNOSTIC_GENERATION_V2",
     "M20LiveDiagnosticTransport", "M20_LIVE_DIAGNOSTIC_AUTHORIZATION_VERSION",
+    "M20_POST_ENVELOPE_DIAGNOSTIC_PATH", "M20_POST_ENVELOPE_DIAGNOSTIC_PROTOCOL",
     "M20_REAL_PROVIDER_DIAGNOSTIC_PATH", "M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL",
     "M20_RESPONSE_TELEMETRY_SCHEMA", "M20RealProviderDiagnosticRunner",
-    "M20ResponseRejection", "build_diagnostic_protocol", "expected_live_authorization_artifact",
+    "M20ResponseRejection", "build_diagnostic_protocol", "build_post_envelope_diagnostic_protocol", "expected_live_authorization_artifact",
     "load_live_authorization_artifact", "validate_diagnostic_protocol",
 ]

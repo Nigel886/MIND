@@ -7,9 +7,11 @@ import unittest
 from src.evaluation.m20_harness import M20Condition, M20IntegrityError, M20LifecycleState, M20Namespace
 from src.evaluation.m20_real_provider_diagnostic import (
     M20DiagnosticWorkItem, M20FakeDiagnosticTransport,
+    M20_DIAGNOSTIC_GENERATION_V2,
     M20LiveDiagnosticTransport,
     M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL, M20_RESPONSE_TELEMETRY_SCHEMA,
-    M20RealProviderDiagnosticRunner, build_diagnostic_protocol, expected_live_authorization_artifact,
+    M20RealProviderDiagnosticRunner, build_diagnostic_protocol,
+    build_post_envelope_diagnostic_protocol, expected_live_authorization_artifact,
 )
 
 
@@ -18,6 +20,50 @@ def response(value):
 
 
 class M20RealProviderDiagnosticTest(unittest.TestCase):
+    def test_post_envelope_generation_is_distinct_and_fail_closed(self):
+        v1 = M20RealProviderDiagnosticRunner()
+        v2 = M20RealProviderDiagnosticRunner(generation=M20_DIAGNOSTIC_GENERATION_V2)
+        v1_items, v2_items = v1.work_items(), v2.work_items()
+        self.assertEqual(len(v2_items), 2)
+        self.assertEqual({item.spec.condition for item in v2_items},
+                         {M20Condition.MIND_ADAPTIVE, M20Condition.MIND_FIXED})
+        self.assertEqual(v2.protocol["protocol"], "m20_real_provider_diagnostic_v2")
+        self.assertEqual(v2.protocol["result_path"], "evaluation/results/m20_real_provider_diagnostic_v2")
+        self.assertTrue({item.work_id for item in v1_items}.isdisjoint(item.work_id for item in v2_items))
+        self.assertEqual(v2_items[0].spec.case_id, "m20.real.multi_step_stateful.01")
+        self.assertEqual(v2_items[0].spec.payload_digest,
+                         "b977a2170893e1c1cfc7d7571e275df3f47d95259b29415e2d1bdea1202069be")
+        self.assertNotEqual(build_diagnostic_protocol()["digest"],
+                            build_post_envelope_diagnostic_protocol()["digest"])
+        fake = M20FakeDiagnosticTransport(lambda *_: response({"kind": "answer", "payload": "wrong"}))
+        with TemporaryDirectory() as directory:
+            root, store = Path(directory), v2.store(Path(directory) / "v2")
+            with self.assertRaises(ValueError):
+                v2.run_fake(v1_items[0], fake, store)
+            with self.assertRaises(ValueError):
+                v1.run_fake(v2_items[0], fake, v1.store(root / "v1"))
+            record = v2.run_fake(v2_items[0], fake, store)
+            self.assertEqual(v2.run_fake(v2_items[0], fake, store).digest, record.digest)
+            self.assertEqual(record.provenance["diagnostic_protocol"], "m20_real_provider_diagnostic_v2")
+            self.assertTrue(record.telemetry.response_diagnostics[0]["admitted_proposal"])
+            self.assertEqual(v2.namespace_accounting(store),
+                             {"diagnostic": 1, "pilot": 0, "calibration": 0, "formal": 0})
+            artifact = root / "authorization.json"
+            artifact.write_text(json.dumps(expected_live_authorization_artifact()), encoding="utf-8")
+            live = M20LiveDiagnosticTransport(lambda *_: response({"kind": "answer", "payload": "wrong"}), True)
+            with self.assertRaises(PermissionError):
+                v2.run_live(v2_items[1], live, store, artifact)
+            artifact.write_text(json.dumps(expected_live_authorization_artifact(M20_DIAGNOSTIC_GENERATION_V2)), encoding="utf-8")
+            self.assertTrue(v2.run_live(v2_items[1], live, store, artifact).telemetry.response_diagnostics[0]["admitted_proposal"])
+        for field, value in (("case_id", "other"), ("payload_digest", "0" * 64),
+                             ("conditions", [M20Condition.MIND_ADAPTIVE.value]),
+                             ("repetition", 2), ("provider_hash", "0" * 64),
+                             ("resource_ceiling_identity", "wrong"),
+                             ("telemetry_schema", "wrong"), ("protocol", "wrong")):
+            protocol = build_post_envelope_diagnostic_protocol(); protocol[field] = value
+            with self.assertRaises(ValueError):
+                M20RealProviderDiagnosticRunner(protocol, M20_DIAGNOSTIC_GENERATION_V2)
+
     def test_exact_two_work_items_and_fail_closed_protocol_identity(self):
         runner = M20RealProviderDiagnosticRunner()
         items = runner.work_items()
