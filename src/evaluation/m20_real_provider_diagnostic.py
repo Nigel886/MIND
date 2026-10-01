@@ -32,6 +32,8 @@ M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL = "m20_real_provider_diagnostic_v1"
 M20_REAL_PROVIDER_DIAGNOSTIC_PATH = Path("evaluation/results/m20_real_provider_diagnostic_v1")
 M20_POST_ENVELOPE_DIAGNOSTIC_PROTOCOL = "m20_real_provider_diagnostic_v2"
 M20_POST_ENVELOPE_DIAGNOSTIC_PATH = Path("evaluation/results/m20_real_provider_diagnostic_v2")
+M20_POST_ENVELOPE_DIAGNOSTIC_V3_PROTOCOL = "m20_real_provider_diagnostic_v3"
+M20_POST_ENVELOPE_DIAGNOSTIC_V3_PATH = Path("evaluation/results/m20_real_provider_diagnostic_v3")
 M20_RESPONSE_TELEMETRY_SCHEMA = "m20_deepseek_response_shape_telemetry_v1"
 M20_DIAGNOSTIC_CASE_ID = "m20.real.multi_step_stateful.01"
 M20_DIAGNOSTIC_COHORT = "multi_step_stateful"
@@ -44,15 +46,20 @@ class M20DiagnosticGeneration:
     protocol: str
     result_path: Path
     authorization_version: str
+    namespace: M20Namespace
 
 
 M20_DIAGNOSTIC_GENERATION_V1 = M20DiagnosticGeneration(
     M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL, M20_REAL_PROVIDER_DIAGNOSTIC_PATH,
-    M20_LIVE_DIAGNOSTIC_AUTHORIZATION_VERSION,
+    M20_LIVE_DIAGNOSTIC_AUTHORIZATION_VERSION, M20Namespace.DIAGNOSTIC,
 )
 M20_DIAGNOSTIC_GENERATION_V2 = M20DiagnosticGeneration(
     M20_POST_ENVELOPE_DIAGNOSTIC_PROTOCOL, M20_POST_ENVELOPE_DIAGNOSTIC_PATH,
-    "m20_post_envelope_live_diagnostic_authorization_v1",
+    "m20_post_envelope_live_diagnostic_authorization_v1", M20Namespace.DIAGNOSTIC,
+)
+M20_DIAGNOSTIC_GENERATION_V3 = M20DiagnosticGeneration(
+    M20_POST_ENVELOPE_DIAGNOSTIC_V3_PROTOCOL, M20_POST_ENVELOPE_DIAGNOSTIC_V3_PATH,
+    "m20_post_envelope_v3_live_diagnostic_authorization_v1", M20Namespace.DIAGNOSTIC_V3,
 )
 
 
@@ -69,7 +76,7 @@ def _expected_protocol(generation: M20DiagnosticGeneration = M20_DIAGNOSTIC_GENE
         "provider_hash": M20_REAL_PROVIDER_CONFIGURATION.identity_hash,
         "resource_ceiling_identity": M20_REAL_RESOURCE_CEILING.identity,
         "telemetry_schema": M20_RESPONSE_TELEMETRY_SCHEMA,
-        "namespace": M20Namespace.DIAGNOSTIC.value,
+        "namespace": generation.namespace.value,
         "result_path": generation.result_path.as_posix(),
     }
 
@@ -80,6 +87,10 @@ def build_diagnostic_protocol() -> dict[str, Any]:
 
 def build_post_envelope_diagnostic_protocol() -> dict[str, Any]:
     return _build_protocol(M20_DIAGNOSTIC_GENERATION_V2)
+
+
+def build_post_envelope_v3_diagnostic_protocol() -> dict[str, Any]:
+    return _build_protocol(M20_DIAGNOSTIC_GENERATION_V3)
 
 
 def _build_protocol(generation: M20DiagnosticGeneration) -> dict[str, Any]:
@@ -172,10 +183,11 @@ class M20LiveDiagnosticTransport:
 class M20DiagnosticEvidenceStore(M20EvidenceStore):
     """Append-only isolated store; it rejects every non-diagnostic namespace."""
 
-    def __init__(self, root: Path, manifest: M20Manifest, protocol_digest: str) -> None:
+    def __init__(self, root: Path, manifest: M20Manifest, protocol_digest: str,
+                 namespace: M20Namespace) -> None:
         if manifest.execution_manifest_digest != protocol_digest:
             raise ValueError("diagnostic store protocol binding mismatch")
-        super().__init__(root, manifest, M20Namespace.DIAGNOSTIC)
+        super().__init__(root, manifest, namespace)
 
 
 class M20RealProviderDiagnosticRunner:
@@ -183,7 +195,8 @@ class M20RealProviderDiagnosticRunner:
 
     def __init__(self, protocol: Mapping[str, Any] | None = None,
                  generation: M20DiagnosticGeneration = M20_DIAGNOSTIC_GENERATION_V1) -> None:
-        if generation not in (M20_DIAGNOSTIC_GENERATION_V1, M20_DIAGNOSTIC_GENERATION_V2):
+        if generation not in (M20_DIAGNOSTIC_GENERATION_V1, M20_DIAGNOSTIC_GENERATION_V2,
+                              M20_DIAGNOSTIC_GENERATION_V3):
             raise ValueError("unsupported diagnostic generation")
         self.generation = generation
         self.protocol = dict(_build_protocol(generation) if protocol is None else protocol)
@@ -211,7 +224,7 @@ class M20RealProviderDiagnosticRunner:
         items = tuple(M20DiagnosticWorkItem(
             self.protocol["digest"],
             M20ExecutionSpec(self.generation.protocol, case.public.case_id, 1, condition,
-                             M20Namespace.DIAGNOSTIC, self.protocol["digest"],
+                             self.generation.namespace, self.protocol["digest"],
                              M20_REAL_PROVIDER_CONFIGURATION.identity_hash, case.cluster_id,
                              case.payload_digest, case.environment_id, case.evaluator_id,
                              M20_REAL_RESOURCE_CEILING.identity, frozen_pair_id=pair_id),
@@ -224,7 +237,7 @@ class M20RealProviderDiagnosticRunner:
         return items
 
     def store(self, root: Path) -> M20DiagnosticEvidenceStore:
-        return M20DiagnosticEvidenceStore(root, self.manifest, self.protocol["digest"])
+        return M20DiagnosticEvidenceStore(root, self.manifest, self.protocol["digest"], self.generation.namespace)
 
     def run_fake(self, item: M20DiagnosticWorkItem, transport: M20FakeDiagnosticTransport,
                  store: M20DiagnosticEvidenceStore, interrupt_before_execution: bool = False) -> Any:
@@ -258,18 +271,20 @@ class M20RealProviderDiagnosticRunner:
 
     @staticmethod
     def namespace_accounting(store: M20DiagnosticEvidenceStore) -> dict[str, int]:
-        if store.namespace is not M20Namespace.DIAGNOSTIC:
+        if store.namespace not in (M20Namespace.DIAGNOSTIC, M20Namespace.DIAGNOSTIC_V3):
             raise ValueError("diagnostic accounting requires diagnostic namespace")
         return {"diagnostic": len(store.records()), "pilot": 0, "calibration": 0, "formal": 0}
 
 
 __all__ = [
     "M20DiagnosticEvidenceStore", "M20DiagnosticGeneration", "M20DiagnosticWorkItem", "M20FakeDiagnosticTransport",
-    "M20_DIAGNOSTIC_GENERATION_V1", "M20_DIAGNOSTIC_GENERATION_V2",
+    "M20_DIAGNOSTIC_GENERATION_V1", "M20_DIAGNOSTIC_GENERATION_V2", "M20_DIAGNOSTIC_GENERATION_V3",
     "M20LiveDiagnosticTransport", "M20_LIVE_DIAGNOSTIC_AUTHORIZATION_VERSION",
     "M20_POST_ENVELOPE_DIAGNOSTIC_PATH", "M20_POST_ENVELOPE_DIAGNOSTIC_PROTOCOL",
+    "M20_POST_ENVELOPE_DIAGNOSTIC_V3_PATH", "M20_POST_ENVELOPE_DIAGNOSTIC_V3_PROTOCOL",
     "M20_REAL_PROVIDER_DIAGNOSTIC_PATH", "M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL",
     "M20_RESPONSE_TELEMETRY_SCHEMA", "M20RealProviderDiagnosticRunner",
-    "M20ResponseRejection", "build_diagnostic_protocol", "build_post_envelope_diagnostic_protocol", "expected_live_authorization_artifact",
+    "M20ResponseRejection", "build_diagnostic_protocol", "build_post_envelope_diagnostic_protocol",
+    "build_post_envelope_v3_diagnostic_protocol", "expected_live_authorization_artifact",
     "load_live_authorization_artifact", "validate_diagnostic_protocol",
 ]

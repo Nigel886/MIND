@@ -50,6 +50,7 @@ class M20Namespace(str, Enum):
     PILOT = "m20_pilot_v1"
     CALIBRATION = "m20_calibration_v1"
     DIAGNOSTIC = "m20_real_provider_diagnostic_v1"
+    DIAGNOSTIC_V3 = "m20_real_provider_diagnostic_v3"
     FORMAL = "m20_formal_v1"
 
 

@@ -7,11 +7,12 @@ import unittest
 from src.evaluation.m20_harness import M20Condition, M20IntegrityError, M20LifecycleState, M20Namespace
 from src.evaluation.m20_real_provider_diagnostic import (
     M20DiagnosticWorkItem, M20FakeDiagnosticTransport,
-    M20_DIAGNOSTIC_GENERATION_V2,
+    M20_DIAGNOSTIC_GENERATION_V2, M20_DIAGNOSTIC_GENERATION_V3,
     M20LiveDiagnosticTransport,
     M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL, M20_RESPONSE_TELEMETRY_SCHEMA,
     M20RealProviderDiagnosticRunner, build_diagnostic_protocol,
-    build_post_envelope_diagnostic_protocol, expected_live_authorization_artifact,
+    build_post_envelope_diagnostic_protocol, build_post_envelope_v3_diagnostic_protocol,
+    expected_live_authorization_artifact,
 )
 
 
@@ -20,6 +21,40 @@ def response(value):
 
 
 class M20RealProviderDiagnosticTest(unittest.TestCase):
+    def test_v3_namespace_binding_supersedes_blocked_v2_without_mutation(self):
+        v2 = M20RealProviderDiagnosticRunner(generation=M20_DIAGNOSTIC_GENERATION_V2)
+        v3 = M20RealProviderDiagnosticRunner(generation=M20_DIAGNOSTIC_GENERATION_V3)
+        self.assertEqual([item.work_id for item in v2.work_items()], [
+            "716f81a7fed568252a48c1dce7ce42a7fd0a33872e6a6b25ba9390881766535c",
+            "1524725c41d33657fca0b136a56cd516e1861494c1c01d33438e6b80e8f26e27",
+        ])
+        self.assertEqual(v3.protocol["protocol"], "m20_real_provider_diagnostic_v3")
+        self.assertEqual(v3.protocol["namespace"], "m20_real_provider_diagnostic_v3")
+        self.assertEqual(v3.protocol["result_path"], "evaluation/results/m20_real_provider_diagnostic_v3")
+        self.assertNotEqual(v3.protocol["digest"], v2.protocol["digest"])
+        self.assertTrue({item.work_id for item in v3.work_items()}.isdisjoint(
+            item.work_id for item in v2.work_items()))
+        self.assertNotEqual(build_post_envelope_v3_diagnostic_protocol()["digest"],
+                            build_post_envelope_diagnostic_protocol()["digest"])
+        v2_artifact = expected_live_authorization_artifact(M20_DIAGNOSTIC_GENERATION_V2)
+        v3_artifact = expected_live_authorization_artifact(M20_DIAGNOSTIC_GENERATION_V3)
+        self.assertEqual(v3_artifact["namespace"], "m20_real_provider_diagnostic_v3")
+        self.assertNotEqual(v2_artifact, v3_artifact)
+        fake = M20FakeDiagnosticTransport(lambda *_: response({"kind": "answer", "payload": "wrong"}))
+        with TemporaryDirectory() as directory:
+            root, store = Path(directory), v3.store(Path(directory) / "v3")
+            with self.assertRaises(ValueError):
+                v3.run_fake(v2.work_items()[0], fake, store)
+            artifact = root / "authorization.json"
+            artifact.write_text(json.dumps(v2_artifact), encoding="utf-8")
+            live = M20LiveDiagnosticTransport(lambda *_: response({"kind": "answer", "payload": "wrong"}), True)
+            with self.assertRaises(PermissionError):
+                v3.run_live(v3.work_items()[0], live, store, artifact)
+            artifact.write_text(json.dumps(v3_artifact), encoding="utf-8")
+            record = v3.run_live(v3.work_items()[0], live, store, artifact)
+            self.assertEqual(record.spec.namespace, M20Namespace.DIAGNOSTIC_V3)
+            self.assertTrue(record.telemetry.response_diagnostics[0]["admitted_proposal"])
+
     def test_post_envelope_generation_is_distinct_and_fail_closed(self):
         v1 = M20RealProviderDiagnosticRunner()
         v2 = M20RealProviderDiagnosticRunner(generation=M20_DIAGNOSTIC_GENERATION_V2)
