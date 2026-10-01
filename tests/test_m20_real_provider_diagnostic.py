@@ -7,8 +7,9 @@ import unittest
 from src.evaluation.m20_harness import M20Condition, M20IntegrityError, M20LifecycleState, M20Namespace
 from src.evaluation.m20_real_provider_diagnostic import (
     M20DiagnosticWorkItem, M20FakeDiagnosticTransport,
+    M20LiveDiagnosticTransport,
     M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL, M20_RESPONSE_TELEMETRY_SCHEMA,
-    M20RealProviderDiagnosticRunner, build_diagnostic_protocol,
+    M20RealProviderDiagnosticRunner, build_diagnostic_protocol, expected_live_authorization_artifact,
 )
 
 
@@ -116,6 +117,25 @@ class M20RealProviderDiagnosticTest(unittest.TestCase):
             with TemporaryDirectory() as directory:
                 with self.assertRaises(ValueError):
                     runner.run_fake(bad_item, fake, runner.store(Path(directory)))
+
+    def test_live_transport_requires_future_artifact_and_admits_only_typed_boundary(self):
+        runner, item, calls = M20RealProviderDiagnosticRunner(), M20RealProviderDiagnosticRunner().work_items()[1], []
+        live = M20LiveDiagnosticTransport(
+            lambda body, timeout: calls.append((body, timeout)) or response({"kind": "answer", "payload": "wrong"}), True)
+        with TemporaryDirectory() as directory:
+            root = Path(directory); store = runner.store(root / "diagnostic")
+            artifact = root / "authorization.json"
+            with self.assertRaises(PermissionError): runner.run_live(item, live, store, artifact)
+            artifact.write_text("{}", encoding="utf-8")
+            with self.assertRaises(PermissionError): runner.run_live(item, live, store, artifact)
+            artifact.write_text(json.dumps(expected_live_authorization_artifact()), encoding="utf-8")
+            with self.assertRaises(PermissionError): runner.run_live(item, M20LiveDiagnosticTransport(live.responder, False), store, artifact)
+            with self.assertRaises(PermissionError): runner.run_live(item, lambda *_: {}, store, artifact)
+            altered = M20DiagnosticWorkItem(item.protocol_digest, replace(item.spec, repetition=2))
+            with self.assertRaises(ValueError): runner.run_live(altered, live, store, artifact)
+            record = runner.run_live(item, live, store, artifact)
+            self.assertEqual(len(calls), 1)
+            self.assertTrue(record.telemetry.response_diagnostics[0]["admitted_proposal"])
 
 
 if __name__ == "__main__":

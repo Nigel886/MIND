@@ -6,11 +6,13 @@ It deliberately exposes no live-provider execution entry point.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import os
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from src.evaluation.m20_deepseek_execution import (
-    M20DeepSeekProposalAdapter, M20ResponseRejection, Transport,
+    M20DeepSeekProposalAdapter, M20ResponseRejection, Transport, live_deepseek_transport,
 )
 from src.evaluation.m20_harness import (
     M20AdaptiveAdapter, M20Condition, M20ConditionRegistry, M20EvidenceStore,
@@ -32,6 +34,7 @@ M20_RESPONSE_TELEMETRY_SCHEMA = "m20_deepseek_response_shape_telemetry_v1"
 M20_DIAGNOSTIC_CASE_ID = "m20.real.multi_step_stateful.01"
 M20_DIAGNOSTIC_COHORT = "multi_step_stateful"
 M20_DIAGNOSTIC_PAYLOAD_DIGEST = "b977a2170893e1c1cfc7d7571e275df3f47d95259b29415e2d1bdea1202069be"
+M20_LIVE_DIAGNOSTIC_AUTHORIZATION_VERSION = "m20_live_diagnostic_authorization_v1"
 
 
 def _expected_protocol() -> dict[str, Any]:
@@ -70,6 +73,34 @@ def validate_diagnostic_protocol(value: Mapping[str, Any]) -> None:
         raise ValueError("canonical diagnostic representative mismatch")
 
 
+def _authorization_payload() -> dict[str, Any]:
+    protocol = build_diagnostic_protocol()
+    return {"version": M20_LIVE_DIAGNOSTIC_AUTHORIZATION_VERSION,
+            "protocol_digest": protocol["digest"], "provider_hash": protocol["provider_hash"],
+            "resource_ceiling_identity": protocol["resource_ceiling_identity"],
+            "telemetry_schema": protocol["telemetry_schema"], "namespace": protocol["namespace"],
+            "work_ids": [item.work_id for item in M20RealProviderDiagnosticRunner().work_items()],
+            "decision": "REAL-PROVIDER CONTRACT DIAGNOSTIC AUTHORIZED"}
+
+
+def expected_live_authorization_artifact() -> dict[str, Any]:
+    payload = _authorization_payload()
+    return {**payload, "identity": canonical_hash(payload)}
+
+
+def load_live_authorization_artifact(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise PermissionError("live diagnostic authorization artifact is absent")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise PermissionError("live diagnostic authorization artifact is invalid") from error
+    expected = expected_live_authorization_artifact()
+    if value != expected:
+        raise PermissionError("live diagnostic authorization identity mismatch")
+    return value
+
+
 @dataclass(frozen=True)
 class M20DiagnosticWorkItem:
     protocol_digest: str
@@ -85,6 +116,24 @@ class M20FakeDiagnosticTransport:
     """Explicit test-only transport wrapper; real execution has no API here."""
 
     responder: Callable[[Mapping[str, Any], int], Mapping[str, Any]]
+
+    def __call__(self, body: Mapping[str, Any], timeout_seconds: int) -> Mapping[str, Any]:
+        return self.responder(body, timeout_seconds)
+
+
+@dataclass(frozen=True)
+class M20LiveDiagnosticTransport:
+    """Typed live boundary; only constructed after execution-time credential admission."""
+
+    responder: Transport
+    credential_ready: bool
+
+    @classmethod
+    def from_environment(cls) -> "M20LiveDiagnosticTransport":
+        # Credential material is checked only here and never stored in the object.
+        if not isinstance(os.environ.get("DEEPSEEK_API_KEY"), str) or not os.environ["DEEPSEEK_API_KEY"].strip():
+            raise PermissionError("live diagnostic credential is not ready")
+        return cls(live_deepseek_transport, True)
 
     def __call__(self, body: Mapping[str, Any], timeout_seconds: int) -> Mapping[str, Any]:
         return self.responder(body, timeout_seconds)
@@ -149,6 +198,22 @@ class M20RealProviderDiagnosticRunner:
             raise PermissionError("real diagnostic execution is not authorized")
         if not isinstance(store, M20DiagnosticEvidenceStore) or store.manifest.digest != self.manifest.digest:
             raise ValueError("diagnostic store identity mismatch")
+        return self._run(item, transport, store, interrupt_before_execution)
+
+    def run_live(self, item: M20DiagnosticWorkItem, transport: M20LiveDiagnosticTransport,
+                 store: M20DiagnosticEvidenceStore, authorization_artifact: Path) -> Any:
+        """Future-only, artifact-gated live path; #256 creates no authorization artifact."""
+        if not isinstance(transport, M20LiveDiagnosticTransport):
+            raise PermissionError("unsupported arbitrary live transport")
+        if not transport.credential_ready:
+            raise PermissionError("live diagnostic credential is not ready")
+        if not isinstance(store, M20DiagnosticEvidenceStore) or store.manifest.digest != self.manifest.digest:
+            raise ValueError("diagnostic store identity mismatch")
+        load_live_authorization_artifact(authorization_artifact)
+        return self._run(item, transport, store, False)
+
+    def _run(self, item: M20DiagnosticWorkItem, transport: Transport,
+             store: M20DiagnosticEvidenceStore, interrupt_before_execution: bool) -> Any:
         expected = {candidate.work_id: candidate for candidate in self.work_items()}
         if item.work_id not in expected or expected[item.work_id] != item:
             raise ValueError("caller-added or altered diagnostic work is rejected")
@@ -166,7 +231,9 @@ class M20RealProviderDiagnosticRunner:
 
 __all__ = [
     "M20DiagnosticEvidenceStore", "M20DiagnosticWorkItem", "M20FakeDiagnosticTransport",
+    "M20LiveDiagnosticTransport", "M20_LIVE_DIAGNOSTIC_AUTHORIZATION_VERSION",
     "M20_REAL_PROVIDER_DIAGNOSTIC_PATH", "M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL",
     "M20_RESPONSE_TELEMETRY_SCHEMA", "M20RealProviderDiagnosticRunner",
-    "M20ResponseRejection", "build_diagnostic_protocol", "validate_diagnostic_protocol",
+    "M20ResponseRejection", "build_diagnostic_protocol", "expected_live_authorization_artifact",
+    "load_live_authorization_artifact", "validate_diagnostic_protocol",
 ]
