@@ -22,6 +22,7 @@ def response(value):
 
 class M20RealProviderDiagnosticTest(unittest.TestCase):
     def test_v3_namespace_binding_supersedes_blocked_v2_without_mutation(self):
+        v1 = M20RealProviderDiagnosticRunner()
         v2 = M20RealProviderDiagnosticRunner(generation=M20_DIAGNOSTIC_GENERATION_V2)
         v3 = M20RealProviderDiagnosticRunner(generation=M20_DIAGNOSTIC_GENERATION_V3)
         self.assertEqual([item.work_id for item in v2.work_items()], [
@@ -44,7 +45,13 @@ class M20RealProviderDiagnosticTest(unittest.TestCase):
         with TemporaryDirectory() as directory:
             root, store = Path(directory), v3.store(Path(directory) / "v3")
             with self.assertRaises(ValueError):
+                v3.run_fake(v1.work_items()[0], fake, store)
+            with self.assertRaises(ValueError):
                 v3.run_fake(v2.work_items()[0], fake, store)
+            with self.assertRaises(ValueError):
+                v1.run_fake(v3.work_items()[0], fake, v1.store(root / "v1"))
+            with self.assertRaises(ValueError):
+                v2.run_fake(v3.work_items()[0], fake, v2.store(root / "v2"))
             artifact = root / "authorization.json"
             artifact.write_text(json.dumps(v2_artifact), encoding="utf-8")
             live = M20LiveDiagnosticTransport(lambda *_: response({"kind": "answer", "payload": "wrong"}), True)
