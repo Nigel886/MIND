@@ -52,6 +52,7 @@ class M20Namespace(str, Enum):
     DIAGNOSTIC = "m20_real_provider_diagnostic_v1"
     DIAGNOSTIC_V3 = "m20_real_provider_diagnostic_v3"
     DIAGNOSTIC_V4 = "m20_real_provider_diagnostic_v4"
+    DIAGNOSTIC_V5 = "m20_real_provider_diagnostic_v5"
     FORMAL = "m20_formal_v1"
 
 

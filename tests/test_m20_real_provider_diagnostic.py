@@ -10,12 +10,13 @@ from src.evaluation.m20_harness import (
 )
 from src.evaluation.m20_real_provider_diagnostic import (
     M20DiagnosticWorkItem, M20FakeDiagnosticTransport,
-    M20_DIAGNOSTIC_GENERATION_V2, M20_DIAGNOSTIC_GENERATION_V3, M20_DIAGNOSTIC_GENERATION_V4,
+    M20_DIAGNOSTIC_GENERATION_V2, M20_DIAGNOSTIC_GENERATION_V3, M20_DIAGNOSTIC_GENERATION_V4, M20_DIAGNOSTIC_GENERATION_V5,
     M20LiveDiagnosticTransport,
     M20_REAL_PROVIDER_DIAGNOSTIC_PROTOCOL, M20_RESPONSE_TELEMETRY_SCHEMA,
     M20RealProviderDiagnosticRunner, build_diagnostic_protocol,
     build_post_envelope_diagnostic_protocol, build_post_envelope_v3_diagnostic_protocol,
     build_post_envelope_v4_diagnostic_protocol,
+    build_post_envelope_v5_diagnostic_protocol,
     expected_live_authorization_artifact,
 )
 
@@ -25,6 +26,63 @@ def response(value):
 
 
 class M20RealProviderDiagnosticTest(unittest.TestCase):
+    def test_v5_is_isolated_and_binds_admission_before_transport(self):
+        previous = (
+            M20RealProviderDiagnosticRunner(),
+            M20RealProviderDiagnosticRunner(generation=M20_DIAGNOSTIC_GENERATION_V2),
+            M20RealProviderDiagnosticRunner(generation=M20_DIAGNOSTIC_GENERATION_V3),
+            M20RealProviderDiagnosticRunner(generation=M20_DIAGNOSTIC_GENERATION_V4),
+        )
+        v5 = M20RealProviderDiagnosticRunner(generation=M20_DIAGNOSTIC_GENERATION_V5)
+        self.assertEqual(v5.protocol, build_post_envelope_v5_diagnostic_protocol())
+        self.assertEqual((v5.protocol["protocol"], v5.protocol["namespace"], v5.protocol["result_path"]),
+                         ("m20_real_provider_diagnostic_v5", "m20_real_provider_diagnostic_v5",
+                          "evaluation/results/m20_real_provider_diagnostic_v5"))
+        v5_ids = {item.work_id for item in v5.work_items()}
+        self.assertEqual((len(v5_ids), {item.spec.namespace for item in v5.work_items()}),
+                         (2, {M20Namespace.DIAGNOSTIC_V5}))
+        for runner in previous:
+            self.assertTrue(v5_ids.isdisjoint(item.work_id for item in runner.work_items()))
+            self.assertNotEqual(v5.protocol["digest"], runner.protocol["digest"])
+            with TemporaryDirectory() as directory:
+                with self.assertRaises(ValueError):
+                    v5.run_fake(runner.work_items()[0], M20FakeDiagnosticTransport(
+                        lambda *_: response({"kind": "answer", "payload": "wrong"})),
+                        v5.store(Path(directory) / "v5"))
+                with self.assertRaises(ValueError):
+                    runner.run_fake(v5.work_items()[0], M20FakeDiagnosticTransport(
+                        lambda *_: response({"kind": "answer", "payload": "wrong"})),
+                        runner.store(Path(directory) / "prior"))
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory); artifact = root / "authorization.json"
+            artifact.write_text(json.dumps(expected_live_authorization_artifact(M20_DIAGNOSTIC_GENERATION_V5)), encoding="utf-8")
+            calls: list[object] = []
+            record = v5.run_live(v5.work_items()[1], M20LiveDiagnosticTransport(
+                lambda *_: calls.append(object()) or response({"kind": "act", "action_id": "advance"}), True),
+                v5.store(root / "budget"), artifact)
+            persisted = v5.store(root / "budget").records()[0]
+            self.assertEqual((record.outcome.value, len(calls), record.telemetry.provider_interactions,
+                              record.telemetry.provider_transport_attempts), ("incomplete", 4, 4, 4))
+            self.assertEqual(len({item["logical_operation_id"] for item in persisted["telemetry"]["retries"]}), 4)
+
+        class RetryOnce:
+            def __init__(self): self.calls = 0
+            def __call__(self, *_):
+                self.calls += 1
+                if self.calls == 1:
+                    raise M20ProviderAttemptError("transport", True)
+                return response({"kind": "answer", "payload": "wrong"})
+        with TemporaryDirectory() as directory:
+            root = Path(directory); artifact = root / "authorization.json"
+            artifact.write_text(json.dumps(expected_live_authorization_artifact(M20_DIAGNOSTIC_GENERATION_V5)), encoding="utf-8")
+            record = v5.run_live(v5.work_items()[1], M20LiveDiagnosticTransport(RetryOnce(), True),
+                                 v5.store(root / "retry"), artifact)
+            attempts = v5.store(root / "retry").records()[0]["telemetry"]["retries"]
+            self.assertEqual((record.telemetry.provider_interactions, len(attempts)), (1, 2))
+            self.assertEqual([item["retry_index"] for item in attempts], [0, 1])
+            self.assertEqual(len({item["logical_operation_id"] for item in attempts}), 1)
+
     def test_v4_is_a_new_isolated_generation_with_shared_retry_persistence(self):
         v1 = M20RealProviderDiagnosticRunner()
         v2 = M20RealProviderDiagnosticRunner(generation=M20_DIAGNOSTIC_GENERATION_V2)
