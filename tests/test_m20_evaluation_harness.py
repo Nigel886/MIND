@@ -256,6 +256,39 @@ class M20HarnessTest(unittest.TestCase):
             self.assertEqual([item["retry_index"] for item in attempts], [0, 1])
             self.assertEqual(attempts[0]["reason"], "transport")
 
+    def test_fixed_provider_budget_is_admitted_before_transport(self):
+        def limited_harness(provider_budget):
+            item = case()
+            ceiling = M20ResourceCeiling("m20_limited_ceiling_" + str(provider_budget), 8, 8, provider_budget, 8)
+            current = M20Manifest("m20_suite_v1", "m20_environment_v1", "m20_evaluator_v1", (item,),
+                                  "m20_generation_v1", (M20PairingMetadata(
+                                      item.public.case_id, item.cluster_id, item.payload_digest,
+                                      item.environment_id, item.evaluator_id, ceiling.identity,
+                                  ),), ceiling)
+            execution = M20ExecutionSpec(current.suite_id, item.public.case_id, 1, M20Condition.MIND_FIXED,
+                                         M20Namespace.FAKE, current.digest, provider_hash(), item.cluster_id,
+                                         item.payload_digest, item.environment_id, item.evaluator_id, ceiling.identity)
+            return M20Harness(current, M20ConditionRegistry(provider_hash()), Environment(), Evaluator()), execution, current
+
+        class Steps:
+            def __init__(self): self.calls = 0
+            def propose(self, public_case, public_state):
+                self.calls += 1
+                return M20Proposal(M20ProposalKind.ACT, "step")
+
+        for budget in (4, 1):
+            harness, execution, current = limited_harness(budget)
+            provider = Steps()
+            with TemporaryDirectory() as directory:
+                store = M20EvidenceStore(Path(directory), current, M20Namespace.FAKE)
+                record = harness.run(execution, M20FixedAdapter(provider), store)
+                persisted = store.records()[0]
+                self.assertEqual(record.outcome, M20Outcome.INCOMPLETE)
+                self.assertEqual((provider.calls, record.telemetry.provider_interactions,
+                                  record.telemetry.provider_transport_attempts), (budget, budget, budget))
+                self.assertEqual(len({item["logical_operation_id"] for item in persisted["telemetry"]["retries"]}), budget)
+                M20EvidenceStore.validate_persisted(persisted)
+
     def test_provider_retry_identity_is_one_logical_chain_per_operation(self):
         class FourOperationsOneRetry:
             retry_ceiling = 2

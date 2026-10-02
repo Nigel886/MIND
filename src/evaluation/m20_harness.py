@@ -910,6 +910,13 @@ class M20Harness:
         initial_resources = resources
         recoverable = False
         for _ in range(self.manifest.resource_ceiling.decision_cycles):
+            # Resource admission precedes every logical provider operation for
+            # both conditions.  A hard-budget stop has no executable operation,
+            # physical attempt, or provider charge to persist.
+            if resources.allocation(ResourceDimension.PROVIDER_INTERACTION).exhausted:
+                return self._record(spec, M20Outcome.INCOMPLETE,
+                                    self._telemetry(counts, deltas, retries, diagnostics),
+                                    binding.adapter_id, initial_resources, resources)
             if isinstance(adapter, M20FixedAdapter):
                 if recoverable:
                     resources = resources.consume(ResourceDimension.REASONING_STEP, 1, "replan")
@@ -934,10 +941,13 @@ class M20Harness:
                         "execution": spec.execution_id,
                         "logical_provider_interaction": counts["provider_interactions"] + 1,
                     }))
-                    proposal = self._provider_attempt(adapter, case.public, state, operation, retries, diagnostics)
+                    # Reserve the one logical interaction before the first
+                    # physical attempt. Provider-client retries share this
+                    # reservation and cannot add another logical charge.
                     resources = resources.consume(ResourceDimension.PROVIDER_INTERACTION, 1, "proposal")
                     counts["provider_interactions"] += 1; counts["decision_cycles"] += 1
                     deltas.append(M20ResourceDelta("proposal", provider_interactions=1, decision_cycles=1))
+                    proposal = self._provider_attempt(adapter, case.public, state, operation, retries, diagnostics)
                 if interrupt_after_commit and store is not None:
                     store.mark_partial(spec, self._telemetry(counts, deltas, retries, diagnostics))
                     raise InterruptedError("canonical charged interruption")
