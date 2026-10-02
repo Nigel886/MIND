@@ -1,0 +1,14 @@
+{
+  "decision": "REAL-PROVIDER CONTRACT DIAGNOSTIC AUTHORIZED",
+  "identity": "1121c200e57e48f9e1863a2346ed078e8a34d4c43e5f924a2a825a4373e53281",
+  "namespace": "m20_real_provider_diagnostic_v5",
+  "protocol_digest": "34b3ac97415a30df900956f8065acbd7061ab2682ce18b7b6373abf6dc367aa4",
+  "provider_hash": "522fcf28714e168ce9854069468c51d3d3cb565404d7bdad3317e4fcc8f199ad",
+  "resource_ceiling_identity": "m20_real_ceiling_v1:6d497729bdb5d5fd87639a690b3d35064f8588e56268770ccbbecf143f5d1423",
+  "telemetry_schema": "m20_deepseek_response_shape_telemetry_v1",
+  "version": "m20_post_envelope_v5_live_diagnostic_authorization_v1",
+  "work_ids": [
+    "5327a0d66e6be142413ac84e73d2c47de44b9489162dc1a323765c00be117e83",
+    "2c054d2e64a341ebe4df72c62f490696da4d69017b1a3d11f7084849fe9dfddf"
+  ]
+}
