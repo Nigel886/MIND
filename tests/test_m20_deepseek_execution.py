@@ -122,7 +122,8 @@ class M20DeepSeekExecutionTest(unittest.TestCase):
         public_inputs = [json.loads(body["messages"][1]["content"].split("Public input: ", 1)[1]) for body in requests]
         self.assertEqual(public_inputs[0], public_inputs[1])
         for value in public_inputs:
-            self.assertEqual(set(value), {"task", "actions", "state"})
+            self.assertEqual(set(value), {"task", "actions", "state", "legal_decision_kinds"})
+            self.assertEqual(value["legal_decision_kinds"], ["act", "answer"])
             self.assertTrue(set(value["state"]).issubset({"progress", "observed", "recovered", "resource_note"}))
 
 

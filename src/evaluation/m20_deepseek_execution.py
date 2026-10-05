@@ -13,6 +13,7 @@ from src.evaluation.m20_calibration_manifest import build_deepseek_manifest, val
 from src.evaluation.m20_harness import (M20AdaptiveAdapter, M20Case, M20Condition, M20ConditionRegistry,
     M20EvidenceStore, M20ExecutionSpec, M20FixedAdapter, M20Harness, M20Manifest, M20PairingMetadata,
     M20Proposal, M20ProposalKind, M20ProviderAttemptError, M20ResourceCeiling, M20Namespace)
+from src.evaluation.m20_harness import m20_answer_ready
 from src.evaluation.m20_real_case_source import M20RealEnvironment, M20RealEvaluator, real_cases
 from src.evaluation.m20_real_execution_configuration import M20_REAL_PROVIDER_CONFIGURATION, M20_REAL_RESOURCE_CEILING
 
@@ -37,24 +38,32 @@ class M20ResponseRejection(str, Enum):
     OTHER_CONTRACT_REJECTION = "OTHER_CONTRACT_REJECTION"
 
 
-def _public_request(case: Any, state: Mapping[str, Any]) -> dict[str, Any]:
+def _public_request(case: Any, state: Mapping[str, Any], answer_termination_enabled: bool = False) -> dict[str, Any]:
     """The only wire payload: public task, legal actions, and current public state."""
     if not isinstance(state, Mapping):
         raise M20ProviderAttemptError("invalid_public_state", False)
     # This explicit projection is deliberately not a copy of initial/current state:
     # evaluator success predicates can exist in the case model but have no wire path.
     projected_state = {key: state[key] for key in M20_PROVIDER_VISIBLE_STATE_FIELDS if key in state}
-    public = {"task": case.task_text, "actions": sorted(case.actions), "state": projected_state}
-    instruction = ("Return exactly one JSON object with either {\"kind\":\"act\",\"action_id\":<legal action>} "
-                   "or {\"kind\":\"answer\",\"payload\":<answer>}. Use only listed actions. "
-                   "No explanation. Public input: " + json.dumps(public, sort_keys=True, separators=(",", ":")))
+    answer_phase = answer_termination_enabled and m20_answer_ready(state, case)
+    public = {"task": case.task_text, "actions": [] if answer_phase else sorted(case.actions),
+              "state": projected_state,
+              "legal_decision_kinds": ["answer", "stop"] if answer_phase else ["act", "answer"]}
+    if answer_phase:
+        contract = ("Return exactly one JSON object with either {\"kind\":\"answer\",\"payload\":<answer>} "
+                    "or {\"kind\":\"stop\"}. Actions are not legal. No explanation. Public input: ")
+    else:
+        contract = ("Return exactly one JSON object with either {\"kind\":\"act\",\"action_id\":<legal action>} "
+                    "or {\"kind\":\"answer\",\"payload\":<answer>}. Use only listed actions. No explanation. Public input: ")
+    instruction = contract + json.dumps(public, sort_keys=True, separators=(",", ":"))
     return {"model": M20_REAL_PROVIDER_CONFIGURATION.model, "messages": [{"role": "system", "content":
             "M20 public proposal contract " + M20_DEEPSEEK_REQUEST_CONTRACT}, {"role": "user", "content": instruction}],
             "temperature": 0, "top_p": 1.0, "max_tokens": 512, "response_format": {"type": "json_object"},
             "stream": False, "thinking": {"type": "disabled"}}
 
 
-def _parse(raw: Mapping[str, Any], case: Any) -> tuple[M20Proposal, dict[str, Any]]:
+def _parse(raw: Mapping[str, Any], case: Any, state: Mapping[str, Any],
+           answer_termination_enabled: bool = False) -> tuple[M20Proposal, dict[str, Any]]:
     """Parse only the frozen public contract and retain no raw response content."""
     diagnostic = {
         "response_present": bool(raw), "response_mode": "json_object",
@@ -62,6 +71,7 @@ def _parse(raw: Mapping[str, Any], case: Any) -> tuple[M20Proposal, dict[str, An
         "kind": None, "required_field_mask": [], "payload_top_level_type": None,
         "parser_stage": "envelope", "rejection_category": None,
         "legality_result": None, "admitted_proposal": False,
+        "answer_phase": answer_termination_enabled and m20_answer_ready(state, case), "illegal_act_in_answer_phase": False,
     }
     try:
         if set(raw) - {"model", "choices", "usage"} or raw["model"] != M20_REAL_PROVIDER_CONFIGURATION.model:
@@ -87,6 +97,9 @@ def _parse(raw: Mapping[str, Any], case: Any) -> tuple[M20Proposal, dict[str, An
             if set(value) != {"kind", "action_id"} or not isinstance(value["action_id"], str):
                 raise ValueError(M20ResponseRejection.ACTION_PAYLOAD_INVALID.value)
             diagnostic["parser_stage"] = "legality"
+            if answer_termination_enabled and m20_answer_ready(state, case):
+                diagnostic["illegal_act_in_answer_phase"] = True
+                raise ValueError(M20ResponseRejection.ACTION_NOT_LEGAL_IN_PUBLIC_STATE.value)
             if value["action_id"] not in M20_PUBLIC_ACTION_IDS:
                 raise ValueError(M20ResponseRejection.UNKNOWN_ACTION_ID.value)
             diagnostic["legality_result"] = value["action_id"] in case.actions
@@ -103,6 +116,14 @@ def _parse(raw: Mapping[str, Any], case: Any) -> tuple[M20Proposal, dict[str, An
             diagnostic["payload_top_level_type"] = type(value["payload"]).__name__
             diagnostic["admitted_proposal"] = True
             return M20Proposal(M20ProposalKind.ANSWER, payload=value["payload"]), diagnostic
+        if value["kind"] == "stop":
+            diagnostic["required_field_mask"] = ["kind"]
+            if set(value) != {"kind"} or not answer_termination_enabled or not m20_answer_ready(state, case):
+                raise ValueError(M20ResponseRejection.ACTION_NOT_LEGAL_IN_PUBLIC_STATE.value)
+            diagnostic["parser_stage"] = "legality"
+            diagnostic["legality_result"] = True
+            diagnostic["admitted_proposal"] = True
+            return M20Proposal(M20ProposalKind.STOP), diagnostic
         raise ValueError(M20ResponseRejection.UNKNOWN_RESPONSE_KIND.value)
     except json.JSONDecodeError as error:
         diagnostic["rejection_category"] = M20ResponseRejection.NON_JSON_RESPONSE.value
@@ -135,15 +156,18 @@ class M20DeepSeekProposalAdapter:
     """A provider boundary that cannot receive evaluator/private case objects."""
     retry_ceiling = 2
 
-    def __init__(self, transport: Transport) -> None:
+    def __init__(self, transport: Transport, answer_termination_enabled: bool = False) -> None:
         if not callable(transport) or M20_REAL_PROVIDER_CONFIGURATION.identity_hash != "522fcf28714e168ce9854069468c51d3d3cb565404d7bdad3317e4fcc8f199ad":
             raise ValueError("frozen DeepSeek configuration mismatch")
         self._transport = transport
+        if not isinstance(answer_termination_enabled, bool):
+            raise TypeError("answer-termination policy flag is invalid")
+        self._answer_termination_enabled = answer_termination_enabled
         self.requests: list[dict[str, Any]] = []
         self.last_diagnostic: dict[str, Any] | None = None
 
     def propose(self, public_case: Any, public_state: Mapping[str, Any]) -> M20Proposal:
-        request = _public_request(public_case, public_state)
+        request = _public_request(public_case, public_state, self._answer_termination_enabled)
         self.requests.append(request)
         try:
             raw = self._transport(request, M20_REAL_PROVIDER_CONFIGURATION.timeout_seconds)
@@ -161,7 +185,8 @@ class M20DeepSeekProposalAdapter:
             raise M20ProviderAttemptError(M20ResponseRejection.PROVIDER_TRANSPORT_FAILURE.value, True,
                                           self.last_diagnostic) from error
         try:
-            proposal, self.last_diagnostic = _parse(_normalize_deepseek_envelope(raw), public_case)
+            proposal, self.last_diagnostic = _parse(_normalize_deepseek_envelope(raw), public_case, public_state,
+                                                     self._answer_termination_enabled)
             return proposal
         except M20ProviderAttemptError as error:
             self.last_diagnostic = dict(error.diagnostic)

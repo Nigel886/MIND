@@ -72,6 +72,7 @@ class M20ProposalKind(str, Enum):
     ACT = "act"
     OBSERVE = "observe"
     ANSWER = "answer"
+    STOP = "stop"
 
 
 class M20LifecycleState(str, Enum):
@@ -330,11 +331,43 @@ class M20Proposal:
     def __post_init__(self) -> None:
         if not isinstance(self.kind, M20ProposalKind):
             raise TypeError("proposal kind is invalid")
-        if self.kind is M20ProposalKind.ANSWER:
+        if self.kind in {M20ProposalKind.ANSWER, M20ProposalKind.STOP}:
             if self.action_id is not None:
-                raise ValueError("answer has no action id")
+                raise ValueError("terminal proposal has no action id")
+            if self.kind is M20ProposalKind.STOP and self.payload is not None:
+                raise ValueError("stop has no payload")
         elif not isinstance(self.action_id, str) or not self.action_id:
             raise ValueError("action/observation requires public action id")
+
+
+M20_ANSWER_READINESS_VERSION = "m20_public_answer_readiness_v1"
+
+
+def m20_answer_ready(public_state: Mapping[str, Any], task_contract: M20PublicCase) -> bool:
+    """Public, non-evaluative completion predicate shared by both M20 conditions.
+
+    It activates only for the explicit real-case public contract.  It uses
+    public transition facts (progress/observation/recovery) and never sees a
+    private target, witness, evaluator result, or proposed answer payload.
+    """
+    if not isinstance(public_state, Mapping) or task_contract is None:
+        raise TypeError("public answer-readiness inputs are required")
+    required = ("required_progress", "requires_observation", "requires_recovery")
+    if any(key not in public_state for key in required):
+        return False
+    progress = public_state.get("progress")
+    required_progress = public_state.get("required_progress")
+    if (not isinstance(progress, int) or isinstance(progress, bool)
+            or not isinstance(required_progress, int) or isinstance(required_progress, bool)
+            or required_progress < 0):
+        return False
+    if progress < required_progress:
+        return False
+    if bool(public_state["requires_observation"]) and public_state.get("observed") is not True:
+        return False
+    if bool(public_state["requires_recovery"]) and public_state.get("recovered") is not True:
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -532,6 +565,13 @@ class M20ResourceTelemetry:
     deltas: tuple[M20ResourceDelta, ...] = ()
     retries: tuple[M20RetryAttempt, ...] = ()
     response_diagnostics: tuple[Mapping[str, Any], ...] = ()
+    answer_ready_first_cycle: int | None = None
+    answer_phase_entered: bool = False
+    proposal_kinds: tuple[str, ...] = ()
+    answer_proposed: bool = False
+    stop_proposed: bool = False
+    illegal_act_in_answer_phase: bool = False
+    evaluator_handoff: bool = False
 
     def __post_init__(self) -> None:
         if any(not isinstance(getattr(self, key), int) or getattr(self, key) < 0 for key in
@@ -539,6 +579,14 @@ class M20ResourceTelemetry:
             raise ValueError("resource counts must be non-negative ints")
         if any(not isinstance(item, Mapping) for item in self.response_diagnostics):
             raise ValueError("response diagnostics must be mappings")
+        if self.answer_ready_first_cycle is not None and (not isinstance(self.answer_ready_first_cycle, int) or self.answer_ready_first_cycle < 1):
+            raise ValueError("answer-readiness cycle is invalid")
+        if any(not isinstance(value, bool) for value in (self.answer_phase_entered, self.answer_proposed,
+                                                           self.stop_proposed, self.illegal_act_in_answer_phase,
+                                                           self.evaluator_handoff)):
+            raise ValueError("answer-phase telemetry is invalid")
+        if any(not isinstance(value, str) or not value for value in self.proposal_kinds):
+            raise ValueError("proposal-kind telemetry is invalid")
 
     def reconcile(self, ceiling: M20ResourceCeiling, pre: ResourceState | None = None,
                   post: ResourceState | None = None) -> None:
@@ -595,6 +643,11 @@ class M20ExecutionRecord:
         # Omitting it when empty preserves their canonical payloads and digests.
         if not telemetry["response_diagnostics"]:
             del telemetry["response_diagnostics"]
+        for key, default in (("answer_ready_first_cycle", None), ("answer_phase_entered", False),
+                             ("proposal_kinds", ()), ("answer_proposed", False), ("stop_proposed", False),
+                             ("illegal_act_in_answer_phase", False), ("evaluator_handoff", False)):
+            if telemetry.get(key) == default or (key == "proposal_kinds" and telemetry.get(key) == []):
+                telemetry.pop(key, None)
         return {"execution_id": self.execution_id, "pair_id": self.pair_id, "cohort": self.cohort,
                 "lifecycle": self.lifecycle.value,
                 "spec": {"suite_id": self.spec.suite_id, "case_id": self.spec.case_id,
@@ -772,7 +825,11 @@ class M20EvidenceStore:
             telemetry["provider_interactions"], telemetry["decision_cycles"], telemetry["provider_transport_attempts"],
             telemetry.get("token_status", "TOKEN_USAGE_UNAVAILABLE"), telemetry.get("cost_status", "COST_NOT_COMPUTABLE"),
             telemetry.get("latency_status", "LATENCY_NOT_RELIABLE"), deltas, retries,
-            tuple(telemetry.get("response_diagnostics", ())))
+            tuple(telemetry.get("response_diagnostics", ())),
+            telemetry.get("answer_ready_first_cycle"), telemetry.get("answer_phase_entered", False),
+            tuple(telemetry.get("proposal_kinds", ())), telemetry.get("answer_proposed", False),
+            telemetry.get("stop_proposed", False), telemetry.get("illegal_act_in_answer_phase", False),
+            telemetry.get("evaluator_handoff", False))
         return M20ExecutionRecord(value["execution_id"], value["pair_id"], spec, M20Outcome(value["outcome"]), rebuilt,
             value["environment_id"], value["evaluator_id"], value["adapter_id"], value["provenance"], value["cohort"],
             M20LifecycleState(value["lifecycle"]), value.get("resource_pre"), value.get("resource_post"),
@@ -809,12 +866,16 @@ class M20Harness:
 
     def __init__(self, manifest: M20Manifest, registry: M20ConditionRegistry,
                  environment: M20Environment, evaluator: M20Evaluator,
-                 provenance_overrides: Mapping[str, str] | None = None) -> None:
+                 provenance_overrides: Mapping[str, str] | None = None,
+                 answer_termination_enabled: bool = False) -> None:
         if environment.environment_id != manifest.environment_id or evaluator.evaluator_id != manifest.evaluator_id:
             raise M20IntegrityError("environment/evaluator identity mismatch")
         self.manifest, self.registry, self.environment, self.evaluator = manifest, registry, environment, evaluator
         self._active_store: M20EvidenceStore | None = None
         self._provenance_overrides = dict(provenance_overrides or {})
+        if not isinstance(answer_termination_enabled, bool):
+            raise TypeError("answer-termination policy flag is invalid")
+        self.answer_termination_enabled = answer_termination_enabled
         if any(not isinstance(key, str) or not key or not isinstance(value, str) or not value
                for key, value in self._provenance_overrides.items()):
             raise ValueError("provenance overrides must be non-empty strings")
@@ -912,22 +973,30 @@ class M20Harness:
         resources = self.manifest.resource_ceiling.resource_state(spec.execution_id)
         initial_resources = resources
         recoverable = False
-        for _ in range(self.manifest.resource_ceiling.decision_cycles):
+        answer_termination = {"answer_ready_first_cycle": None, "answer_phase_entered": False,
+                              "proposal_kinds": [], "answer_proposed": False, "stop_proposed": False,
+                              "illegal_act_in_answer_phase": False, "evaluator_handoff": False}
+        for cycle in range(1, self.manifest.resource_ceiling.decision_cycles + 1):
             # Resource admission precedes every logical provider operation for
             # both conditions.  A hard-budget stop has no executable operation,
             # physical attempt, or provider charge to persist.
             if resources.allocation(ResourceDimension.PROVIDER_INTERACTION).exhausted:
                 return self._record(spec, M20Outcome.INCOMPLETE,
-                                    self._telemetry(counts, deltas, retries, diagnostics),
+                                    self._telemetry(counts, deltas, retries, diagnostics, answer_termination),
                                     binding.adapter_id, initial_resources, resources)
-            if isinstance(adapter, M20FixedAdapter):
+            answer_phase = self.answer_termination_enabled and m20_answer_ready(state, case.public)
+            if answer_phase:
+                answer_termination["answer_phase_entered"] = True
+                if answer_termination["answer_ready_first_cycle"] is None:
+                    answer_termination["answer_ready_first_cycle"] = cycle
+            if isinstance(adapter, M20FixedAdapter) and not answer_phase:
                 if recoverable:
                     resources = resources.consume(ResourceDimension.REASONING_STEP, 1, "replan")
                     counts["reasoning_steps"] += 1; deltas.append(M20ResourceDelta("replan", reasoning_steps=1))
                 resources = resources.consume(ResourceDimension.REASONING_STEP, 1, "reason")
                 counts["reasoning_steps"] += 1; deltas.append(M20ResourceDelta("reason", reasoning_steps=1))
             try:
-                if isinstance(adapter, M20AdaptiveAdapter):
+                if isinstance(adapter, M20AdaptiveAdapter) and not answer_phase:
                     operation = M20ProviderOperation(canonical_hash({
                         "execution": spec.execution_id,
                         "logical_provider_interaction": counts["provider_interactions"] + 1,
@@ -963,28 +1032,52 @@ class M20Harness:
                     resources = resources.consume(ResourceDimension.PROVIDER_INTERACTION, 1, "provider_failure")
                     counts["provider_interactions"] += 1; counts["decision_cycles"] += 1
                     deltas.append(M20ResourceDelta("provider_failure", provider_interactions=1, decision_cycles=1))
-                return self._record(spec, M20Outcome.PROVIDER_FAILURE, self._telemetry(counts, deltas, retries, diagnostics), binding.adapter_id, initial_resources, resources)
+                if any(item.get("illegal_act_in_answer_phase") is True for item in diagnostics):
+                    answer_termination["illegal_act_in_answer_phase"] = True
+                return self._record(spec, M20Outcome.PROVIDER_FAILURE, self._telemetry(counts, deltas, retries, diagnostics, answer_termination), binding.adapter_id, initial_resources, resources)
+            answer_termination["proposal_kinds"].append(proposal.kind.value)
+            if answer_phase and proposal.kind in {M20ProposalKind.ACT, M20ProposalKind.OBSERVE}:
+                answer_termination["illegal_act_in_answer_phase"] = True
+                return self._record(spec, M20Outcome.INVALID_INTERACTION,
+                                    self._telemetry(counts, deltas, retries, diagnostics, answer_termination),
+                                    binding.adapter_id, initial_resources, resources)
             if proposal.kind is M20ProposalKind.ANSWER:
+                answer_termination["answer_proposed"] = True
+                answer_termination["evaluator_handoff"] = True
                 outcome = self.evaluator.evaluate(case, state, proposal.payload)
-                return self._record(spec, outcome, self._telemetry(counts, deltas, retries, diagnostics), binding.adapter_id, initial_resources, resources)
+                return self._record(spec, outcome, self._telemetry(counts, deltas, retries, diagnostics, answer_termination), binding.adapter_id, initial_resources, resources)
+            if proposal.kind is M20ProposalKind.STOP:
+                answer_termination["stop_proposed"] = True
+                return self._record(spec, M20Outcome.INCOMPLETE,
+                                    self._telemetry(counts, deltas, retries, diagnostics, answer_termination),
+                                    binding.adapter_id, initial_resources, resources)
             if proposal.action_id not in case.public.actions:
-                return self._record(spec, M20Outcome.INVALID_INTERACTION, self._telemetry(counts, deltas, retries, diagnostics), binding.adapter_id, initial_resources, resources)
+                return self._record(spec, M20Outcome.INVALID_INTERACTION, self._telemetry(counts, deltas, retries, diagnostics, answer_termination), binding.adapter_id, initial_resources, resources)
             resources = resources.consume(ResourceDimension.TOOL_ATTEMPT, 1, "action")
             counts["tool_attempts"] += 1; deltas.append(M20ResourceDelta("action", tool_attempts=1))
             result = self.environment.apply(case.public, state, proposal)
             if result.infrastructure_failure:
-                return self._record(spec, M20Outcome.INFRASTRUCTURE_FAILURE, self._telemetry(counts, deltas, retries, diagnostics), binding.adapter_id, initial_resources, resources)
+                return self._record(spec, M20Outcome.INFRASTRUCTURE_FAILURE, self._telemetry(counts, deltas, retries, diagnostics, answer_termination), binding.adapter_id, initial_resources, resources)
             state, recoverable = result.state, result.recoverable
             if result.terminal:
-                return self._record(spec, M20Outcome.FAILURE_OR_INCORRECT, self._telemetry(counts, deltas, retries, diagnostics), binding.adapter_id, initial_resources, resources)
-        return self._record(spec, M20Outcome.INCOMPLETE, self._telemetry(counts, deltas, retries, diagnostics), binding.adapter_id, initial_resources, resources)
+                return self._record(spec, M20Outcome.FAILURE_OR_INCORRECT, self._telemetry(counts, deltas, retries, diagnostics, answer_termination), binding.adapter_id, initial_resources, resources)
+        return self._record(spec, M20Outcome.INCOMPLETE, self._telemetry(counts, deltas, retries, diagnostics, answer_termination), binding.adapter_id, initial_resources, resources)
 
     @staticmethod
     def _telemetry(counts: Mapping[str, int], deltas: list[M20ResourceDelta],
-                   retries: list[M20RetryAttempt], diagnostics: list[Mapping[str, Any]] | None = None) -> M20ResourceTelemetry:
+                   retries: list[M20RetryAttempt], diagnostics: list[Mapping[str, Any]] | None = None,
+                   answer_termination: Mapping[str, Any] | None = None) -> M20ResourceTelemetry:
+        answer_termination = dict(answer_termination or {})
         return M20ResourceTelemetry(**counts, provider_transport_attempts=len(retries),
                                     deltas=tuple(deltas), retries=tuple(retries),
-                                    response_diagnostics=tuple(dict(item) for item in (diagnostics or ())))
+                                    response_diagnostics=tuple(dict(item) for item in (diagnostics or ())),
+                                    answer_ready_first_cycle=answer_termination.get("answer_ready_first_cycle"),
+                                    answer_phase_entered=answer_termination.get("answer_phase_entered", False),
+                                    proposal_kinds=tuple(answer_termination.get("proposal_kinds", ())),
+                                    answer_proposed=answer_termination.get("answer_proposed", False),
+                                    stop_proposed=answer_termination.get("stop_proposed", False),
+                                    illegal_act_in_answer_phase=answer_termination.get("illegal_act_in_answer_phase", False),
+                                    evaluator_handoff=answer_termination.get("evaluator_handoff", False))
 
     def replacement(self, failed: M20ExecutionRecord) -> M20ExecutionSpec:
         if failed.outcome not in {M20Outcome.PROVIDER_FAILURE, M20Outcome.INFRASTRUCTURE_FAILURE}:
