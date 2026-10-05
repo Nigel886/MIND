@@ -7,7 +7,13 @@ from typing import Any, Mapping
 
 from src.evaluation.m20_harness import M20Condition, M20_METRIC_VERSION, M20_PROTOCOL_ID, canonical_hash, canonical_json
 from src.evaluation.m20_real_case_source import M20_REAL_CASE_REPETITIONS, real_case_definitions, real_case_source_digest
-from src.evaluation.m20_real_execution_configuration import M20_REAL_PROVIDER_CONFIGURATION, M20_REAL_RESOURCE_CEILING
+from src.evaluation.m20_real_execution_configuration import (
+    M20_REAL_PROVIDER_CONFIGURATION,
+    M20_REAL_RESOURCE_CEILING,
+    M20_REAL_RESOURCE_CEILING_V2,
+    validate_m20_real_resource_ceiling_v2,
+    validate_primary_condition_bindings_v2,
+)
 
 M20_CALIBRATION_MANIFEST_VERSION = "m20_calibration_manifest_v1"
 M20_DEEPSEEK_CALIBRATION_MANIFEST_VERSION = "m20_calibration_manifest_v2"
@@ -17,6 +23,12 @@ M20_POSTREMEDIATION_CALIBRATION_RESULT_PATH = "evaluation/results/m20_calibratio
 M20_POSTREMEDIATION_CALIBRATION_MANIFEST_VERSION = "m20_calibration_manifest_v3"
 M20_POSTREMEDIATION_ORDERING_RULE = "m20_pair_counterbalance_v2"
 M20_POSTREMEDIATION_RUNTIME_VERSION = "m20_postremediation_runtime_generation_v1"
+M20_CEILINGV2_CALIBRATION_PROTOCOL = "m20_calibration_ceilingv2_v1"
+M20_CEILINGV2_CALIBRATION_NAMESPACE = "m20_calibration_ceilingv2_v1"
+M20_CEILINGV2_CALIBRATION_RESULT_PATH = "evaluation/results/m20_calibration_ceilingv2_v1"
+M20_CEILINGV2_CALIBRATION_MANIFEST_VERSION = "m20_calibration_manifest_v4"
+M20_CEILINGV2_ORDERING_RULE = "m20_pair_counterbalance_v3"
+M20_CEILINGV2_RUNTIME_VERSION = "m20_ceilingv2_runtime_generation_v1"
 M20_OPENAI_PROVIDER_HASH = "910b2b5bf28308d6491af4010e3cc108a38e6dbb49613e27bbc9e4493d41c8f1"
 M20_CALIBRATION_RETRY_FAILURE_ID = "m20_provider_client_retry_v1"
 M20_DEEPSEEK_RETRY_FAILURE_ID = "m20_deepseek_provider_client_retry_v1"
@@ -34,6 +46,21 @@ def _postremediation_runtime() -> dict[str, str]:
         "canonical_evidence_validation": "m20_execution_record_v1",
         "harness": "m20_evaluation_harness_v1",
         "provider_request_contract": "m20_deepseek_public_proposal_v1",
+    }
+
+
+def _ceilingv2_runtime() -> dict[str, str]:
+    """Current production runtime, explicitly regenerated for ceiling v2."""
+    return {
+        "version": M20_CEILINGV2_RUNTIME_VERSION,
+        "envelope_normalization": "m20_deepseek_envelope_normalization_v1",
+        "retry_persistence": "m20_provider_operation_retry_persistence_v1",
+        "resource_admission": "m20_pretransport_provider_admission_v1",
+        "response_telemetry_schema": "m20_deepseek_response_shape_telemetry_v1",
+        "canonical_evidence_validation": "m20_execution_record_v1",
+        "harness": "m20_evaluation_harness_v1",
+        "provider_request_contract": "m20_deepseek_public_proposal_v1",
+        "resource_ceiling_identity": M20_REAL_RESOURCE_CEILING_V2.identity,
     }
 
 
@@ -220,6 +247,102 @@ def build_postremediation_manifest() -> dict[str, Any]:
                                        "pairs": pairs, "work_items": work_items})}
 
 
+def _ceilingv2_core() -> dict[str, Any]:
+    """Immutable prospective v4 design; this function never executes a provider."""
+    validate_m20_real_resource_ceiling_v2(M20_REAL_RESOURCE_CEILING_V2)
+    membership = _postremediation_case_membership()
+    ordering_identity, _ = _ceilingv2_ordering(membership)
+    runtime = _ceilingv2_runtime()
+    return {
+        "protocol": M20_CEILINGV2_CALIBRATION_PROTOCOL,
+        "namespace": M20_CEILINGV2_CALIBRATION_NAMESPACE,
+        "result_path": M20_CEILINGV2_CALIBRATION_RESULT_PATH,
+        "version": M20_CEILINGV2_CALIBRATION_MANIFEST_VERSION,
+        "suite_id": "m20_suite_v1",
+        "environment_id": "m20_environment_v1",
+        "evaluator_id": "m20_evaluator_v1",
+        "metric_version": M20_METRIC_VERSION,
+        "statistical_protocol": M20_PROTOCOL_ID,
+        "scientific_contract": _postremediation_scientific_contract(),
+        "comparator_contract": _postremediation_comparator_contract(),
+        "case_source_version": "m20_real_case_source_v1",
+        "case_source_digest": real_case_source_digest(),
+        "case_membership": membership,
+        "repetitions": M20_REAL_CASE_REPETITIONS,
+        "provider_hash": M20_REAL_PROVIDER_CONFIGURATION.identity_hash,
+        "resource_ceiling_identity": M20_REAL_RESOURCE_CEILING_V2.identity,
+        "runtime_generation": {**runtime, "identity": canonical_hash(runtime)},
+        "ordering_rule": M20_CEILINGV2_ORDERING_RULE,
+        "ordering_identity": ordering_identity,
+        "failure_replacement_contract": _postremediation_failure_contract(),
+    }
+
+
+def _ceilingv2_ordering(membership: list[dict[str, str]]) -> tuple[str, dict[tuple[str, int], list[str]]]:
+    keys = [(canonical_hash({"ordering_rule": M20_CEILINGV2_ORDERING_RULE,
+                             "case_id": item["case_id"], "repetition": repetition}),
+             item["case_id"], repetition)
+            for item in membership for repetition in range(1, M20_REAL_CASE_REPETITIONS + 1)]
+    keys.sort()
+    if len(keys) != 60:
+        raise ValueError("ceiling-v2 calibration ordering cardinality mismatch")
+    adaptive_first = [M20Condition.MIND_ADAPTIVE.value, M20Condition.MIND_FIXED.value]
+    fixed_first = list(reversed(adaptive_first))
+    assignment = {(case_id, repetition): (adaptive_first if index < len(keys) // 2 else fixed_first)
+                  for index, (_, case_id, repetition) in enumerate(keys)}
+    identity = canonical_hash({"rule": M20_CEILINGV2_ORDERING_RULE,
+                               "ranked_pairs": [(key, case_id, repetition)
+                                                for key, case_id, repetition in keys],
+                               "assignments": [(case_id, repetition, assignment[(case_id, repetition)])
+                                               for _, case_id, repetition in keys]})
+    return identity, assignment
+
+
+def build_ceilingv2_manifest() -> dict[str, Any]:
+    """Build the sole prospective ceiling-v2 generation; authorization is external."""
+    core = _ceilingv2_core()
+    manifest_digest = canonical_hash(core)
+    _, assignment = _ceilingv2_ordering(core["case_membership"])
+    pairs: list[dict[str, Any]] = []
+    work_items: list[dict[str, Any]] = []
+    for case in core["case_membership"]:
+        for repetition in range(1, core["repetitions"] + 1):
+            conditions = assignment[(case["case_id"], repetition)]
+            pair_id = canonical_hash({"protocol": core["protocol"], "manifest_digest": manifest_digest,
+                                      "ordering_identity": core["ordering_identity"], "case": case,
+                                      "repetition": repetition, "provider_hash": core["provider_hash"],
+                                      "resource_ceiling_identity": core["resource_ceiling_identity"],
+                                      "runtime_generation": core["runtime_generation"]["identity"]})
+            pair = {"pair_id": pair_id, "manifest_digest": manifest_digest, **case,
+                    "repetition": repetition, "conditions": list(conditions),
+                    "ordering_identity": core["ordering_identity"],
+                    "provider_hash": core["provider_hash"],
+                    "resource_ceiling_identity": core["resource_ceiling_identity"],
+                    "runtime_generation": core["runtime_generation"]["identity"]}
+            pairs.append(pair)
+            for condition in conditions:
+                work_items.append({"work_id": canonical_hash({"pair_id": pair_id, "condition": condition,
+                                                                "manifest_digest": manifest_digest,
+                                                                "namespace": core["namespace"]}),
+                                   "pair_id": pair_id, "condition": condition,
+                                   "manifest_digest": manifest_digest, "namespace": core["namespace"]})
+    if len(pairs) != 60 or len({pair["pair_id"] for pair in pairs}) != 60:
+        raise ValueError("ceiling-v2 calibration pair identity mismatch")
+    if len(work_items) != 120 or len({item["work_id"] for item in work_items}) != 120:
+        raise ValueError("ceiling-v2 calibration work identity mismatch")
+    expected_bindings = {
+        condition: {"provider_hash": core["provider_hash"],
+                    "resource_ceiling_identity": core["resource_ceiling_identity"],
+                    "environment_id": core["environment_id"], "evaluator_id": core["evaluator_id"],
+                    "case_source_digest": core["case_source_digest"]}
+        for condition in (M20Condition.MIND_ADAPTIVE, M20Condition.MIND_FIXED)
+    }
+    validate_primary_condition_bindings_v2(expected_bindings)
+    return {**core, "manifest_digest": manifest_digest, "pairs": pairs, "work_items": work_items,
+            "digest": canonical_hash({**core, "manifest_digest": manifest_digest,
+                                       "pairs": pairs, "work_items": work_items})}
+
+
 def _validate(value: Mapping[str, Any], expected: Mapping[str, Any], label: str) -> None:
     candidate = dict(value)
     digest = candidate.pop("digest", None)
@@ -241,12 +364,26 @@ def validate_postremediation_manifest(value: Mapping[str, Any]) -> None:
     _validate(value, build_postremediation_manifest(), "post-remediation")
 
 
+def validate_ceilingv2_manifest(value: Mapping[str, Any]) -> None:
+    """Fail closed unless the complete v4 ceiling-v2 identity matches."""
+    _validate(value, build_ceilingv2_manifest(), "ceiling-v2")
+
+
 def postremediation_work_item(value: Mapping[str, Any], work_id: str) -> dict[str, Any]:
     """Admit only one exact v3 work identity; execution authorization remains external."""
     validate_postremediation_manifest(value)
     item = next((dict(candidate) for candidate in value["work_items"] if candidate["work_id"] == work_id), None)
     if item is None:
         raise ValueError("post-remediation calibration work identity is rejected")
+    return item
+
+
+def ceilingv2_work_item(value: Mapping[str, Any], work_id: str) -> dict[str, Any]:
+    """Admit only one exact v4 work identity; execution authorization is external."""
+    validate_ceilingv2_manifest(value)
+    item = next((dict(candidate) for candidate in value["work_items"] if candidate["work_id"] == work_id), None)
+    if item is None:
+        raise ValueError("ceiling-v2 calibration work identity is rejected")
     return item
 
 
@@ -268,6 +405,12 @@ def persist_postremediation_manifest(path: Path) -> dict[str, Any]:
     return value
 
 
+def persist_ceilingv2_manifest(path: Path) -> dict[str, Any]:
+    value = build_ceilingv2_manifest()
+    path.write_text(canonical_json(value) + "\n", encoding="utf-8")
+    return value
+
+
 def load_manifest(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     validate_manifest(value)
@@ -283,6 +426,12 @@ def load_deepseek_manifest(path: Path) -> dict[str, Any]:
 def load_postremediation_manifest(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     validate_postremediation_manifest(value)
+    return value
+
+
+def load_ceilingv2_manifest(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    validate_ceilingv2_manifest(value)
     return value
 
 
