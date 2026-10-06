@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from src.evaluation.m20_harness import M20Condition, M20_METRIC_VERSION, M20_PROTOCOL_ID, canonical_hash, canonical_json
+from src.evaluation.m20_harness import (M20_ANSWER_READINESS_VERSION, M20Condition,
+    M20_METRIC_VERSION, M20_PROTOCOL_ID, canonical_hash, canonical_json)
 from src.evaluation.m20_real_case_source import M20_REAL_CASE_REPETITIONS, real_case_definitions, real_case_source_digest
 from src.evaluation.m20_real_execution_configuration import (
     M20_REAL_PROVIDER_CONFIGURATION,
@@ -29,6 +30,12 @@ M20_CEILINGV2_CALIBRATION_RESULT_PATH = "evaluation/results/m20_calibration_ceil
 M20_CEILINGV2_CALIBRATION_MANIFEST_VERSION = "m20_calibration_manifest_v4"
 M20_CEILINGV2_ORDERING_RULE = "m20_pair_counterbalance_v3"
 M20_CEILINGV2_RUNTIME_VERSION = "m20_ceilingv2_runtime_generation_v1"
+M20_ANSWERTERM_CALIBRATION_PROTOCOL = "m20_calibration_answerterm_v1"
+M20_ANSWERTERM_CALIBRATION_NAMESPACE = "m20_calibration_answerterm_v1"
+M20_ANSWERTERM_CALIBRATION_RESULT_PATH = "evaluation/results/m20_calibration_answerterm_v1"
+M20_ANSWERTERM_CALIBRATION_MANIFEST_VERSION = "m20_calibration_manifest_v5"
+M20_ANSWERTERM_ORDERING_RULE = "m20_pair_counterbalance_v4"
+M20_ANSWERTERM_RUNTIME_VERSION = "m20_answerterm_runtime_generation_v1"
 M20_OPENAI_PROVIDER_HASH = "910b2b5bf28308d6491af4010e3cc108a38e6dbb49613e27bbc9e4493d41c8f1"
 M20_CALIBRATION_RETRY_FAILURE_ID = "m20_provider_client_retry_v1"
 M20_DEEPSEEK_RETRY_FAILURE_ID = "m20_deepseek_provider_client_retry_v1"
@@ -61,6 +68,24 @@ def _ceilingv2_runtime() -> dict[str, str]:
         "harness": "m20_evaluation_harness_v1",
         "provider_request_contract": "m20_deepseek_public_proposal_v1",
         "resource_ceiling_identity": M20_REAL_RESOURCE_CEILING_V2.identity,
+    }
+
+
+def _answerterm_runtime() -> dict[str, str]:
+    """Post-#291 runtime identity; deliberately distinct from pre-answer v4."""
+    return {
+        "version": M20_ANSWERTERM_RUNTIME_VERSION,
+        "envelope_normalization": "m20_deepseek_envelope_normalization_v1",
+        "retry_persistence": "m20_provider_operation_retry_persistence_v1",
+        "resource_admission": "m20_pretransport_provider_admission_v1",
+        "response_telemetry_schema": "m20_deepseek_response_shape_telemetry_v1",
+        "canonical_evidence_validation": "m20_execution_record_v1",
+        "harness": "m20_evaluation_harness_v1",
+        "provider_request_contract": "m20_deepseek_public_proposal_v1",
+        "resource_ceiling_identity": M20_REAL_RESOURCE_CEILING_V2.identity,
+        "answer_readiness_policy": M20_ANSWER_READINESS_VERSION,
+        "answer_phase_legality": "m20_answer_stop_only_v1",
+        "answer_evaluator_handoff": "m20_evaluator_handoff_v1",
     }
 
 
@@ -298,6 +323,82 @@ def _ceilingv2_ordering(membership: list[dict[str, str]]) -> tuple[str, dict[tup
     return identity, assignment
 
 
+def _answerterm_ordering(membership: list[dict[str, str]]) -> tuple[str, dict[tuple[str, int], list[str]]]:
+    keys = [(canonical_hash({"ordering_rule": M20_ANSWERTERM_ORDERING_RULE,
+                             "case_id": item["case_id"], "repetition": repetition}),
+             item["case_id"], repetition)
+            for item in membership for repetition in range(1, M20_REAL_CASE_REPETITIONS + 1)]
+    keys.sort()
+    adaptive_first = [M20Condition.MIND_ADAPTIVE.value, M20Condition.MIND_FIXED.value]
+    fixed_first = list(reversed(adaptive_first))
+    assignment = {(case_id, repetition): (adaptive_first if index < 30 else fixed_first)
+                  for index, (_, case_id, repetition) in enumerate(keys)}
+    if len(keys) != 60 or sum(value == adaptive_first for value in assignment.values()) != 30:
+        raise ValueError("answer-termination ordering counterbalance mismatch")
+    return canonical_hash({"rule": M20_ANSWERTERM_ORDERING_RULE,
+                           "ranked_pairs": keys,
+                           "assignments": [(case_id, repetition, assignment[(case_id, repetition)])
+                                           for _, case_id, repetition in keys]}), assignment
+
+
+def _answerterm_core() -> dict[str, Any]:
+    validate_m20_real_resource_ceiling_v2(M20_REAL_RESOURCE_CEILING_V2)
+    membership = _postremediation_case_membership()
+    ordering_identity, _ = _answerterm_ordering(membership)
+    runtime = _answerterm_runtime()
+    return {
+        "protocol": M20_ANSWERTERM_CALIBRATION_PROTOCOL,
+        "namespace": M20_ANSWERTERM_CALIBRATION_NAMESPACE,
+        "result_path": M20_ANSWERTERM_CALIBRATION_RESULT_PATH,
+        "version": M20_ANSWERTERM_CALIBRATION_MANIFEST_VERSION,
+        "suite_id": "m20_suite_v1", "environment_id": "m20_environment_v1", "evaluator_id": "m20_evaluator_v1",
+        "metric_version": M20_METRIC_VERSION, "statistical_protocol": M20_PROTOCOL_ID,
+        "scientific_contract": _postremediation_scientific_contract(),
+        "comparator_contract": _postremediation_comparator_contract(),
+        "case_source_version": "m20_real_case_source_v1", "case_source_digest": real_case_source_digest(),
+        "case_membership": membership, "repetitions": M20_REAL_CASE_REPETITIONS,
+        "provider_hash": M20_REAL_PROVIDER_CONFIGURATION.identity_hash,
+        "resource_ceiling_identity": M20_REAL_RESOURCE_CEILING_V2.identity,
+        "resource_ceiling_version": M20_REAL_RESOURCE_CEILING_V2.version,
+        "resource_ceiling_digest": M20_REAL_RESOURCE_CEILING_V2.identity_hash,
+        "runtime_generation": {**runtime, "identity": canonical_hash(runtime)},
+        "answer_readiness_identity": M20_ANSWER_READINESS_VERSION,
+        "ordering_rule": M20_ANSWERTERM_ORDERING_RULE, "ordering_identity": ordering_identity,
+        "failure_replacement_contract": _postremediation_failure_contract(),
+    }
+
+
+def build_answerterm_manifest() -> dict[str, Any]:
+    """Freeze the non-executable post-answer-termination v5 calibration generation."""
+    core = _answerterm_core(); manifest_digest = canonical_hash(core)
+    _, assignment = _answerterm_ordering(core["case_membership"])
+    pairs: list[dict[str, Any]] = []; work_items: list[dict[str, Any]] = []
+    for case in core["case_membership"]:
+        for repetition in range(1, core["repetitions"] + 1):
+            conditions = assignment[(case["case_id"], repetition)]
+            pair_id = canonical_hash({"protocol": core["protocol"], "manifest_digest": manifest_digest,
+                "ordering_identity": core["ordering_identity"], "case": case, "repetition": repetition,
+                "provider_hash": core["provider_hash"], "resource_ceiling_identity": core["resource_ceiling_identity"],
+                "runtime_generation": core["runtime_generation"]["identity"],
+                "answer_readiness_identity": core["answer_readiness_identity"]})
+            pair = {"pair_id": pair_id, "manifest_digest": manifest_digest, **case, "repetition": repetition,
+                    "conditions": list(conditions), "ordering_identity": core["ordering_identity"],
+                    "provider_hash": core["provider_hash"], "resource_ceiling_identity": core["resource_ceiling_identity"],
+                    "runtime_generation": core["runtime_generation"]["identity"],
+                    "answer_readiness_identity": core["answer_readiness_identity"]}
+            pairs.append(pair)
+            for condition in conditions:
+                work_items.append({"work_id": canonical_hash({"pair_id": pair_id, "condition": condition,
+                    "manifest_digest": manifest_digest, "namespace": core["namespace"],
+                    "answer_readiness_identity": core["answer_readiness_identity"]}),
+                    "pair_id": pair_id, "condition": condition, "manifest_digest": manifest_digest,
+                    "namespace": core["namespace"]})
+    if len(pairs) != 60 or len({item["pair_id"] for item in pairs}) != 60 or len(work_items) != 120 or len({item["work_id"] for item in work_items}) != 120:
+        raise ValueError("answer-termination manifest membership mismatch")
+    return {**core, "manifest_digest": manifest_digest, "pairs": pairs, "work_items": work_items,
+            "digest": canonical_hash({**core, "manifest_digest": manifest_digest, "pairs": pairs, "work_items": work_items})}
+
+
 def build_ceilingv2_manifest() -> dict[str, Any]:
     """Build the sole prospective ceiling-v2 generation; authorization is external."""
     core = _ceilingv2_core()
@@ -369,6 +470,10 @@ def validate_ceilingv2_manifest(value: Mapping[str, Any]) -> None:
     _validate(value, build_ceilingv2_manifest(), "ceiling-v2")
 
 
+def validate_answerterm_manifest(value: Mapping[str, Any]) -> None:
+    _validate(value, build_answerterm_manifest(), "answer-termination")
+
+
 def postremediation_work_item(value: Mapping[str, Any], work_id: str) -> dict[str, Any]:
     """Admit only one exact v3 work identity; execution authorization remains external."""
     validate_postremediation_manifest(value)
@@ -384,6 +489,14 @@ def ceilingv2_work_item(value: Mapping[str, Any], work_id: str) -> dict[str, Any
     item = next((dict(candidate) for candidate in value["work_items"] if candidate["work_id"] == work_id), None)
     if item is None:
         raise ValueError("ceiling-v2 calibration work identity is rejected")
+    return item
+
+
+def answerterm_work_item(value: Mapping[str, Any], work_id: str) -> dict[str, Any]:
+    validate_answerterm_manifest(value)
+    item = next((dict(candidate) for candidate in value["work_items"] if candidate["work_id"] == work_id), None)
+    if item is None:
+        raise ValueError("answer-termination calibration work identity is rejected")
     return item
 
 
