@@ -57,6 +57,36 @@ class M20AnswerTermCalibrationExecutionTest(unittest.TestCase):
                               record.telemetry.stop_proposed), (3, 2, True))
             self.assertFalse(record.telemetry.illegal_act_in_answer_phase)
 
+    def test_answer_handoff_illegal_act_and_public_projection(self):
+        runner = M20AnswerTerminationCalibrationRunner()
+        case_id = "m20.real.multi_step_stateful.01"
+        items = [item for item in runner.work_items() if item.spec.case_id == case_id]
+        seen = []
+        def answer(request, _timeout):
+            seen.append(request)
+            public = json.loads(request["messages"][1]["content"].split("Public input: ", 1)[1])
+            return reply({"kind": "answer", "payload": "answer:" + case_id}
+                         if public["legal_decision_kinds"] == ["answer", "stop"]
+                         else {"kind": "act", "action_id": "advance"})
+        def illegal_after_ready(request, _timeout):
+            public = json.loads(request["messages"][1]["content"].split("Public input: ", 1)[1])
+            return reply({"kind": "act", "action_id": "advance"})
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            records = tuple(runner._run(item, answer, runner.store(root)) for item in items)
+            illegal = runner._run(next(item for item in runner.work_items()
+                                       if item.spec.case_id == "m20.real.answer_ready_early_stop.01"),
+                                  illegal_after_ready, runner.store(root))
+        self.assertTrue(all(record.telemetry.answer_proposed and record.telemetry.evaluator_handoff
+                            for record in records))
+        self.assertTrue(all(record.outcome is M20Outcome.SUCCESS for record in records))
+        self.assertEqual((illegal.outcome, illegal.telemetry.tool_attempts,
+                          illegal.telemetry.illegal_act_in_answer_phase),
+                         (M20Outcome.PROVIDER_FAILURE, 0, True))
+        serialized = json.dumps(seen)
+        self.assertNotIn("answer:" + case_id, serialized)
+        self.assertNotIn("reference_witness", serialized)
+
     def test_retry_chains_resource_reload_and_completed_idempotence(self):
         runner, authorization = M20AnswerTerminationCalibrationRunner(), answerterm_authorization_payload()
         with TemporaryDirectory() as directory:
