@@ -9,6 +9,7 @@ import unittest
 
 from src.evaluation.m20_answerterm_calibration_execution import (
     M20AnswerTerminationCalibrationRunner, answerterm_authorization_payload,
+    answerterm_live_authorization_payload,
 )
 from src.evaluation.m20_harness import M20Condition, M20IntegrityError, M20Outcome
 
@@ -28,6 +29,34 @@ def distract_responder(_request, _timeout):
 
 
 class M20AnswerTermCalibrationExecutionTest(unittest.TestCase):
+    def test_live_artifact_gate_is_distinct_from_synthetic_authority(self):
+        runner = M20AnswerTerminationCalibrationRunner()
+        with TemporaryDirectory() as directory:
+            root, artifact = Path(directory) / "records", Path(directory) / "authorization.json"
+            artifact.write_text(json.dumps(answerterm_authorization_payload()), encoding="utf-8")
+            with self.assertRaises(PermissionError):
+                runner.run_live(artifact, lambda *_: self.fail("synthetic reached live transport"), root / "records")
+            artifact.write_text(json.dumps(answerterm_live_authorization_payload()), encoding="utf-8")
+            records = runner.run_live(artifact, public_responder, root / "records")
+            self.assertEqual(len(records), 120)
+
+    def test_live_replacement_is_derived_and_idempotent(self):
+        runner = M20AnswerTerminationCalibrationRunner()
+        with TemporaryDirectory() as directory:
+            root, artifact = Path(directory) / "records", Path(directory) / "authorization.json"
+            artifact.write_text(json.dumps(answerterm_live_authorization_payload()), encoding="utf-8")
+            original = runner.work_items()[0]
+            failed = runner._run(original, lambda *_: (_ for _ in ()).throw(TimeoutError("fake")), runner.store(root))
+            self.assertEqual(failed.outcome, M20Outcome.PROVIDER_FAILURE)
+            calls = []
+            replacement = runner.run_live_replacement(artifact, original.work_id,
+                                                       lambda request, timeout: calls.append(1) or public_responder(request, timeout), root)
+            self.assertEqual(replacement.spec.replacement_of, original.spec.execution_id)
+            before = len(calls)
+            again = runner.run_live_replacement(artifact, original.work_id,
+                                                lambda *_: self.fail("completed replacement reached transport"), root)
+            self.assertEqual((again.digest, len(calls)), (replacement.digest, before))
+            with self.assertRaises(PermissionError): runner.run_live_replacement(artifact, replacement.execution_id, public_responder, root)
     def test_exact_authorization_rejects_mutations_before_transport(self):
         runner, authorization = M20AnswerTerminationCalibrationRunner(), answerterm_authorization_payload()
         calls = []

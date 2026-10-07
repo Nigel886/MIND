@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -17,6 +18,7 @@ from src.evaluation.m20_real_execution_configuration import M20_REAL_RESOURCE_CE
 
 
 M20_ANSWERTERM_AUTHORIZATION_SCHEMA = "m20_answerterm_calibration_authorization_v1"
+M20_ANSWERTERM_LIVE_AUTHORIZATION_SCHEMA = "m20_answerterm_calibration_live_authorization_v1"
 
 
 def answerterm_authorization_payload(manifest: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -44,6 +46,23 @@ def verify_answerterm_authorization(value: Mapping[str, Any] | None,
                                     manifest: Mapping[str, Any] | None = None) -> None:
     if not isinstance(value, Mapping) or dict(value) != answerterm_authorization_payload(manifest):
         raise PermissionError("answer-termination calibration authorization mismatch")
+
+
+def answerterm_live_authorization_payload(manifest: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Exact future live artifact shape; issuance remains an audit decision."""
+    payload = answerterm_authorization_payload(manifest)
+    return {**payload, "schema": M20_ANSWERTERM_LIVE_AUTHORIZATION_SCHEMA, "authority": "live"}
+
+
+def load_answerterm_live_authorization(path: Path, manifest: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise PermissionError("live v5 authorization artifact is absent or invalid") from error
+    expected = answerterm_live_authorization_payload(manifest)
+    if not isinstance(value, Mapping) or dict(value) != expected:
+        raise PermissionError("live v5 authorization artifact mismatch")
+    return dict(value)
 
 
 @dataclass(frozen=True)
@@ -106,6 +125,37 @@ class M20AnswerTerminationCalibrationRunner:
             result.append(self._run(item, transport, store,
                                     interrupt_before_execution=interrupt_before_execution and index == 0))
         return tuple(result)
+
+    def run_live(self, authorization_artifact: Path, transport: Transport, root: Path) -> tuple[M20ExecutionRecord, ...]:
+        """Artifact-gated production path; no caller is authorized by this method."""
+        load_answerterm_live_authorization(authorization_artifact, self.frozen)
+        store = self.store(root)
+        return tuple(self._run(item, transport, store) for item in self._items)
+
+    def replacement_item(self, original: M20ExecutionRecord) -> M20AnswerTermWorkItem:
+        """Derive the sole permitted replacement from immutable persisted original evidence."""
+        known = next((item for item in self._items if item.spec.execution_id == original.execution_id), None)
+        if known is None:
+            raise PermissionError("replacement original is not an authorized v5 work")
+        replacement = self.harness.replacement(original)
+        return M20AnswerTermWorkItem(replacement.execution_id, known.pair_id, replacement)
+
+    def run_live_replacement(self, authorization_artifact: Path, original_work_id: str,
+                             transport: Transport, root: Path,
+                             *, interrupt_before_execution: bool = False) -> M20ExecutionRecord:
+        load_answerterm_live_authorization(authorization_artifact, self.frozen)
+        original = next((item for item in self._items if item.work_id == original_work_id), None)
+        if original is None:
+            raise PermissionError("replacement original is unknown")
+        store = self.store(root)
+        persisted = store.completed_record(original.spec)
+        item = self.replacement_item(persisted)
+        self.harness._provenance_overrides.update({"work_id": item.work_id,
+            "original_work_id": original.work_id, "replacement_work_id": item.work_id,
+            "replacement_index": "1", "replacement_eligibility": persisted.outcome.value})
+        provider = M20DeepSeekProposalAdapter(transport, answer_termination_enabled=True)
+        adapter = M20AdaptiveAdapter(provider) if item.spec.condition is M20Condition.MIND_ADAPTIVE else M20FixedAdapter(provider)
+        return self.harness.run(item.spec, adapter, store, interrupt_before_execution=interrupt_before_execution)
 
     def _run(self, item: M20AnswerTermWorkItem, transport: Transport, store: M20EvidenceStore,
              *, interrupt_before_execution: bool = False) -> M20ExecutionRecord:
