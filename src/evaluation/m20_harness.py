@@ -805,7 +805,37 @@ class M20EvidenceStore:
             self.validate_persisted(value)
             seen.add(value["execution_id"])
             result.append(value)
+        self._validate_replacement_linkage(tuple(result))
         return tuple(result)
+
+    @staticmethod
+    def _validate_replacement_linkage(records: tuple[Mapping[str, Any], ...]) -> None:
+        """Cross-record, disk-only validation for the one linked replacement rule."""
+        by_id = {item["execution_id"]: item for item in records}
+        linked: dict[str, list[Mapping[str, Any]]] = {}
+        for item in records:
+            replacement_of = item["spec"].get("replacement_of")
+            if replacement_of is not None:
+                linked.setdefault(replacement_of, []).append(item)
+        for original_id, replacements in linked.items():
+            original = by_id.get(original_id)
+            if original is None or len(replacements) != 1:
+                raise M20IntegrityError("orphan or duplicate replacement evidence")
+            replacement = replacements[0]
+            if original["spec"].get("replacement_of") is not None or original["outcome"] not in {
+                    M20Outcome.PROVIDER_FAILURE.value, M20Outcome.INFRASTRUCTURE_FAILURE.value}:
+                raise M20IntegrityError("replacement original is not eligible")
+            fields = ("case_id", "repetition", "condition", "manifest_digest", "provider_hash",
+                      "environment_id", "evaluator_id", "resource_ceiling_identity", "cluster_id", "payload_digest")
+            if original["pair_id"] != replacement["pair_id"]:
+                raise M20IntegrityError("replacement linkage identity mismatch")
+            provenance = replacement.get("provenance", {})
+            if "answerterm_protocol" in provenance and (
+                    provenance.get("original_work_id") != original.get("provenance", {}).get("work_id") or
+                    provenance.get("replacement_work_id") != replacement.get("provenance", {}).get("work_id") or
+                    provenance.get("replacement_index") != "1" or
+                    provenance.get("replacement_eligibility") != original["outcome"]):
+                raise M20IntegrityError("replacement provenance linkage mismatch")
 
     def completed_ids(self) -> frozenset[str]:
         return frozenset(item["execution_id"] for item in self.records())
@@ -1090,7 +1120,8 @@ class M20Harness:
                                 failed.spec.condition, failed.spec.namespace, failed.spec.manifest_digest,
                                 failed.spec.provider_hash, failed.spec.cluster_id, failed.spec.payload_digest,
                                 failed.spec.environment_id, failed.spec.evaluator_id,
-                                failed.spec.resource_ceiling_identity, failed.execution_id)
+                                failed.spec.resource_ceiling_identity, failed.execution_id,
+                                failed.spec.frozen_pair_id)
 
     def _record(self, spec: M20ExecutionSpec, outcome: M20Outcome, telemetry: M20ResourceTelemetry,
                 adapter_id: str, pre: ResourceState, post: ResourceState) -> M20ExecutionRecord:
