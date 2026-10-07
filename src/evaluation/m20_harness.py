@@ -554,6 +554,13 @@ class M20ExecutionSpec:
                                "evaluator": self.evaluator_id, "ceiling": self.resource_ceiling_identity})
 
 
+def derive_first_replacement_spec(original: M20ExecutionSpec, original_execution_id: str) -> M20ExecutionSpec:
+    return M20ExecutionSpec(original.suite_id, original.case_id, original.repetition, original.condition,
+        original.namespace, original.manifest_digest, original.provider_hash, original.cluster_id,
+        original.payload_digest, original.environment_id, original.evaluator_id,
+        original.resource_ceiling_identity, original_execution_id, original.frozen_pair_id)
+
+
 @dataclass(frozen=True)
 class M20ResourceTelemetry:
     reasoning_steps: int = 0
@@ -829,6 +836,10 @@ class M20EvidenceStore:
                       "environment_id", "evaluator_id", "resource_ceiling_identity", "cluster_id", "payload_digest")
             if original["pair_id"] != replacement["pair_id"]:
                 raise M20IntegrityError("replacement linkage identity mismatch")
+            raw = original["spec"]
+            original_spec = M20ExecutionSpec(raw["suite_id"], raw["case_id"], raw["repetition"], M20Condition(raw["condition"]), M20Namespace(raw["namespace"]), raw["manifest_digest"], raw["provider_hash"], raw["cluster_id"], raw["payload_digest"], raw["environment_id"], raw["evaluator_id"], raw["resource_ceiling_identity"], raw.get("replacement_of"), raw.get("frozen_pair_id"))
+            if derive_first_replacement_spec(original_spec, original_id).execution_id != replacement["execution_id"]:
+                raise M20IntegrityError("replacement execution identity is not deterministic")
             provenance = replacement.get("provenance", {})
             if "answerterm_protocol" in provenance and (
                     provenance.get("original_work_id") != original.get("provenance", {}).get("work_id") or
@@ -1116,12 +1127,7 @@ class M20Harness:
             raise PermissionError("performance outcomes cannot be rerun")
         if failed.spec.replacement_of is not None:
             raise PermissionError("replacement chains are prohibited")
-        return M20ExecutionSpec(failed.spec.suite_id, failed.spec.case_id, failed.spec.repetition,
-                                failed.spec.condition, failed.spec.namespace, failed.spec.manifest_digest,
-                                failed.spec.provider_hash, failed.spec.cluster_id, failed.spec.payload_digest,
-                                failed.spec.environment_id, failed.spec.evaluator_id,
-                                failed.spec.resource_ceiling_identity, failed.execution_id,
-                                failed.spec.frozen_pair_id)
+        return derive_first_replacement_spec(failed.spec, failed.execution_id)
 
     def _record(self, spec: M20ExecutionSpec, outcome: M20Outcome, telemetry: M20ResourceTelemetry,
                 adapter_id: str, pre: ResourceState, post: ResourceState) -> M20ExecutionRecord:
