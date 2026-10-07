@@ -891,7 +891,7 @@ class M20EvidenceStore:
     @staticmethod
     def reconstruct_pair(records: tuple[Mapping[str, Any], ...]) -> dict[str, Any]:
         """Admit one persisted primary pair without relying on manifest objects."""
-        if len(records) != 2 or any("pair_id" not in item or "cohort" not in item for item in records):
+        if len(records) not in {2, 3} or any("pair_id" not in item or "cohort" not in item for item in records):
             raise M20IntegrityError("persisted pair evidence missing")
         if len({item["pair_id"] for item in records}) != 1:
             raise M20IntegrityError("persisted pair identity mismatch")
@@ -901,7 +901,23 @@ class M20EvidenceStore:
             raise M20IntegrityError("persisted pair metadata mismatch")
         if len({item["cohort"] for item in records}) != 1 or {spec["condition"] for spec in specs} != {M20Condition.MIND_ADAPTIVE.value, M20Condition.MIND_FIXED.value}:
             raise M20IntegrityError("persisted pair condition/cohort mismatch")
-        return {"pair_id": records[0]["pair_id"], "cohort": records[0]["cohort"], "adaptive": next(item for item in records if item["spec"]["condition"] == M20Condition.MIND_ADAPTIVE.value), "fixed": next(item for item in records if item["spec"]["condition"] == M20Condition.MIND_FIXED.value)}
+        selected: dict[str, Mapping[str, Any]] = {}
+        for condition in (M20Condition.MIND_ADAPTIVE.value, M20Condition.MIND_FIXED.value):
+            cell = [item for item in records if item["spec"]["condition"] == condition]
+            originals = [item for item in cell if item["spec"].get("replacement_of") is None]
+            replacements = [item for item in cell if item["spec"].get("replacement_of") is not None]
+            if len(originals) != 1 or len(replacements) > 1:
+                raise M20IntegrityError("persisted condition lifecycle is ambiguous")
+            if replacements:
+                original, replacement = originals[0], replacements[0]
+                if replacement["spec"]["replacement_of"] != original["execution_id"] or original["outcome"] not in {M20Outcome.PROVIDER_FAILURE.value, M20Outcome.INFRASTRUCTURE_FAILURE.value}:
+                    raise M20IntegrityError("replacement lifecycle is not eligible")
+                selected[condition] = replacement
+            else:
+                selected[condition] = originals[0]
+        return {"pair_id": records[0]["pair_id"], "cohort": records[0]["cohort"],
+                "adaptive": selected[M20Condition.MIND_ADAPTIVE.value],
+                "fixed": selected[M20Condition.MIND_FIXED.value]}
 
 
 class M20Harness:
