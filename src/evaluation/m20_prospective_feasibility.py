@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import base64
 import json
 from pathlib import Path
 from typing import Any, Mapping
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from src.evaluation.m20_deepseek_execution import M20DeepSeekProposalAdapter, Transport
 from src.evaluation.m20_evaluator_failure_diagnostics import M20EvaluatorDiagnosticStore, diagnose_after_evaluator_handoff
@@ -21,6 +24,8 @@ M20_FEASIBILITY_MANIFEST_VERSION = "m20_feasibility_manifest_v1"
 M20_FEASIBILITY_RUNTIME = "m20_feasibility_runtime_generation_v1"
 M20_FEASIBILITY_AUTHORIZATION_SCHEMA = "m20_feasibility_synthetic_authorization_v1"
 M20_FEASIBILITY_LIVE_AUTHORIZATION_SCHEMA = "m20_feasibility_live_authorization_v1"
+M20_FEASIBILITY_SIGNED_AUTHORIZATION_SCHEMA = "m20_feasibility_signed_authorization_v1"
+M20_FEASIBILITY_TRUST_ANCHOR_SCHEMA = "m20_feasibility_issuer_trust_anchor_v1"
 
 
 def build_feasibility_manifest() -> dict[str, Any]:
@@ -84,15 +89,30 @@ def feasibility_live_authorization_payload(manifest: Mapping[str, Any] | None = 
             "diagnostic_identity": frozen["diagnostic_identity"]}
 
 
-def load_feasibility_live_authorization(path: Path, manifest: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def _canonical_bytes(value: Mapping[str, Any]) -> bytes:
+    return json.dumps(dict(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def load_feasibility_live_authorization(path: Path, trust_anchor: Path, manifest: Mapping[str, Any] | None = None) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value, anchors = json.loads(path.read_text(encoding="utf-8")), json.loads(trust_anchor.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         raise PermissionError("prospective feasibility live authorization is absent or invalid") from error
+    if not isinstance(value, Mapping) or not isinstance(anchors, Mapping) or anchors.get("schema") != M20_FEASIBILITY_TRUST_ANCHOR_SCHEMA:
+        raise PermissionError("prospective feasibility live authorization/trust anchor invalid")
+    payload, issuer, algorithm, signature = value.get("payload"), value.get("issuer"), value.get("algorithm"), value.get("signature")
+    trusted = anchors.get("issuers", {}).get(issuer) if isinstance(anchors.get("issuers"), Mapping) else None
+    if (not isinstance(payload, Mapping) or algorithm != "Ed25519" or not isinstance(signature, str) or
+            not isinstance(trusted, Mapping) or trusted.get("algorithm") != "Ed25519" or not isinstance(trusted.get("public_key_b64"), str)):
+        raise PermissionError("prospective feasibility issuer/signature is invalid")
+    try:
+        Ed25519PublicKey.from_public_bytes(base64.b64decode(trusted["public_key_b64"], validate=True)).verify(base64.b64decode(signature, validate=True), _canonical_bytes(payload))
+    except (ValueError, InvalidSignature) as error:
+        raise PermissionError("prospective feasibility signature verification failed") from error
     expected = feasibility_live_authorization_payload(manifest)
-    if not isinstance(value, Mapping) or dict(value) != expected:
+    if dict(payload) != expected:
         raise PermissionError("prospective feasibility live authorization mismatch")
-    return dict(value)
+    return dict(payload)
 
 
 @dataclass(frozen=True)
@@ -135,9 +155,9 @@ class M20ProspectiveFeasibilityRunner:
         finally:
             self._diagnostic_store = None
 
-    def run_live(self, authorization_artifact: Path, transport: Transport, root: Path) -> tuple[M20ExecutionRecord, ...]:
+    def run_live(self, authorization_artifact: Path, trust_anchor: Path, transport: Transport, root: Path) -> tuple[M20ExecutionRecord, ...]:
         """Future live path: exact artifact validation always precedes adapter creation."""
-        load_feasibility_live_authorization(authorization_artifact, self.frozen)
+        load_feasibility_live_authorization(authorization_artifact, trust_anchor, self.frozen)
         if not callable(transport):
             raise TypeError("transport is required")
         store = self.store(root); self._diagnostic_store = self.diagnostic_store(root)
@@ -153,9 +173,9 @@ class M20ProspectiveFeasibilityRunner:
         return M20FeasibilityWorkItem( self.harness.replacement(original).execution_id,
             self.harness.replacement(original))
 
-    def run_live_replacement(self, authorization_artifact: Path, original_work_id: str, transport: Transport, root: Path,
+    def run_live_replacement(self, authorization_artifact: Path, trust_anchor: Path, original_work_id: str, transport: Transport, root: Path,
                              *, interrupt_before_execution: bool = False) -> M20ExecutionRecord:
-        load_feasibility_live_authorization(authorization_artifact, self.frozen)
+        load_feasibility_live_authorization(authorization_artifact, trust_anchor, self.frozen)
         original_item = next((item for item in self._items if item.work_id == original_work_id), None)
         if original_item is None:
             raise PermissionError("replacement original is unknown")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import re
+import base64
 from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -9,6 +10,16 @@ from src.evaluation.m20_prospective_feasibility import (M20ProspectiveFeasibilit
 from src.evaluation.m20_evaluator_failure_diagnostics import diagnose_after_evaluator_handoff
 from src.evaluation.m20_real_case_source import M20RealEnvironment, real_cases
 from src.evaluation.m20_harness import M20Outcome, M20Proposal, M20ProposalKind
+from src.evaluation.m20_prospective_feasibility import M20_FEASIBILITY_TRUST_ANCHOR_SCHEMA
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+def signed_authority(directory):
+    private = Ed25519PrivateKey.generate(); payload = feasibility_live_authorization_payload()
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(); issuer = "ephemeral-test-issuer"
+    artifact, anchor = Path(directory) / "authorization.json", Path(directory) / "trust.json"
+    artifact.write_text(json.dumps({"payload":payload,"issuer":issuer,"algorithm":"Ed25519","signature":base64.b64encode(private.sign(encoded)).decode()}), encoding="utf-8")
+    anchor.write_text(json.dumps({"schema":M20_FEASIBILITY_TRUST_ANCHOR_SCHEMA,"issuers":{issuer:{"algorithm":"Ed25519","public_key_b64":base64.b64encode(private.public_key().public_bytes_raw()).decode()}}}), encoding="utf-8")
+    return artifact, anchor
 
 def reply(value): return {"model": "deepseek-flash", "choices": [{"message": {"content": json.dumps(value)}}]}
 def responder(request, _timeout):
@@ -29,25 +40,25 @@ class ProspectiveFeasibilityTests(unittest.TestCase):
     def test_authorization_is_exact_and_live_default_denies(self):
         runner = M20ProspectiveFeasibilityRunner(); value = feasibility_authorization_payload(); bad = deepcopy(value); bad["namespace"] = "historical"
         with self.assertRaises(PermissionError): verify_feasibility_authorization(bad)
-        with self.assertRaises(PermissionError): runner.run_live(Path("missing.json"), lambda *_: self.fail("transport"), Path("records"))
+        with self.assertRaises(PermissionError): runner.run_live(Path("missing.json"), Path("missing-trust.json"), lambda *_: self.fail("transport"), Path("records"))
     def test_live_authorization_admits_only_exact_temporary_artifact_before_fake_transport(self):
         runner = M20ProspectiveFeasibilityRunner()
         with TemporaryDirectory() as directory:
             root, artifact = Path(directory) / "records", Path(directory) / "authorization.json"
+            artifact, anchor = signed_authority(directory)
             artifact.write_text(json.dumps(feasibility_authorization_payload()), encoding="utf-8")
-            with self.assertRaises(PermissionError): runner.run_live(artifact, lambda *_: self.fail("synthetic reached transport"), root)
-            artifact.write_text(json.dumps(feasibility_live_authorization_payload()), encoding="utf-8")
-            records = runner.run_live(artifact, responder, root)
+            with self.assertRaises(PermissionError): runner.run_live(artifact, anchor, lambda *_: self.fail("synthetic reached transport"), root)
+            artifact, anchor = signed_authority(directory)
+            records = runner.run_live(artifact, anchor, responder, root)
         self.assertEqual(len(records), 24)
     def test_live_replacement_is_canonical_and_performance_rerun_rejects(self):
         runner = M20ProspectiveFeasibilityRunner()
         with TemporaryDirectory() as directory:
-            root, artifact = Path(directory) / "records", Path(directory) / "authorization.json"
-            artifact.write_text(json.dumps(feasibility_live_authorization_payload()), encoding="utf-8")
+            root = Path(directory) / "records"; artifact, anchor = signed_authority(directory)
             item = runner.work_items()[0]
             failed = runner._run(item, lambda *_: (_ for _ in ()).throw(TimeoutError("fake")), runner.store(root))
-            replacement = runner.run_live_replacement(artifact, item.work_id, responder, root)
-            again = runner.run_live_replacement(artifact, item.work_id, lambda *_: self.fail("completed replacement transport"), root)
+            replacement = runner.run_live_replacement(artifact, anchor, item.work_id, responder, root)
+            again = runner.run_live_replacement(artifact, anchor, item.work_id, lambda *_: self.fail("completed replacement transport"), root)
             self.assertEqual((replacement.spec.replacement_of, again.digest), (failed.execution_id, replacement.digest))
             successful = runner._run(runner.work_items()[1], responder, runner.store(root))
             with self.assertRaises(PermissionError): runner.replacement_item(successful)

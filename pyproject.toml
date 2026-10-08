@@ -4,6 +4,7 @@ version = "1.0.0"
 description = "MIND-Lite v1.0: a bounded cognitive-agent prototype with immutable runtime state, deterministic Meta-Inference, and controlled LLM-assisted session admission."
 readme = "README.md"
 requires-python = ">=3.11"
+dependencies = ["cryptography>=46,<47"]
 license = { text = "MIT" }
 authors = [
   { name = "Nachuan Yan" },
