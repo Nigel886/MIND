@@ -1,0 +1,14 @@
+{
+  "schema": "m20_prospective_feasibility_final_authorization_audit_v1",
+  "baseline": "f7a25e5deeda44bff03dae9ba0c8323c3b373431",
+  "frozen_manifest_digest": "61847990519fe37cd578fb295494b586dd6bb22fd64103c7839b1b7c7983cd33",
+  "membership_digest": "7699951ba6bf967bf4fad4a9cbf16306aa9c5af2219b42746874757ac47f95da",
+  "admission": [
+    {"id":"A01","result":"PASS","evidence":"missing artifact rejects"},{"id":"A02","result":"PASS","evidence":"malformed artifact rejects"},{"id":"A03","result":"PASS","evidence":"synthetic schema rejects"},{"id":"A04","result":"PASS","evidence":"historical identity rejects"},{"id":"A05","result":"PASS","evidence":"wrong protocol rejects"},{"id":"A06","result":"PASS","evidence":"wrong manifest rejects"},{"id":"A07","result":"PASS","evidence":"wrong membership rejects"},{"id":"A08","result":"PASS","evidence":"wrong provider rejects"},{"id":"A09","result":"PASS","evidence":"wrong runtime rejects"},{"id":"A10","result":"PASS","evidence":"wrong ceiling rejects"},{"id":"A11","result":"PASS","evidence":"wrong diagnostic rejects"},{"id":"A12","result":"PASS","evidence":"wrong namespace rejects"},{"id":"A13","result":"PASS","evidence":"Adaptive scope rejects"},{"id":"A14","result":"PASS","evidence":"work-set mismatch rejects"},{"id":"A15","result":"PASS","evidence":"default deny before transport"},{"id":"A16","result":"PASS","evidence":"temporary exact fixture reaches fake boundary"},{"id":"A17","result":"BLOCKED","evidence":"artifact is reproducible by application code"},{"id":"A18","result":"BLOCKED","evidence":"no independent issuer/signature verification"}
+  ],
+  "replacement": [
+    {"id":"R01","result":"PASS","evidence":"provider failure eligible"},{"id":"R02","result":"PASS","evidence":"infrastructure failure eligible"},{"id":"R03","result":"PASS","evidence":"performance rerun rejects"},{"id":"R04","result":"PASS","evidence":"first identity deterministic"},{"id":"R05","result":"PASS","evidence":"Fixed preserved"},{"id":"R06","result":"PASS","evidence":"case/repetition preserved"},{"id":"R07","result":"PASS","evidence":"linkage validated"},{"id":"R08","result":"PASS","evidence":"original immutable"},{"id":"R09","result":"PASS","evidence":"second replacement rejects"},{"id":"R10","result":"PASS","evidence":"completed replacement idempotent"},{"id":"R11","result":"PASS","evidence":"partial resume fail-closed"},{"id":"R12","result":"PASS","evidence":"cross-link corruption rejects"}
+  ],
+  "cases_executed": 30,
+  "verdict": "BLOCKED"
+}
