@@ -11,7 +11,7 @@ from src.evaluation.m20_answerterm_calibration_execution import (
     M20AnswerTerminationCalibrationRunner, answerterm_authorization_payload,
     answerterm_live_authorization_payload,
 )
-from src.evaluation.m20_harness import M20Condition, M20IntegrityError, M20Outcome
+from src.evaluation.m20_harness import M20Condition, M20EvidenceStore, M20IntegrityError, M20Outcome
 
 
 def reply(value):
@@ -29,6 +29,107 @@ def distract_responder(_request, _timeout):
 
 
 class M20AnswerTermCalibrationExecutionTest(unittest.TestCase):
+    def test_pair_level_statistical_admission_rejects_raw_v5_and_preserves_ordinary_pair(self):
+        runner = M20AnswerTerminationCalibrationRunner()
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            pair_id = runner.work_items()[0].pair_id
+            items = tuple(item for item in runner.work_items() if item.pair_id == pair_id)
+            for item in items:
+                runner._run(item, public_responder, runner.store(root))
+            records = runner.store(root).records()
+            with self.assertRaises(M20IntegrityError):
+                M20EvidenceStore.statistical_input(records[0])
+            projected = M20EvidenceStore.statistical_pair_input(records)
+        self.assertTrue(projected["analyzable"])
+        self.assertIsNone(projected["missingness"])
+        self.assertEqual({projected["adaptive"]["spec"]["condition"], projected["fixed"]["spec"]["condition"]},
+                         {M20Condition.MIND_ADAPTIVE.value, M20Condition.MIND_FIXED.value})
+
+    def test_pair_level_statistical_admission_marks_pending_and_partial_replacements_missing(self):
+        runner = M20AnswerTerminationCalibrationRunner()
+        for condition in (M20Condition.MIND_ADAPTIVE, M20Condition.MIND_FIXED):
+            with self.subTest(condition=condition.value), TemporaryDirectory() as directory:
+                root = Path(directory) / "records"
+                pair_id = runner.work_items()[0].pair_id
+                items = tuple(item for item in runner.work_items() if item.pair_id == pair_id)
+                failed = next(item for item in items if item.spec.condition is condition)
+                opposite = next(item for item in items if item.spec.condition is not condition)
+                runner._run(failed, lambda *_: (_ for _ in ()).throw(TimeoutError("fake")), runner.store(root))
+                runner._run(opposite, public_responder, runner.store(root))
+                pending = runner.store(root).records()
+                with self.assertRaises(M20IntegrityError): M20EvidenceStore.statistical_input(pending[0])
+                projected = M20EvidenceStore.statistical_pair_input(pending)
+                self.assertFalse(projected["analyzable"])
+                self.assertEqual(projected["missingness"], "replacement_unavailable")
+                self.assertIsNone(projected["adaptive"] if condition is M20Condition.MIND_ADAPTIVE else projected["fixed"])
+                artifact = Path(directory) / "authorization.json"
+                artifact.write_text(json.dumps(answerterm_live_authorization_payload()), encoding="utf-8")
+                with self.assertRaises(InterruptedError):
+                    runner.run_live_replacement(artifact, failed.work_id, public_responder, root,
+                                                interrupt_before_execution=True)
+                partial = runner.store(root).records()
+                projected = M20EvidenceStore.statistical_pair_input(partial)
+                self.assertFalse(projected["analyzable"])
+                self.assertEqual(projected["missingness"], "replacement_unavailable")
+
+    def test_pair_level_statistical_admission_selects_terminal_replacement_with_retries(self):
+        runner = M20AnswerTerminationCalibrationRunner()
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "records"; pair_id = runner.work_items()[0].pair_id
+            items = tuple(item for item in runner.work_items() if item.pair_id == pair_id)
+            failed = items[0]; opposite = items[1]
+            runner._run(failed, lambda *_: (_ for _ in ()).throw(TimeoutError("fake")), runner.store(root))
+            runner._run(opposite, public_responder, runner.store(root))
+            artifact = Path(directory) / "authorization.json"
+            artifact.write_text(json.dumps(answerterm_live_authorization_payload()), encoding="utf-8")
+            attempts = []
+            def retry_once(request, timeout):
+                attempts.append(1)
+                if len(attempts) == 1: raise TimeoutError("fake")
+                return public_responder(request, timeout)
+            replacement = runner.run_live_replacement(artifact, failed.work_id, retry_once, root)
+            projected = M20EvidenceStore.statistical_pair_input(runner.store(root).records())
+        selected = projected["adaptive"] if failed.spec.condition is M20Condition.MIND_ADAPTIVE else projected["fixed"]
+        self.assertTrue(projected["analyzable"])
+        self.assertEqual(selected["spec"]["replacement_of"], failed.spec.execution_id)
+        self.assertGreater(selected["telemetry"]["provider_interactions"], 0)
+        self.assertEqual(selected["telemetry"]["provider_transport_attempts"],
+                         selected["telemetry"]["provider_interactions"] + 1)
+
+    def test_pair_level_statistical_admission_rejects_linkage_corruption(self):
+        runner = M20AnswerTerminationCalibrationRunner()
+        with TemporaryDirectory() as directory:
+            root = Path(directory); pair_id = runner.work_items()[0].pair_id
+            for item in (item for item in runner.work_items() if item.pair_id == pair_id):
+                runner._run(item, public_responder, runner.store(root))
+            records = runner.store(root).records()
+        for mutate in (
+            lambda values: values[0]["spec"].__setitem__("condition", "invalid"),
+            lambda values: values[0].__setitem__("pair_id", "wrong"),
+            lambda values: values[0]["provenance"].pop("metrics"),
+            lambda values: values[0]["provenance"].pop("answerterm_protocol"),
+            lambda values: values[0]["spec"].__setitem__("frozen_pair_id", "wrong"),
+            lambda values: values[0]["telemetry"].__setitem__("provider_interactions", 99),
+        ):
+            corrupt = deepcopy(records); mutate(corrupt)
+            with self.assertRaises(M20IntegrityError):
+                M20EvidenceStore.statistical_pair_input(corrupt)
+
+    def test_full_fake_manifest_projects_exactly_one_effective_pair_per_frozen_pair(self):
+        runner, authorization = M20AnswerTerminationCalibrationRunner(), answerterm_authorization_payload()
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner.run_fake_prefix(authorization, public_responder, root, 120)
+            records = runner.store(root).records()
+            pairs = {}
+            for record in records:
+                pairs.setdefault(record["pair_id"], []).append(record)
+            projections = tuple(M20EvidenceStore.statistical_pair_input(tuple(value)) for value in pairs.values())
+        self.assertEqual((len(records), len(pairs), len(projections)), (120, 60, 60))
+        self.assertTrue(all(projection["analyzable"] for projection in projections))
+        self.assertEqual(sum(projection["adaptive"] is not None for projection in projections), 60)
+        self.assertEqual(sum(projection["fixed"] is not None for projection in projections), 60)
     def test_live_artifact_gate_is_distinct_from_synthetic_authority(self):
         runner = M20AnswerTerminationCalibrationRunner()
         with TemporaryDirectory() as directory:

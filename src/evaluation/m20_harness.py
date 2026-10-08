@@ -752,7 +752,26 @@ class M20EvidenceStore:
 
     @staticmethod
     def statistical_input(record: Mapping[str, Any]) -> dict[str, Any]:
-        """Fail-closed #221 schema projection from persisted canonical evidence."""
+        """Legacy record-level #221 projection for non-v5 persisted evidence.
+
+        Answer-termination calibration (manifest v5) has linked replacement
+        lifecycles.  Its primary observations must therefore be admitted as a
+        pair, never from an arbitrary raw record.
+        """
+        if M20EvidenceStore._is_answerterm_record(record):
+            raise M20IntegrityError("manifest-v5 evidence requires pair-level statistical admission")
+        return M20EvidenceStore._statistical_record_input(record)
+
+    @staticmethod
+    def _is_answerterm_record(record: Mapping[str, Any]) -> bool:
+        """Identify the v5 generation without coupling this module to its manifest builder."""
+        spec = record.get("spec") if isinstance(record, Mapping) else None
+        return (isinstance(spec, Mapping) and
+                spec.get("namespace") == M20Namespace.CALIBRATION_ANSWERTERM.value)
+
+    @staticmethod
+    def _statistical_record_input(record: Mapping[str, Any]) -> dict[str, Any]:
+        """Validated record projection used only after the applicable admission boundary."""
         required = ("pair_id", "cohort", "lifecycle", "outcome", "telemetry", "spec", "provenance")
         if any(key not in record for key in required):
             raise M20IntegrityError("statistical evidence field missing")
@@ -766,6 +785,44 @@ class M20EvidenceStore:
         M20EvidenceStore.validate_persisted(record)
         return {"pair_id": record["pair_id"], "cohort": record["cohort"], "outcome": record["outcome"],
                 "lifecycle": record["lifecycle"], "spec": spec, "telemetry": telemetry, "provenance": provenance}
+
+    @staticmethod
+    def statistical_pair_input(records: tuple[Mapping[str, Any], ...]) -> dict[str, Any]:
+        """Mandatory #221 admission for one manifest-v5 Adaptive/Fixed pair.
+
+        This is deliberately the only statistical projection boundary for
+        answer-termination calibration.  It validates canonical evidence and
+        replacement linkage before selecting each effective condition record.
+        An unresolved eligible replacement is represented as missing, rather
+        than projecting either the failed original or a partial replacement.
+        """
+        if not isinstance(records, tuple) or not records:
+            raise M20IntegrityError("manifest-v5 pair evidence is invalid")
+        if any(not M20EvidenceStore._is_answerterm_record(item) for item in records):
+            raise M20IntegrityError("pair-level admission is required only for manifest-v5 evidence")
+        for item in records:
+            if not isinstance(item.get("execution_id"), str) or not item["execution_id"]:
+                raise M20IntegrityError("manifest-v5 execution identity is absent")
+            M20EvidenceStore.validate_persisted(item)
+            spec, provenance = item["spec"], item["provenance"]
+            if (spec.get("frozen_pair_id") != item["pair_id"] or
+                    provenance.get("answerterm_protocol") != "m20_calibration_answerterm_v1" or
+                    any(not provenance.get(key) for key in (
+                        "work_id", "runtime_identity", "answer_readiness_identity",
+                        "ordering_identity", "pair_work_binding_digest"))):
+                raise M20IntegrityError("manifest-v5 statistical identity is incomplete")
+        M20EvidenceStore._validate_replacement_linkage(records)
+        pair = M20EvidenceStore.reconstruct_pair(records)
+        adaptive, fixed = pair["adaptive"], pair["fixed"]
+        return {
+            "pair_id": pair["pair_id"],
+            "cohort": pair["cohort"],
+            "adaptive": (None if adaptive is None else M20EvidenceStore._statistical_record_input(adaptive)),
+            "fixed": (None if fixed is None else M20EvidenceStore._statistical_record_input(fixed)),
+            "analyzable": adaptive is not None and fixed is not None,
+            "missingness": (None if adaptive is not None and fixed is not None
+                            else "replacement_unavailable"),
+        }
 
     @staticmethod
     def validate_persisted(record: Mapping[str, Any]) -> None:
