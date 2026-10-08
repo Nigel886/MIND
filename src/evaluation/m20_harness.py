@@ -52,6 +52,7 @@ class M20Namespace(str, Enum):
     CALIBRATION_POSTREMEDIATION = "m20_calibration_postremediation_v1"
     CALIBRATION_CEILINGV2 = "m20_calibration_ceilingv2_v1"
     CALIBRATION_ANSWERTERM = "m20_calibration_answerterm_v1"
+    FEASIBILITY = "m20_task_evaluator_feasibility_v1"
     DIAGNOSTIC = "m20_real_provider_diagnostic_v1"
     DIAGNOSTIC_V3 = "m20_real_provider_diagnostic_v3"
     DIAGNOSTIC_V4 = "m20_real_provider_diagnostic_v4"
@@ -1019,7 +1020,8 @@ class M20Harness:
     def __init__(self, manifest: M20Manifest, registry: M20ConditionRegistry,
                  environment: M20Environment, evaluator: M20Evaluator,
                  provenance_overrides: Mapping[str, str] | None = None,
-                 answer_termination_enabled: bool = False) -> None:
+                 answer_termination_enabled: bool = False,
+                 evaluator_handoff_hook: Any | None = None) -> None:
         if environment.environment_id != manifest.environment_id or evaluator.evaluator_id != manifest.evaluator_id:
             raise M20IntegrityError("environment/evaluator identity mismatch")
         self.manifest, self.registry, self.environment, self.evaluator = manifest, registry, environment, evaluator
@@ -1028,6 +1030,7 @@ class M20Harness:
         if not isinstance(answer_termination_enabled, bool):
             raise TypeError("answer-termination policy flag is invalid")
         self.answer_termination_enabled = answer_termination_enabled
+        self._evaluator_handoff_hook = evaluator_handoff_hook
         if any(not isinstance(key, str) or not key or not isinstance(value, str) or not value
                for key, value in self._provenance_overrides.items()):
             raise ValueError("provenance overrides must be non-empty strings")
@@ -1197,6 +1200,14 @@ class M20Harness:
                 answer_termination["answer_proposed"] = True
                 answer_termination["evaluator_handoff"] = True
                 outcome = self.evaluator.evaluate(case, state, proposal.payload)
+                # This optional evaluator-owned hook is deliberately after the
+                # authoritative handoff.  It is observational: diagnostic
+                # persistence failures cannot alter the execution outcome.
+                if self._evaluator_handoff_hook is not None:
+                    try:
+                        self._evaluator_handoff_hook(spec, case, state, proposal.payload, outcome)
+                    except Exception:
+                        pass
                 return self._record(spec, outcome, self._telemetry(counts, deltas, retries, diagnostics, answer_termination), binding.adapter_id, initial_resources, resources)
             if proposal.kind is M20ProposalKind.STOP:
                 answer_termination["stop_proposed"] = True
