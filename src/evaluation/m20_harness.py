@@ -901,7 +901,7 @@ class M20EvidenceStore:
             raise M20IntegrityError("persisted pair metadata mismatch")
         if len({item["cohort"] for item in records}) != 1 or {spec["condition"] for spec in specs} != {M20Condition.MIND_ADAPTIVE.value, M20Condition.MIND_FIXED.value}:
             raise M20IntegrityError("persisted pair condition/cohort mismatch")
-        selected: dict[str, Mapping[str, Any]] = {}
+        selected: dict[str, Mapping[str, Any] | None] = {}
         for condition in (M20Condition.MIND_ADAPTIVE.value, M20Condition.MIND_FIXED.value):
             cell = [item for item in records if item["spec"]["condition"] == condition]
             originals = [item for item in cell if item["spec"].get("replacement_of") is None]
@@ -914,7 +914,11 @@ class M20EvidenceStore:
                     raise M20IntegrityError("replacement lifecycle is not eligible")
                 selected[condition] = replacement
             else:
-                selected[condition] = originals[0]
+                # The frozen replacement contract makes an eligible failed
+                # original unavailable until its single replacement is terminal.
+                selected[condition] = (None if originals[0]["outcome"] in {
+                    M20Outcome.PROVIDER_FAILURE.value, M20Outcome.INFRASTRUCTURE_FAILURE.value}
+                    else originals[0])
         return {"pair_id": records[0]["pair_id"], "cohort": records[0]["cohort"],
                 "adaptive": selected[M20Condition.MIND_ADAPTIVE.value],
                 "fixed": selected[M20Condition.MIND_FIXED.value]}
