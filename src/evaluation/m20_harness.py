@@ -800,6 +800,13 @@ class M20EvidenceStore:
             raise M20IntegrityError("manifest-v5 pair evidence is invalid")
         if any(not M20EvidenceStore._is_answerterm_record(item) for item in records):
             raise M20IntegrityError("pair-level admission is required only for manifest-v5 evidence")
+        # Import at the v5-only boundary to keep the generic harness free of a
+        # module-level manifest dependency while binding this generation to its
+        # independently rebuilt, prospective authority.
+        from src.evaluation.m20_calibration_manifest import build_answerterm_manifest
+        frozen = build_answerterm_manifest()
+        pairs = {item["pair_id"]: item for item in frozen["pairs"]}
+        works = {item["work_id"]: item for item in frozen["work_items"]}
         for item in records:
             if not isinstance(item.get("execution_id"), str) or not item["execution_id"]:
                 raise M20IntegrityError("manifest-v5 execution identity is absent")
@@ -811,6 +818,31 @@ class M20EvidenceStore:
                         "work_id", "runtime_identity", "answer_readiness_identity",
                         "ordering_identity", "pair_work_binding_digest"))):
                 raise M20IntegrityError("manifest-v5 statistical identity is incomplete")
+            pair = pairs.get(item["pair_id"])
+            replacement = spec.get("replacement_of") is not None
+            original_work_id = (provenance.get("original_work_id") if replacement
+                                else provenance["work_id"])
+            work = works.get(original_work_id)
+            if (pair is None or work is None or
+                    spec.get("manifest_digest") != frozen["digest"] or
+                    spec.get("provider_hash") != frozen["provider_hash"] or
+                    spec.get("resource_ceiling_identity") != frozen["resource_ceiling_identity"] or
+                    spec.get("suite_id") != frozen["suite_id"] or
+                    spec.get("environment_id") != frozen["environment_id"] or
+                    spec.get("evaluator_id") != frozen["evaluator_id"] or
+                    provenance["runtime_identity"] != frozen["runtime_generation"]["identity"] or
+                    provenance["answer_readiness_identity"] != frozen["answer_readiness_identity"] or
+                    provenance["ordering_identity"] != frozen["ordering_identity"] or
+                    provenance["pair_work_binding_digest"] != frozen["manifest_digest"] or
+                    (replacement and (provenance.get("replacement_work_id") != provenance["work_id"] or
+                                      provenance.get("replacement_index") != "1")) or
+                    work.get("pair_id") != item["pair_id"] or
+                    work.get("condition") != spec.get("condition") or
+                    pair.get("case_id") != spec.get("case_id") or
+                    pair.get("repetition") != spec.get("repetition") or
+                    pair.get("cluster_id") != spec.get("cluster_id") or
+                    pair.get("payload_digest") != spec.get("payload_digest")):
+                raise M20IntegrityError("manifest-v5 statistical identity does not match frozen authority")
         M20EvidenceStore._validate_replacement_linkage(records)
         pair = M20EvidenceStore.reconstruct_pair(records)
         adaptive, fixed = pair["adaptive"], pair["fixed"]

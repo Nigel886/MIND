@@ -116,6 +116,26 @@ class M20AnswerTermCalibrationExecutionTest(unittest.TestCase):
             with self.assertRaises(M20IntegrityError):
                 M20EvidenceStore.statistical_pair_input(corrupt)
 
+    def test_pair_level_statistical_admission_rejects_single_and_consistent_frozen_identity_forgeries(self):
+        runner = M20AnswerTerminationCalibrationRunner()
+        with TemporaryDirectory() as directory:
+            root = Path(directory); pair_id = runner.work_items()[0].pair_id
+            for item in (item for item in runner.work_items() if item.pair_id == pair_id):
+                runner._run(item, public_responder, runner.store(root))
+            records = runner.store(root).records()
+        for mutate in (
+            lambda values: values[0]["spec"].__setitem__("provider_hash", "0" * 64),
+            lambda values: [value["spec"].__setitem__("provider_hash", "0" * 64) for value in values],
+            lambda values: [value["spec"].__setitem__("manifest_digest", "0" * 64) for value in values],
+            lambda values: [value["spec"].__setitem__("resource_ceiling_identity", "wrong") for value in values],
+            lambda values: [value["provenance"].__setitem__("runtime_identity", "wrong") for value in values],
+            lambda values: [value["provenance"].__setitem__("ordering_identity", "wrong") for value in values],
+            lambda values: [value["provenance"].__setitem__("work_id", "0" * 64) for value in values],
+        ):
+            corrupt = deepcopy(records); mutate(corrupt)
+            with self.assertRaises(M20IntegrityError):
+                M20EvidenceStore.statistical_pair_input(corrupt)
+
     def test_full_fake_manifest_projects_exactly_one_effective_pair_per_frozen_pair(self):
         runner, authorization = M20AnswerTerminationCalibrationRunner(), answerterm_authorization_payload()
         with TemporaryDirectory() as directory:
