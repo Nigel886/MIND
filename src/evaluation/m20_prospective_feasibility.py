@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -19,6 +20,7 @@ M20_FEASIBILITY_RESULT_PATH = "evaluation/results/m20_task_evaluator_feasibility
 M20_FEASIBILITY_MANIFEST_VERSION = "m20_feasibility_manifest_v1"
 M20_FEASIBILITY_RUNTIME = "m20_feasibility_runtime_generation_v1"
 M20_FEASIBILITY_AUTHORIZATION_SCHEMA = "m20_feasibility_synthetic_authorization_v1"
+M20_FEASIBILITY_LIVE_AUTHORIZATION_SCHEMA = "m20_feasibility_live_authorization_v1"
 
 
 def build_feasibility_manifest() -> dict[str, Any]:
@@ -68,6 +70,31 @@ def verify_feasibility_authorization(value: Mapping[str, Any] | None, manifest: 
         raise PermissionError("prospective feasibility synthetic authorization mismatch")
 
 
+def feasibility_live_authorization_payload(manifest: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Exact future artifact contract; this function does not issue an artifact."""
+    frozen = build_feasibility_manifest() if manifest is None else dict(manifest)
+    validate_feasibility_manifest(frozen)
+    return {"schema": M20_FEASIBILITY_LIVE_AUTHORIZATION_SCHEMA, "authority": "independent_prospective_audit",
+            "purpose": "m20_fixed_only_task_evaluator_feasibility", "protocol": frozen["protocol"],
+            "manifest_version": frozen["version"], "manifest_digest": frozen["digest"],
+            "membership_digest": frozen["manifest_digest"], "namespace": frozen["namespace"],
+            "condition": frozen["condition"], "work_ids": [item["work_id"] for item in frozen["work_items"]],
+            "case_source_digest": frozen["case_source_digest"], "provider_hash": frozen["provider_hash"],
+            "runtime_identity": frozen["runtime_identity"], "resource_ceiling_identity": frozen["resource_ceiling_identity"],
+            "diagnostic_identity": frozen["diagnostic_identity"]}
+
+
+def load_feasibility_live_authorization(path: Path, manifest: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise PermissionError("prospective feasibility live authorization is absent or invalid") from error
+    expected = feasibility_live_authorization_payload(manifest)
+    if not isinstance(value, Mapping) or dict(value) != expected:
+        raise PermissionError("prospective feasibility live authorization mismatch")
+    return dict(value)
+
+
 @dataclass(frozen=True)
 class M20FeasibilityWorkItem:
     work_id: str
@@ -104,16 +131,49 @@ class M20ProspectiveFeasibilityRunner:
         if not callable(transport): raise TypeError("fake transport is required")
         store = self.store(root); self._diagnostic_store = self.diagnostic_store(root)
         try:
-            result = []
-            for item in self._items:
-                self.harness._provenance_overrides["work_id"] = item.work_id
-                result.append(self.harness.run(item.spec, M20FixedAdapter(M20DeepSeekProposalAdapter(transport, answer_termination_enabled=True)), store))
-            return tuple(result)
+            return tuple(self._run(item, transport, store) for item in self._items)
         finally:
             self._diagnostic_store = None
 
-    def run_live(self, *_: Any, **__: Any) -> None:
-        raise PermissionError("prospective feasibility live execution is not authorized")
+    def run_live(self, authorization_artifact: Path, transport: Transport, root: Path) -> tuple[M20ExecutionRecord, ...]:
+        """Future live path: exact artifact validation always precedes adapter creation."""
+        load_feasibility_live_authorization(authorization_artifact, self.frozen)
+        if not callable(transport):
+            raise TypeError("transport is required")
+        store = self.store(root); self._diagnostic_store = self.diagnostic_store(root)
+        try:
+            return tuple(self._run(item, transport, store) for item in self._items)
+        finally:
+            self._diagnostic_store = None
+
+    def replacement_item(self, original: M20ExecutionRecord) -> M20FeasibilityWorkItem:
+        known = next((item for item in self._items if item.spec.execution_id == original.execution_id), None)
+        if known is None:
+            raise PermissionError("replacement original is not an authorized feasibility work")
+        return M20FeasibilityWorkItem( self.harness.replacement(original).execution_id,
+            self.harness.replacement(original))
+
+    def run_live_replacement(self, authorization_artifact: Path, original_work_id: str, transport: Transport, root: Path,
+                             *, interrupt_before_execution: bool = False) -> M20ExecutionRecord:
+        load_feasibility_live_authorization(authorization_artifact, self.frozen)
+        original_item = next((item for item in self._items if item.work_id == original_work_id), None)
+        if original_item is None:
+            raise PermissionError("replacement original is unknown")
+        store = self.store(root); original = store.completed_record(original_item.spec); replacement = self.replacement_item(original)
+        self.harness._provenance_overrides.update({"work_id": replacement.work_id, "original_work_id": original_item.work_id,
+            "replacement_work_id": replacement.work_id, "replacement_index": "1", "replacement_eligibility": original.outcome.value})
+        self._diagnostic_store = self.diagnostic_store(root)
+        try:
+            return self.harness.run(replacement.spec, M20FixedAdapter(M20DeepSeekProposalAdapter(transport, answer_termination_enabled=True)), store,
+                                    interrupt_before_execution=interrupt_before_execution)
+        finally:
+            self._diagnostic_store = None
+
+    def _run(self, item: M20FeasibilityWorkItem, transport: Transport, store: M20EvidenceStore) -> M20ExecutionRecord:
+        if item not in self._items:
+            raise PermissionError("unrecognized feasibility work")
+        self.harness._provenance_overrides["work_id"] = item.work_id
+        return self.harness.run(item.spec, M20FixedAdapter(M20DeepSeekProposalAdapter(transport, answer_termination_enabled=True)), store)
 
 
 def descriptive_projection(records: tuple[Mapping[str, Any], ...], diagnostics: tuple[Any, ...]) -> dict[str, Any]:

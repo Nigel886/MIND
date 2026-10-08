@@ -5,7 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from src.evaluation.m20_prospective_feasibility import (M20ProspectiveFeasibilityRunner, build_feasibility_manifest, feasibility_authorization_payload, verify_feasibility_authorization, descriptive_projection)
+from src.evaluation.m20_prospective_feasibility import (M20ProspectiveFeasibilityRunner, build_feasibility_manifest, feasibility_authorization_payload, feasibility_live_authorization_payload, verify_feasibility_authorization, descriptive_projection)
 from src.evaluation.m20_evaluator_failure_diagnostics import diagnose_after_evaluator_handoff
 from src.evaluation.m20_real_case_source import M20RealEnvironment, real_cases
 from src.evaluation.m20_harness import M20Outcome, M20Proposal, M20ProposalKind
@@ -29,7 +29,28 @@ class ProspectiveFeasibilityTests(unittest.TestCase):
     def test_authorization_is_exact_and_live_default_denies(self):
         runner = M20ProspectiveFeasibilityRunner(); value = feasibility_authorization_payload(); bad = deepcopy(value); bad["namespace"] = "historical"
         with self.assertRaises(PermissionError): verify_feasibility_authorization(bad)
-        with self.assertRaises(PermissionError): runner.run_live()
+        with self.assertRaises(PermissionError): runner.run_live(Path("missing.json"), lambda *_: self.fail("transport"), Path("records"))
+    def test_live_authorization_admits_only_exact_temporary_artifact_before_fake_transport(self):
+        runner = M20ProspectiveFeasibilityRunner()
+        with TemporaryDirectory() as directory:
+            root, artifact = Path(directory) / "records", Path(directory) / "authorization.json"
+            artifact.write_text(json.dumps(feasibility_authorization_payload()), encoding="utf-8")
+            with self.assertRaises(PermissionError): runner.run_live(artifact, lambda *_: self.fail("synthetic reached transport"), root)
+            artifact.write_text(json.dumps(feasibility_live_authorization_payload()), encoding="utf-8")
+            records = runner.run_live(artifact, responder, root)
+        self.assertEqual(len(records), 24)
+    def test_live_replacement_is_canonical_and_performance_rerun_rejects(self):
+        runner = M20ProspectiveFeasibilityRunner()
+        with TemporaryDirectory() as directory:
+            root, artifact = Path(directory) / "records", Path(directory) / "authorization.json"
+            artifact.write_text(json.dumps(feasibility_live_authorization_payload()), encoding="utf-8")
+            item = runner.work_items()[0]
+            failed = runner._run(item, lambda *_: (_ for _ in ()).throw(TimeoutError("fake")), runner.store(root))
+            replacement = runner.run_live_replacement(artifact, item.work_id, responder, root)
+            again = runner.run_live_replacement(artifact, item.work_id, lambda *_: self.fail("completed replacement transport"), root)
+            self.assertEqual((replacement.spec.replacement_of, again.digest), (failed.execution_id, replacement.digest))
+            successful = runner._run(runner.work_items()[1], responder, runner.store(root))
+            with self.assertRaises(PermissionError): runner.replacement_item(successful)
     def test_complete_fake_study_persists_private_diagnostics_and_resumes(self):
         runner = M20ProspectiveFeasibilityRunner()
         with TemporaryDirectory() as directory:
