@@ -157,7 +157,8 @@ class M20DeepSeekProposalAdapter:
     retry_ceiling = 2
 
     def __init__(self, transport: Transport, answer_termination_enabled: bool = False,
-                 admit_logical_operation: Callable[[], None] | None = None) -> None:
+                 admit_logical_operation: Callable[[], None] | None = None,
+                 financial_ledger: Any | None = None, execution_id: str | None = None) -> None:
         if not callable(transport) or M20_REAL_PROVIDER_CONFIGURATION.identity_hash != "522fcf28714e168ce9854069468c51d3d3cb565404d7bdad3317e4fcc8f199ad":
             raise ValueError("frozen DeepSeek configuration mismatch")
         self._transport = transport
@@ -166,21 +167,39 @@ class M20DeepSeekProposalAdapter:
         self._answer_termination_enabled = answer_termination_enabled
         if admit_logical_operation is not None and not callable(admit_logical_operation):
             raise TypeError("logical-operation admission hook is invalid")
+        if financial_ledger is not None and (not isinstance(execution_id, str) or not execution_id):
+            raise TypeError("financial accounting requires an execution identity")
         self._admit_logical_operation = admit_logical_operation
+        self._financial_ledger, self._execution_id = financial_ledger, execution_id
+        self._attempt_context: tuple[str, int] | None = None
         self.requests: list[dict[str, Any]] = []
         self.last_diagnostic: dict[str, Any] | None = None
+
+    def set_attempt_context(self, logical_operation_id: str, retry_index: int) -> None:
+        if not isinstance(logical_operation_id, str) or not logical_operation_id or not isinstance(retry_index, int) or retry_index < 0:
+            raise TypeError("physical attempt context is invalid")
+        self._attempt_context = (logical_operation_id, retry_index)
 
     def propose(self, public_case: Any, public_state: Mapping[str, Any]) -> M20Proposal:
         if self._admit_logical_operation is not None:
             self._admit_logical_operation()
         request = _public_request(public_case, public_state, self._answer_termination_enabled)
         self.requests.append(request)
+        reservation: str | None = None
+        if self._financial_ledger is not None:
+            if self._attempt_context is None:
+                raise M20ProviderAttemptError("financial attempt context is absent", False)
+            reservation = self._financial_ledger.reserve(self._execution_id, *self._attempt_context, request)
         try:
             raw = self._transport(request, M20_REAL_PROVIDER_CONFIGURATION.timeout_seconds)
         except M20ProviderAttemptError as error:
+            if reservation is not None:
+                self._financial_ledger.settle(reservation, None, error.reason)
             self.last_diagnostic = dict(error.diagnostic)
             raise
         except (TimeoutError, OSError) as error:
+            if reservation is not None:
+                self._financial_ledger.settle(reservation, None, type(error).__name__)
             self.last_diagnostic = {
                 "response_present": False, "response_mode": "json_object",
                 "json_parse_success": False, "top_level_type": None, "field_names": [],
@@ -190,6 +209,8 @@ class M20DeepSeekProposalAdapter:
             }
             raise M20ProviderAttemptError(M20ResponseRejection.PROVIDER_TRANSPORT_FAILURE.value, True,
                                           self.last_diagnostic) from error
+        if reservation is not None:
+            self._financial_ledger.settle(reservation, raw, "response_received")
         try:
             proposal, self.last_diagnostic = _parse(_normalize_deepseek_envelope(raw), public_case, public_state,
                                                      self._answer_termination_enabled)

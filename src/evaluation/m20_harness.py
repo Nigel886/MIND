@@ -1084,6 +1084,9 @@ class M20Harness:
         ceiling = getattr(adapter._provider, "retry_ceiling", 0)
         for index in range(ceiling + 1):
             try:
+                set_context = getattr(adapter._provider, "set_attempt_context", None)
+                if callable(set_context):
+                    set_context(operation.logical_operation_id, index)
                 proposal = adapter._provider.propose(public, state)
                 if not isinstance(proposal, M20Proposal):
                     raise M20ProviderAttemptError("malformed_response", False)

@@ -98,6 +98,62 @@ pricing and a provider-side account spending control have not been verified or
 enforced. Real execution therefore still requires a separate owner decision
 and a verified enforceable financial-cap procedure; none was issued here.
 
+## Financial-control follow-on validation
+
+The follow-on implementation adds a policy-bound, append-only financial
+attempt ledger. It reserves cache-miss input plus maximum-output exposure before
+each physical attempt, retains missing usage and transport failures as
+unresolved exposure, and records observed cache-hit/cache-miss/completion usage
+only when all three fields are present. It does not convert missing usage to
+zero. The owner planning thresholds are CNY 50 total, CNY 30 warning, and CNY
+40 internal stop; they are local planning controls, not a provider-side cap.
+
+The required Python 3.12.4 regressions completed through durable captures:
+
+| Command | Result | Exit code |
+| --- | --- | --- |
+| focused feasibility tests | 13 passed in 1.130s | 0 |
+| `python -m unittest` | 853 tests passed in 264.279s | 0 |
+| `python -m pytest` | 853 passed in 307.48s; one non-fatal cache warning | 0 |
+
+The initial interactive wrapper appeared to stop at its short output window,
+but its durable unittest child completed and wrote exit status `0`; no partial
+output was used as a passing result.
+
+### Tokenizer readiness
+
+DeepSeek's current Token Usage documentation says the returned API `usage`
+is the source of truth and describes offline calculation as an estimate. The
+official DeepSeek recipe exposes a V4.1 `tokenizer.json` with provenance
+revision `6821d6ad3681a4b137b066b76094fa82ebd0a380` and SHA-256
+`81f64d1248a68ce3663e07ab3ee48b851e5df0e32d27cb98e4c9a268151e8d99`.
+However, neither source proves the exact serialization/tokenization of the
+complete Chat Completions message envelope, system prompt, or future tool
+payloads used by M20. No such tokenizer dependency is installed locally.
+Accordingly, an exact provider-billing input bound remains unavailable and
+must fail closed; a model-generated, character, or approximate tokenizer count
+is not admitted as a production financial bound.
+
+## Delivery state
+
+**IMPLEMENTATION DELIVERED:** dormant ledger, reservation, unknown-charge, and
+offline fake-provider validation infrastructure are present and independently
+testable.
+
+**LIVE EXECUTION NOT READY:** the production live runner now rejects missing
+financial policy/counter, every unsupported tokenizer identity, and even the
+reserved `deepseek_v41_chat_billing_v1` identity until a separately audited
+adapter establishes exact M20 Chat Completions serialization. Test counters are
+therefore not production defaults and cannot admit transport.
+
+### Final delivery regression
+
+After the default-deny change, the final Python 3.12.4 suites completed with
+durable logs and numeric exit artifacts: `python -m unittest` ran 853 tests in
+295.176 seconds (exit 0), and `python -m pytest` reported 853 passed in
+303.04 seconds (exit 0). Pytest emitted one non-fatal cache-permission warning.
+`git diff --check` passed.
+
 ## Boundary
 
 No private key was accessed. No authorization was issued or signed. Provider
