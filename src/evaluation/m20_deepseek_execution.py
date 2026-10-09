@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import nullcontext
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Mapping
@@ -186,31 +187,35 @@ class M20DeepSeekProposalAdapter:
         request = _public_request(public_case, public_state, self._answer_termination_enabled)
         self.requests.append(request)
         reservation: str | None = None
-        if self._financial_ledger is not None:
-            if self._attempt_context is None:
-                raise M20ProviderAttemptError("financial attempt context is absent", False)
-            reservation = self._financial_ledger.reserve(self._execution_id, *self._attempt_context, request)
-        try:
-            raw = self._transport(request, M20_REAL_PROVIDER_CONFIGURATION.timeout_seconds)
-        except M20ProviderAttemptError as error:
+        # The lease is acquired before reservation and held through durable
+        # settlement, so two processes cannot dispatch physical requests.
+        lease = nullcontext() if self._financial_ledger is None else self._financial_ledger.physical_dispatch()
+        with lease:
+            try:
+                if self._financial_ledger is not None:
+                    if self._attempt_context is None:
+                        raise M20ProviderAttemptError("financial attempt context is absent", False)
+                    reservation = self._financial_ledger.reserve(self._execution_id, *self._attempt_context, request)
+                raw = self._transport(request, M20_REAL_PROVIDER_CONFIGURATION.timeout_seconds)
+            except M20ProviderAttemptError as error:
+                if reservation is not None:
+                    self._financial_ledger.settle(reservation, None, error.reason)
+                self.last_diagnostic = dict(error.diagnostic)
+                raise
+            except (TimeoutError, OSError) as error:
+                if reservation is not None:
+                    self._financial_ledger.settle(reservation, None, type(error).__name__)
+                self.last_diagnostic = {
+                    "response_present": False, "response_mode": "json_object",
+                    "json_parse_success": False, "top_level_type": None, "field_names": [],
+                    "kind": None, "required_field_mask": [], "payload_top_level_type": None,
+                    "parser_stage": "transport", "rejection_category": M20ResponseRejection.PROVIDER_TRANSPORT_FAILURE.value,
+                    "legality_result": None, "admitted_proposal": False,
+                }
+                raise M20ProviderAttemptError(M20ResponseRejection.PROVIDER_TRANSPORT_FAILURE.value, True,
+                                              self.last_diagnostic) from error
             if reservation is not None:
-                self._financial_ledger.settle(reservation, None, error.reason)
-            self.last_diagnostic = dict(error.diagnostic)
-            raise
-        except (TimeoutError, OSError) as error:
-            if reservation is not None:
-                self._financial_ledger.settle(reservation, None, type(error).__name__)
-            self.last_diagnostic = {
-                "response_present": False, "response_mode": "json_object",
-                "json_parse_success": False, "top_level_type": None, "field_names": [],
-                "kind": None, "required_field_mask": [], "payload_top_level_type": None,
-                "parser_stage": "transport", "rejection_category": M20ResponseRejection.PROVIDER_TRANSPORT_FAILURE.value,
-                "legality_result": None, "admitted_proposal": False,
-            }
-            raise M20ProviderAttemptError(M20ResponseRejection.PROVIDER_TRANSPORT_FAILURE.value, True,
-                                          self.last_diagnostic) from error
-        if reservation is not None:
-            self._financial_ledger.settle(reservation, raw, "response_received")
+                self._financial_ledger.settle(reservation, raw, "response_received")
         try:
             proposal, self.last_diagnostic = _parse(_normalize_deepseek_envelope(raw), public_case, public_state,
                                                      self._answer_termination_enabled)

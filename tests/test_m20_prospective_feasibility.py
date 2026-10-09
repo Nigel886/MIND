@@ -13,14 +13,18 @@ from src.evaluation.m20_harness import M20Outcome, M20Proposal, M20ProposalKind
 from src.evaluation.m20_prospective_feasibility import (M20_FEASIBILITY_TRUST_ANCHOR_SCHEMA,
     M20FeasibilityLiveBudget, M20FeasibilityExecutionBlocked, M20_FEASIBILITY_OWNER_AUTHORITY)
 from src.evaluation.m20_financial_control import (M20FeasibilityFinancialLedger, M20FeasibilityFinancialPolicy,
-    M20FinancialControlBlocked)
+    M20FinancialControlBlocked, M20OwnerRiskAcceptedFinancialPolicy)
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 def policy(limit=10_000): return M20FeasibilityFinancialPolicy("test_exact_deepseek_tokenizer_v1", limit)
 def exact_test_counter(_request): return 10
 
-def signed_authority(directory, financial_policy=None):
-    private = Ed25519PrivateKey.generate(); payload = feasibility_live_authorization_payload(financial_policy=financial_policy or policy())
+def owner_risk_policy(): return M20OwnerRiskAcceptedFinancialPolicy()
+
+def signed_authority(directory, financial_policy=None, owner_risk_policy_value=None):
+    private = Ed25519PrivateKey.generate(); payload = feasibility_live_authorization_payload(
+        financial_policy=policy() if financial_policy is None and owner_risk_policy_value is None else financial_policy,
+        owner_risk_policy=owner_risk_policy_value)
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(); issuer = "ephemeral-test-issuer"
     artifact, anchor = Path(directory) / "authorization.json", Path(directory) / "trust.json"
     artifact.write_text(json.dumps({"payload":payload,"issuer":issuer,"algorithm":"Ed25519","signature":base64.b64encode(private.sign(encoded)).decode()}), encoding="utf-8")
@@ -28,6 +32,10 @@ def signed_authority(directory, financial_policy=None):
     return artifact, anchor
 
 def reply(value): return {"model": "deepseek-flash", "choices": [{"message": {"content": json.dumps(value)}}]}
+def billed_reply(value):
+    result = reply(value)
+    result["usage"] = {"prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 10, "completion_tokens": 4}
+    return result
 def responder(request, _timeout):
     public = json.loads(request["messages"][1]["content"].split("Public input: ", 1)[1])
     match = re.fullmatch(r"Complete the public ([a-z_]+) task (\d+)\.", public["task"])
@@ -38,6 +46,10 @@ def responder(request, _timeout):
     if public["state"].get("requires_recovery") and not public["state"].get("recovered"):
         return reply({"kind": "act", "action_id": "recover"})
     return reply({"kind": "act", "action_id": "advance"})
+
+def billed_responder(request, timeout):
+    return {**responder(request, timeout), "usage": {"prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 10, "completion_tokens": 4}}
 
 class ProspectiveFeasibilityTests(unittest.TestCase):
     def test_manifest_fixed_only_and_deterministic(self):
@@ -169,5 +181,70 @@ class ProspectiveFeasibilityTests(unittest.TestCase):
         self.assertEqual(record.outcome, M20Outcome.PROVIDER_FAILURE)
         self.assertEqual((summary["physical_attempts"], summary["logical_operations"]), (3, 1))
         self.assertGreater(summary["unresolved_cny_nano"], 0)
+
+    def test_owner_risk_policy_is_signed_scope_and_not_a_tokenizer_policy(self):
+        risk = owner_risk_policy()
+        payload = feasibility_live_authorization_payload(owner_risk_policy=risk)
+        self.assertEqual(payload["owner_risk_policy"], risk.canonical())
+        self.assertNotIn("financial_policy", payload)
+        with self.assertRaises(ValueError):
+            feasibility_live_authorization_payload(financial_policy=policy(), owner_risk_policy=risk)
+        runner = M20ProspectiveFeasibilityRunner()
+        with TemporaryDirectory() as directory:
+            root, stop = Path(directory) / "records", Path(directory) / "stop"
+            artifact, anchor = signed_authority(directory, owner_risk_policy_value=risk)
+            altered = json.loads(artifact.read_text(encoding="utf-8")); altered["payload"]["owner_risk_policy"]["internal_stop_cny_nano"] += 1
+            artifact.write_text(json.dumps(altered), encoding="utf-8")
+            with self.assertRaises(PermissionError):
+                runner.run_owner_risk_accepted_live(artifact, anchor, lambda *_: self.fail("forged policy reached transport"), root,
+                                                     operator_stop_path=stop, owner_risk_policy=risk)
+
+    def test_owner_risk_dispatch_is_serial_and_durably_accounted_before_fake_transport(self):
+        risk = owner_risk_policy()
+        with TemporaryDirectory() as directory:
+            root, stop = Path(directory) / "records", Path(directory) / "stop"
+            payload = feasibility_live_authorization_payload(owner_risk_policy=risk)
+            ledger = M20FeasibilityFinancialLedger(root, payload, risk, None, stop)
+            with ledger.physical_dispatch():
+                self.assertTrue(ledger.dispatch_lock_path.exists())
+                with self.assertRaises(M20FinancialControlBlocked):
+                    with M20FeasibilityFinancialLedger(root, payload, risk, None, stop).physical_dispatch():
+                        self.fail("second physical dispatch acquired lease")
+                key = ledger.reserve("work", "logical", 0, {"request": True})
+                self.assertEqual(json.loads(ledger.path.read_text(encoding="utf-8"))["attempts"][key]["status"], "RESERVED")
+                ledger.settle(key, billed_reply({"kind": "act", "action_id": "advance"}), "response_received")
+            self.assertFalse(ledger.dispatch_lock_path.exists())
+            self.assertEqual(ledger.summary()["financial_ambiguity_halted"], 0)
+
+    def test_owner_risk_unresolved_charge_permanently_blocks_retry_and_replacement(self):
+        risk = owner_risk_policy(); runner = M20ProspectiveFeasibilityRunner()
+        with TemporaryDirectory() as directory:
+            root, stop = Path(directory) / "records", Path(directory) / "stop"
+            artifact, anchor = signed_authority(directory, owner_risk_policy_value=risk)
+            payload = feasibility_live_authorization_payload(owner_risk_policy=risk)
+            ledger = M20FeasibilityFinancialLedger(root, payload, risk, None, stop)
+            key = ledger.reserve("work", "logical", 0, {"request": True}); ledger.settle(key, None, "TimeoutError")
+            self.assertEqual(ledger.summary()["financial_ambiguity_halted"], 1)
+            with self.assertRaises(M20FinancialControlBlocked): ledger.reserve("work", "logical", 1, {"request": True})
+            item = runner.work_items()[0]
+            runner._run(item, lambda *_: (_ for _ in ()).throw(TimeoutError("fake")), runner.store(root))
+            with self.assertRaises(M20FinancialControlBlocked):
+                runner.run_owner_risk_accepted_replacement(artifact, anchor, item.work_id,
+                    lambda *_: self.fail("financially ambiguous replacement reached transport"), root,
+                    operator_stop_path=stop, owner_risk_policy=risk)
+
+    def test_owner_risk_fake_transport_can_run_only_with_exact_ephemeral_authority(self):
+        risk = owner_risk_policy(); runner = M20ProspectiveFeasibilityRunner()
+        with TemporaryDirectory() as directory:
+            root, stop = Path(directory) / "records", Path(directory) / "stop"
+            artifact, anchor = signed_authority(directory, owner_risk_policy_value=risk)
+            # Restrict this test to one canonical work; the public runner remains
+            # manifest-bound and its fake transport is the only transport used here.
+            authorization = json.loads(artifact.read_text(encoding="utf-8"))["payload"]
+            financial = M20FeasibilityFinancialLedger(root, authorization, risk, None, stop)
+            record = runner._run(runner.work_items()[0], billed_responder, runner.store(root),
+                                 M20FeasibilityLiveBudget(root, authorization, stop), financial)
+            self.assertIn(record.outcome, (M20Outcome.SUCCESS, M20Outcome.FAILURE_OR_INCORRECT, M20Outcome.INCOMPLETE))
+            self.assertEqual(financial.summary()["physical_attempts"], record.telemetry.provider_transport_attempts)
 
 if __name__ == "__main__": unittest.main()

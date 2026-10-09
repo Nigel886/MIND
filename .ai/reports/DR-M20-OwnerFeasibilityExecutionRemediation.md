@@ -159,3 +159,42 @@ durable logs and numeric exit artifacts: `python -m unittest` ran 853 tests in
 No private key was accessed. No authorization was issued or signed. Provider
 calls, feasibility work, calibration, pilot, formal execution, and historical
 evidence changes remain zero.
+
+## Issue #331 — owner-risk-accepted admission infrastructure
+
+`m20_owner_risk_accepted_unknown_input_v1` is a prospective, separately
+signed admission-policy family. It is mutually exclusive with the
+tokenizer-backed policy and expressly records
+`input_billing_exposure = owner_accepted_unknown`; it never supplies or
+pretends to be a DeepSeek tokenizer.
+
+The signed feasibility payload binds the complete policy: CNY 50 planned
+total, CNY 30 warning, CNY 40 internal stop, the pricing snapshot, output
+ceiling, mandatory sequential physical dispatch, and mandatory permanent halt
+after unresolved billing. The policy does not create a live authorization
+artifact.
+
+Before every physical transport attempt the runner obtains an authorization-
+bound, create-exclusive dispatch lease and atomically persists a financial
+attempt reservation. The lease remains held through durable settlement. A
+crash leaves the lease in place and therefore fails closed; it is not silently
+reclaimed. A missing, malformed, or unavailable provider usage object records
+an `UNRESOLVED` attempt and an irreversible financial-ambiguity halt. Later
+attempts, retries, and replacement admission are rejected. The existing
+operator-stop file is checked before each reservation and logical admission.
+
+Only fake-provider validation is permitted by this implementation. It does
+not access private keys, sign authorization, contact DeepSeek, or execute
+feasibility work. Internal reservation tracks known maximum-output exposure
+and observed returned usage where present; unknown input exposure is not a
+provider-side monetary cap and can exceed CNY 50.
+
+### Issue #331 offline validation
+
+Using `C:\\Users\\Nigel Yan\\AppData\\Local\\Programs\\Python\\Python312\\python.exe`
+with disposable workspace-local temporary paths, the focused Route B suite ran
+17 tests in 0.816 seconds. Full regression captured durable stdout, stderr,
+and numeric exit artifacts: `python -m unittest` ran 857 tests in 257.310
+seconds (exit 0), and `python -m pytest` reported 857 passed in 187.03 seconds
+(exit 0). Pytest emitted one non-fatal cache-permission warning. `git diff
+--check` passed.

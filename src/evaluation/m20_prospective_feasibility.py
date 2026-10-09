@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from src.evaluation.m20_deepseek_execution import M20DeepSeekProposalAdapter, Transport
 from src.evaluation.m20_evaluator_failure_diagnostics import M20EvaluatorDiagnosticStore, diagnose_after_evaluator_handoff
 from src.evaluation.m20_financial_control import (M20FeasibilityFinancialLedger, M20FeasibilityFinancialPolicy,
-    require_verified_production_tokenizer)
+    M20OwnerRiskAcceptedFinancialPolicy, require_verified_production_tokenizer)
 from src.evaluation.m20_harness import (M20Condition, M20ConditionRegistry, M20EvidenceStore,
     M20ExecutionRecord, M20ExecutionSpec, M20FixedAdapter, M20Harness, M20Manifest,
     M20Namespace, M20PairingMetadata, M20ResourceCeiling, canonical_hash)
@@ -82,7 +82,8 @@ def verify_feasibility_authorization(value: Mapping[str, Any] | None, manifest: 
 
 
 def feasibility_live_authorization_payload(manifest: Mapping[str, Any] | None = None,
-                                           financial_policy: M20FeasibilityFinancialPolicy | None = None) -> dict[str, Any]:
+                                           financial_policy: M20FeasibilityFinancialPolicy | None = None,
+                                           owner_risk_policy: M20OwnerRiskAcceptedFinancialPolicy | None = None) -> dict[str, Any]:
     """Exact future artifact contract; this function does not issue an artifact."""
     frozen = build_feasibility_manifest() if manifest is None else dict(manifest)
     validate_feasibility_manifest(frozen)
@@ -100,8 +101,13 @@ def feasibility_live_authorization_payload(manifest: Mapping[str, Any] | None = 
              "replacement_logical_provider_interaction_limit": replacement_limit,
              "maximum_logical_provider_interactions": original_limit + replacement_limit,
              "operator_stop_required": True}
+    if financial_policy is not None and owner_risk_policy is not None:
+        raise ValueError("financial and owner-risk admission policies are mutually exclusive")
     if financial_policy is not None:
         payload["financial_policy"] = financial_policy.canonical()
+    if owner_risk_policy is not None:
+        # This is signed scope, not a live authorization artifact or a tokenizer policy.
+        payload["owner_risk_policy"] = owner_risk_policy.canonical()
     return payload
 
 
@@ -110,7 +116,8 @@ def _canonical_bytes(value: Mapping[str, Any]) -> bytes:
 
 
 def load_feasibility_live_authorization(path: Path, trust_anchor: Path, manifest: Mapping[str, Any] | None = None,
-                                        financial_policy: M20FeasibilityFinancialPolicy | None = None) -> dict[str, Any]:
+                                        financial_policy: M20FeasibilityFinancialPolicy | None = None,
+                                        owner_risk_policy: M20OwnerRiskAcceptedFinancialPolicy | None = None) -> dict[str, Any]:
     try:
         value, anchors = json.loads(path.read_text(encoding="utf-8")), json.loads(trust_anchor.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
@@ -126,9 +133,9 @@ def load_feasibility_live_authorization(path: Path, trust_anchor: Path, manifest
         Ed25519PublicKey.from_public_bytes(base64.b64decode(trusted["public_key_b64"], validate=True)).verify(base64.b64decode(signature, validate=True), _canonical_bytes(payload))
     except (ValueError, InvalidSignature) as error:
         raise PermissionError("prospective feasibility signature verification failed") from error
-    if financial_policy is None:
-        raise PermissionError("financial policy is required for live authorization")
-    expected = feasibility_live_authorization_payload(manifest, financial_policy)
+    if (financial_policy is None) == (owner_risk_policy is None):
+        raise PermissionError("exactly one admission policy is required for live authorization")
+    expected = feasibility_live_authorization_payload(manifest, financial_policy, owner_risk_policy)
     if dict(payload) != expected:
         raise PermissionError("prospective feasibility live authorization mismatch")
     return dict(payload)
@@ -259,6 +266,29 @@ class M20ProspectiveFeasibilityRunner:
         finally:
             self._diagnostic_store = None
 
+    def run_owner_risk_accepted_live(self, authorization_artifact: Path, trust_anchor: Path, transport: Transport,
+                                     root: Path, *, operator_stop_path: Path | None = None,
+                                     owner_risk_policy: M20OwnerRiskAcceptedFinancialPolicy | None = None) -> tuple[M20ExecutionRecord, ...]:
+        """Future owner-risk path; it is distinct from tokenizer-backed live admission.
+
+        A valid artifact is still required. This method does not issue one and is
+        exercised only with fake transport in offline tests.
+        """
+        authorization = load_feasibility_live_authorization(
+            authorization_artifact, trust_anchor, self.frozen, owner_risk_policy=owner_risk_policy)
+        if not callable(transport):
+            raise TypeError("transport is required")
+        if operator_stop_path is None or owner_risk_policy is None:
+            raise PermissionError("owner-risk policy and operator stop path are required")
+        control = M20FeasibilityLiveBudget(root, authorization, operator_stop_path)
+        financial = M20FeasibilityFinancialLedger(root, authorization, owner_risk_policy, None, operator_stop_path)
+        control.ensure_not_stopped(); financial.ensure_replacement_allowed()
+        store = self.store(root); self._diagnostic_store = self.diagnostic_store(root)
+        try:
+            return tuple(self._run(item, transport, store, control, financial) for item in self._items)
+        finally:
+            self._diagnostic_store = None
+
     def replacement_item(self, original: M20ExecutionRecord) -> M20FeasibilityWorkItem:
         known = next((item for item in self._items if item.spec.execution_id == original.execution_id), None)
         if known is None:
@@ -282,6 +312,33 @@ class M20ProspectiveFeasibilityRunner:
         control = M20FeasibilityLiveBudget(root, authorization, operator_stop_path)
         financial = M20FeasibilityFinancialLedger(root, authorization, financial_policy, token_counter, operator_stop_path)
         control.ensure_not_stopped()
+        self.harness._provenance_overrides.update({"work_id": replacement.work_id, "original_work_id": original_item.work_id,
+            "replacement_work_id": replacement.work_id, "replacement_index": "1", "replacement_eligibility": original.outcome.value})
+        self._diagnostic_store = self.diagnostic_store(root)
+        try:
+            return self.harness.run(replacement.spec, M20FixedAdapter(M20DeepSeekProposalAdapter(
+                transport, answer_termination_enabled=True, admit_logical_operation=lambda: control.admit(True),
+                financial_ledger=financial, execution_id=replacement.spec.execution_id)), store,
+                                    interrupt_before_execution=interrupt_before_execution)
+        finally:
+            self._diagnostic_store = None
+
+    def run_owner_risk_accepted_replacement(self, authorization_artifact: Path, trust_anchor: Path,
+                                             original_work_id: str, transport: Transport, root: Path, *,
+                                             operator_stop_path: Path | None = None,
+                                             owner_risk_policy: M20OwnerRiskAcceptedFinancialPolicy | None = None,
+                                             interrupt_before_execution: bool = False) -> M20ExecutionRecord:
+        authorization = load_feasibility_live_authorization(
+            authorization_artifact, trust_anchor, self.frozen, owner_risk_policy=owner_risk_policy)
+        if operator_stop_path is None or owner_risk_policy is None:
+            raise PermissionError("owner-risk policy and operator stop path are required")
+        original_item = next((item for item in self._items if item.work_id == original_work_id), None)
+        if original_item is None:
+            raise PermissionError("replacement original is unknown")
+        store = self.store(root); original = store.completed_record(original_item.spec); replacement = self.replacement_item(original)
+        control = M20FeasibilityLiveBudget(root, authorization, operator_stop_path)
+        financial = M20FeasibilityFinancialLedger(root, authorization, owner_risk_policy, None, operator_stop_path)
+        control.ensure_not_stopped(); financial.ensure_replacement_allowed()
         self.harness._provenance_overrides.update({"work_id": replacement.work_id, "original_work_id": original_item.work_id,
             "replacement_work_id": replacement.work_id, "replacement_index": "1", "replacement_eligibility": original.outcome.value})
         self._diagnostic_store = self.diagnostic_store(root)

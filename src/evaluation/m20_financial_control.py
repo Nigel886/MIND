@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -17,6 +18,7 @@ from src.evaluation.m20_harness import canonical_hash
 
 M20_FINANCIAL_LEDGER_SCHEMA = "m20_feasibility_financial_ledger_v1"
 M20_DEEPSEEK_V41_CHAT_TOKENIZER_ID = "deepseek_v41_chat_billing_v1"
+M20_OWNER_RISK_ACCEPTED_POLICY_ID = "m20_owner_risk_accepted_unknown_input_v1"
 _NANO_CNY = 1_000_000_000
 
 
@@ -67,13 +69,66 @@ class M20FeasibilityFinancialPolicy:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class M20OwnerRiskAcceptedFinancialPolicy:
+    """Prospective owner policy for an explicitly unbounded input-billing risk.
+
+    This is deliberately a different policy family from tokenizer-backed admission.
+    It records known output exposure and halts permanently after the first billing
+    ambiguity; it is not, and must never be presented as, a provider spending cap.
+    """
+    policy_identity: str = M20_OWNER_RISK_ACCEPTED_POLICY_ID
+    planned_total_cny_nano: int = 50 * _NANO_CNY
+    warning_cny_nano: int = 30 * _NANO_CNY
+    internal_stop_cny_nano: int = 40 * _NANO_CNY
+    cache_hit_input_cny_nano_per_token: int = 40
+    cache_miss_input_cny_nano_per_token: int = 2_000
+    output_cny_nano_per_token: int = 8_000
+    max_output_tokens: int = 512
+    pricing_snapshot: str = "deepseek_v4_1_flash_peak_cny_2026_10_09"
+    strictly_sequential_physical_dispatch: bool = True
+    halt_after_unresolved_billing: bool = True
+    input_billing_exposure: str = "owner_accepted_unknown"
+
+    def __post_init__(self) -> None:
+        if self.policy_identity != M20_OWNER_RISK_ACCEPTED_POLICY_ID:
+            raise ValueError("owner risk policy identity is invalid")
+        if not isinstance(self.pricing_snapshot, str) or not self.pricing_snapshot:
+            raise ValueError("owner risk pricing snapshot is required")
+        if self.input_billing_exposure != "owner_accepted_unknown":
+            raise ValueError("owner risk input exposure declaration is invalid")
+        if not self.strictly_sequential_physical_dispatch or not self.halt_after_unresolved_billing:
+            raise ValueError("owner risk safety controls are mandatory")
+        if any(not isinstance(value, int) or value < 1 for value in (
+                self.planned_total_cny_nano, self.warning_cny_nano,
+                self.internal_stop_cny_nano, self.cache_hit_input_cny_nano_per_token,
+                self.cache_miss_input_cny_nano_per_token, self.output_cny_nano_per_token,
+                self.max_output_tokens)):
+            raise ValueError("owner risk financial values are invalid")
+        if not self.warning_cny_nano <= self.internal_stop_cny_nano <= self.planned_total_cny_nano:
+            raise ValueError("owner risk financial thresholds are invalid")
+
+    def canonical(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 class M20FeasibilityFinancialLedger:
     """Durable attempt reservations; unknown billing is never converted to zero."""
-    def __init__(self, root: Path, authorization: Mapping[str, Any], policy: M20FeasibilityFinancialPolicy,
-                 token_counter: Callable[[Mapping[str, Any]], int], operator_stop_path: Path) -> None:
-        if not callable(token_counter) or not isinstance(operator_stop_path, Path):
-            raise TypeError("financial token counter and operator stop path are required")
+    def __init__(self, root: Path, authorization: Mapping[str, Any],
+                 policy: M20FeasibilityFinancialPolicy | M20OwnerRiskAcceptedFinancialPolicy,
+                 token_counter: Callable[[Mapping[str, Any]], int] | None, operator_stop_path: Path) -> None:
+        if not isinstance(operator_stop_path, Path):
+            raise TypeError("operator stop path is required")
+        if isinstance(policy, M20FeasibilityFinancialPolicy):
+            if not callable(token_counter):
+                raise TypeError("financial token counter is required")
+        elif isinstance(policy, M20OwnerRiskAcceptedFinancialPolicy):
+            if token_counter is not None:
+                raise TypeError("owner risk admission does not accept a tokenizer counter")
+        else:
+            raise TypeError("financial policy is invalid")
         self.path = root / ".m20_execution_control" / "financial_ledger.json"
+        self.dispatch_lock_path = root / ".m20_execution_control" / "physical_dispatch.lock"
         self.authorization_digest = canonical_hash(dict(authorization))
         self.policy, self.token_counter, self.operator_stop_path = policy, token_counter, operator_stop_path
 
@@ -83,13 +138,15 @@ class M20FeasibilityFinancialLedger:
 
     def _load(self) -> dict[str, Any]:
         if not self.path.exists():
-            return {**self._expected(), "attempts": {}}
+            return {**self._expected(), "attempts": {}, "dispatch_halted": False, "halt_reason": None}
         try:
             value = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as error:
             raise PermissionError("financial ledger is unreadable") from error
         if (not isinstance(value, Mapping) or {key: value.get(key) for key in self._expected()} != self._expected() or
-                not isinstance(value.get("attempts"), Mapping)):
+                not isinstance(value.get("attempts"), Mapping) or
+                not isinstance(value.get("dispatch_halted"), bool) or
+                (value.get("halt_reason") is not None and not isinstance(value.get("halt_reason"), str))):
             raise PermissionError("financial ledger binding mismatch")
         return dict(value)
 
@@ -103,6 +160,31 @@ class M20FeasibilityFinancialLedger:
     def _reserve_nano(self, input_tokens: int) -> int:
         return (input_tokens * self.policy.cache_miss_input_cny_nano_per_token +
                 self.policy.max_output_tokens * self.policy.output_cny_nano_per_token)
+
+    def _owner_risk_reserve_nano(self) -> int:
+        if not isinstance(self.policy, M20OwnerRiskAcceptedFinancialPolicy):
+            raise PermissionError("owner risk policy is required")
+        return self.policy.max_output_tokens * self.policy.output_cny_nano_per_token
+
+    @contextmanager
+    def physical_dispatch(self):
+        """Exclusive, crash-fail-closed lease across processes for one dispatch."""
+        self.dispatch_lock_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            descriptor = os.open(self.dispatch_lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError as error:
+            raise M20FinancialControlBlocked("another physical feasibility dispatch is active or unreconciled") from error
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"authorization_digest": self.authorization_digest,
+                                         "pid": os.getpid()}, sort_keys=True, separators=(",", ":")) + "\n")
+                handle.flush(); os.fsync(handle.fileno())
+            yield
+        finally:
+            try:
+                self.dispatch_lock_path.unlink()
+            except FileNotFoundError:
+                pass
 
     @staticmethod
     def _usage(raw: Mapping[str, Any]) -> dict[str, int] | None:
@@ -127,30 +209,36 @@ class M20FeasibilityFinancialLedger:
                 request: Mapping[str, Any]) -> str:
         if self.operator_stop_path.exists():
             raise M20FinancialControlBlocked("prospective feasibility operator stop requested")
-        try:
-            input_tokens = self.token_counter(request)
-        except Exception as error:
-            raise M20FinancialControlBlocked("provider-compatible input token bound unavailable") from error
-        if not isinstance(input_tokens, int) or input_tokens < 0:
-            raise M20FinancialControlBlocked("provider-compatible input token bound invalid")
-        if input_tokens > self.policy.input_token_limit:
-            raise M20FinancialControlBlocked("input token limit exceeded")
+        if isinstance(self.policy, M20FeasibilityFinancialPolicy):
+            try:
+                input_tokens = self.token_counter(request)
+            except Exception as error:
+                raise M20FinancialControlBlocked("provider-compatible input token bound unavailable") from error
+            if not isinstance(input_tokens, int) or input_tokens < 0:
+                raise M20FinancialControlBlocked("provider-compatible input token bound invalid")
+            if input_tokens > self.policy.input_token_limit:
+                raise M20FinancialControlBlocked("input token limit exceeded")
+            reserve, input_bound = self._reserve_nano(input_tokens), input_tokens
+        else:
+            reserve, input_bound = self._owner_risk_reserve_nano(), None
         key = canonical_hash({"execution_id": execution_id, "logical_operation_id": logical_operation_id,
                               "retry_index": retry_index})
         value = self._load(); attempts = dict(value["attempts"])
+        if value["dispatch_halted"]:
+            raise M20FinancialControlBlocked("financial ambiguity permanently blocks later dispatch")
         if key in attempts:
             raise M20FinancialControlBlocked("physical attempt is already reserved or accounted")
-        reserve = self._reserve_nano(input_tokens)
         exposure = self._exposure(attempts)
         if exposure + reserve > self.policy.internal_stop_cny_nano:
             raise M20FinancialControlBlocked("internal financial stop threshold reached")
         if exposure + reserve > self.policy.planned_total_cny_nano:
             raise M20FinancialControlBlocked("planned financial budget exhausted")
         attempts[key] = {"execution_id": execution_id, "logical_operation_id": logical_operation_id,
-                         "retry_index": retry_index, "input_token_upper_bound": input_tokens,
+                         "retry_index": retry_index, "input_token_upper_bound": input_bound,
                          "reserved_cny_nano": reserve, "status": "RESERVED", "usage": None,
                          "observed_cny_nano": None, "outcome": None}
-        self._persist({**self._expected(), "attempts": attempts})
+        self._persist({**self._expected(), "attempts": attempts,
+                       "dispatch_halted": value["dispatch_halted"], "halt_reason": value["halt_reason"]})
         return key
 
     def settle(self, key: str, raw: Mapping[str, Any] | None, outcome: str) -> None:
@@ -159,18 +247,27 @@ class M20FeasibilityFinancialLedger:
             raise PermissionError("financial attempt settlement mismatch")
         usage = self._usage(raw) if isinstance(raw, Mapping) else None
         updated = dict(attempt); updated["outcome"] = outcome
+        halted, halt_reason = value["dispatch_halted"], value["halt_reason"]
         if usage is None:
             updated.update({"status": "UNRESOLVED", "usage": None, "observed_cny_nano": None})
+            if isinstance(self.policy, M20OwnerRiskAcceptedFinancialPolicy):
+                halted, halt_reason = True, "provider_usage_missing_or_invalid"
         else:
             observed = (usage["prompt_cache_hit_tokens"] * self.policy.cache_hit_input_cny_nano_per_token +
                         usage["prompt_cache_miss_tokens"] * self.policy.cache_miss_input_cny_nano_per_token +
                         usage["completion_tokens"] * self.policy.output_cny_nano_per_token)
             updated.update({"status": "OBSERVED", "usage": usage, "observed_cny_nano": observed})
         attempts[key] = updated
-        self._persist({**self._expected(), "attempts": attempts})
+        self._persist({**self._expected(), "attempts": attempts,
+                       "dispatch_halted": halted, "halt_reason": halt_reason})
+
+    def ensure_replacement_allowed(self) -> None:
+        value = self._load()
+        if value["dispatch_halted"]:
+            raise M20FinancialControlBlocked("financial ambiguity permanently blocks replacement")
 
     def summary(self) -> dict[str, int]:
-        attempts = self._load()["attempts"]
+        value = self._load(); attempts = value["attempts"]
         exposure = self._exposure(attempts)
         observed = sum(int(item["observed_cny_nano"]) for item in attempts.values()
                        if item.get("status") == "OBSERVED")
@@ -179,4 +276,5 @@ class M20FeasibilityFinancialLedger:
         return {"physical_attempts": len(attempts), "logical_operations": len({item["logical_operation_id"] for item in attempts.values()}),
                 "observed_cny_nano": observed, "reserved_exposure_cny_nano": exposure,
                 "unresolved_cny_nano": unresolved,
-                "remaining_internal_cny_nano": self.policy.internal_stop_cny_nano - exposure}
+                "remaining_internal_cny_nano": self.policy.internal_stop_cny_nano - exposure,
+                "financial_ambiguity_halted": int(value["dispatch_halted"])}
