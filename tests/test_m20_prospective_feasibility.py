@@ -10,7 +10,8 @@ from src.evaluation.m20_prospective_feasibility import (M20ProspectiveFeasibilit
 from src.evaluation.m20_evaluator_failure_diagnostics import diagnose_after_evaluator_handoff
 from src.evaluation.m20_real_case_source import M20RealEnvironment, real_cases
 from src.evaluation.m20_harness import M20Outcome, M20Proposal, M20ProposalKind
-from src.evaluation.m20_prospective_feasibility import M20_FEASIBILITY_TRUST_ANCHOR_SCHEMA
+from src.evaluation.m20_prospective_feasibility import (M20_FEASIBILITY_TRUST_ANCHOR_SCHEMA,
+    M20FeasibilityLiveBudget, M20FeasibilityExecutionBlocked, M20_FEASIBILITY_OWNER_AUTHORITY)
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 def signed_authority(directory):
@@ -49,7 +50,7 @@ class ProspectiveFeasibilityTests(unittest.TestCase):
             artifact.write_text(json.dumps(feasibility_authorization_payload()), encoding="utf-8")
             with self.assertRaises(PermissionError): runner.run_live(artifact, anchor, lambda *_: self.fail("synthetic reached transport"), root)
             artifact, anchor = signed_authority(directory)
-            records = runner.run_live(artifact, anchor, responder, root)
+            records = runner.run_live(artifact, anchor, responder, root, operator_stop_path=Path(directory) / "operator-stop")
         self.assertEqual(len(records), 24)
     def test_live_replacement_is_canonical_and_performance_rerun_rejects(self):
         runner = M20ProspectiveFeasibilityRunner()
@@ -57,8 +58,9 @@ class ProspectiveFeasibilityTests(unittest.TestCase):
             root = Path(directory) / "records"; artifact, anchor = signed_authority(directory)
             item = runner.work_items()[0]
             failed = runner._run(item, lambda *_: (_ for _ in ()).throw(TimeoutError("fake")), runner.store(root))
-            replacement = runner.run_live_replacement(artifact, anchor, item.work_id, responder, root)
-            again = runner.run_live_replacement(artifact, anchor, item.work_id, lambda *_: self.fail("completed replacement transport"), root)
+            stop = Path(directory) / "operator-stop"
+            replacement = runner.run_live_replacement(artifact, anchor, item.work_id, responder, root, operator_stop_path=stop)
+            again = runner.run_live_replacement(artifact, anchor, item.work_id, lambda *_: self.fail("completed replacement transport"), root, operator_stop_path=stop)
             self.assertEqual((replacement.spec.replacement_of, again.digest), (failed.execution_id, replacement.digest))
             successful = runner._run(runner.work_items()[1], responder, runner.store(root))
             with self.assertRaises(PermissionError): runner.replacement_item(successful)
@@ -87,5 +89,32 @@ class ProspectiveFeasibilityTests(unittest.TestCase):
         h3 = diagnose_after_evaluator_handoff("c", case, {**state, "progress": 0}, "wrong", "m20_evaluator_v1", M20Outcome.FAILURE_OR_INCORRECT)
         h4 = diagnose_after_evaluator_handoff("d", case, state, None, "m20_evaluator_v1", M20Outcome.FAILURE_OR_INCORRECT)
         self.assertEqual([x.classification for x in (h1, h2, h3, h4)], ["answer_payload_failure", "prerequisite_failure", "combined_failure", "unknown_other"])
+
+    def test_owner_authority_and_live_budget_are_exact_and_persistent(self):
+        payload = feasibility_live_authorization_payload()
+        self.assertEqual(payload["authority"], M20_FEASIBILITY_OWNER_AUTHORITY)
+        self.assertEqual((payload["original_logical_provider_interaction_limit"],
+                          payload["replacement_logical_provider_interaction_limit"],
+                          payload["maximum_logical_provider_interactions"]), (192, 192, 384))
+        with TemporaryDirectory() as directory:
+            root, stop = Path(directory) / "records", Path(directory) / "operator-stop"
+            budget = M20FeasibilityLiveBudget(root, payload, stop)
+            budget.admit(); budget = M20FeasibilityLiveBudget(root, payload, stop)
+            self.assertEqual(json.loads((root / ".m20_execution_control" / "live_budget.json").read_text())["consumed"],
+                             {"original": 1, "replacement": 0, "total": 1})
+            stop.touch()
+            with self.assertRaises(M20FeasibilityExecutionBlocked): budget.admit()
+
+    def test_live_stop_and_exhausted_budget_deny_before_fake_transport(self):
+        runner = M20ProspectiveFeasibilityRunner()
+        with TemporaryDirectory() as directory:
+            root, stop = Path(directory) / "records", Path(directory) / "operator-stop"
+            artifact, anchor = signed_authority(directory); stop.touch()
+            with self.assertRaises(M20FeasibilityExecutionBlocked):
+                runner.run_live(artifact, anchor, lambda *_: self.fail("stopped work reached transport"), root, operator_stop_path=stop)
+            stop.unlink(); budget = M20FeasibilityLiveBudget(root, feasibility_live_authorization_payload(), stop)
+            budget._persist({**budget._expected(), "consumed": {"original": 192, "replacement": 192, "total": 384}})
+            with self.assertRaises(M20FeasibilityExecutionBlocked):
+                runner.run_live(artifact, anchor, lambda *_: self.fail("exhausted work reached transport"), root, operator_stop_path=stop)
 
 if __name__ == "__main__": unittest.main()

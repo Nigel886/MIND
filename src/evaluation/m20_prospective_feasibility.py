@@ -4,8 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import base64
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping
+from tempfile import NamedTemporaryFile
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
@@ -23,9 +25,11 @@ M20_FEASIBILITY_RESULT_PATH = "evaluation/results/m20_task_evaluator_feasibility
 M20_FEASIBILITY_MANIFEST_VERSION = "m20_feasibility_manifest_v1"
 M20_FEASIBILITY_RUNTIME = "m20_feasibility_runtime_generation_v1"
 M20_FEASIBILITY_AUTHORIZATION_SCHEMA = "m20_feasibility_synthetic_authorization_v1"
-M20_FEASIBILITY_LIVE_AUTHORIZATION_SCHEMA = "m20_feasibility_live_authorization_v1"
+M20_FEASIBILITY_LIVE_AUTHORIZATION_SCHEMA = "m20_feasibility_owner_live_authorization_v1"
 M20_FEASIBILITY_SIGNED_AUTHORIZATION_SCHEMA = "m20_feasibility_signed_authorization_v1"
 M20_FEASIBILITY_TRUST_ANCHOR_SCHEMA = "m20_feasibility_issuer_trust_anchor_v1"
+M20_FEASIBILITY_LIVE_BUDGET_SCHEMA = "m20_feasibility_live_budget_ledger_v1"
+M20_FEASIBILITY_OWNER_AUTHORITY = "owner_controlled_authorization"
 
 
 def build_feasibility_manifest() -> dict[str, Any]:
@@ -79,14 +83,20 @@ def feasibility_live_authorization_payload(manifest: Mapping[str, Any] | None = 
     """Exact future artifact contract; this function does not issue an artifact."""
     frozen = build_feasibility_manifest() if manifest is None else dict(manifest)
     validate_feasibility_manifest(frozen)
-    return {"schema": M20_FEASIBILITY_LIVE_AUTHORIZATION_SCHEMA, "authority": "independent_prospective_audit",
-            "purpose": "m20_fixed_only_task_evaluator_feasibility", "protocol": frozen["protocol"],
+    original_limit = len(frozen["work_items"]) * 8
+    replacement_limit = original_limit
+    return {"schema": M20_FEASIBILITY_LIVE_AUTHORIZATION_SCHEMA, "authority": M20_FEASIBILITY_OWNER_AUTHORITY,
+             "purpose": "m20_fixed_only_task_evaluator_feasibility", "protocol": frozen["protocol"],
             "manifest_version": frozen["version"], "manifest_digest": frozen["digest"],
             "membership_digest": frozen["manifest_digest"], "namespace": frozen["namespace"],
             "condition": frozen["condition"], "work_ids": [item["work_id"] for item in frozen["work_items"]],
-            "case_source_digest": frozen["case_source_digest"], "provider_hash": frozen["provider_hash"],
-            "runtime_identity": frozen["runtime_identity"], "resource_ceiling_identity": frozen["resource_ceiling_identity"],
-            "diagnostic_identity": frozen["diagnostic_identity"]}
+             "case_source_digest": frozen["case_source_digest"], "provider_hash": frozen["provider_hash"],
+             "runtime_identity": frozen["runtime_identity"], "resource_ceiling_identity": frozen["resource_ceiling_identity"],
+             "diagnostic_identity": frozen["diagnostic_identity"],
+             "original_logical_provider_interaction_limit": original_limit,
+             "replacement_logical_provider_interaction_limit": replacement_limit,
+             "maximum_logical_provider_interactions": original_limit + replacement_limit,
+             "operator_stop_required": True}
 
 
 def _canonical_bytes(value: Mapping[str, Any]) -> bytes:
@@ -113,6 +123,70 @@ def load_feasibility_live_authorization(path: Path, trust_anchor: Path, manifest
     if dict(payload) != expected:
         raise PermissionError("prospective feasibility live authorization mismatch")
     return dict(payload)
+
+
+class M20FeasibilityLiveBudget:
+    """Durable, restrictive-only aggregate provider-operation admission."""
+    def __init__(self, root: Path, authorization: Mapping[str, Any], operator_stop_path: Path) -> None:
+        if not isinstance(operator_stop_path, Path):
+            raise TypeError("operator stop path is required")
+        self.root, self.authorization, self.operator_stop_path = root, dict(authorization), operator_stop_path
+        self.path = root / ".m20_execution_control" / "live_budget.json"
+        self.authorization_digest = canonical_hash(self.authorization)
+        self.limits = {
+            "original": self.authorization["original_logical_provider_interaction_limit"],
+            "replacement": self.authorization["replacement_logical_provider_interaction_limit"],
+            "total": self.authorization["maximum_logical_provider_interactions"],
+        }
+        if (not all(isinstance(value, int) and value >= 0 for value in self.limits.values()) or
+                self.limits["total"] != self.limits["original"] + self.limits["replacement"]):
+            raise PermissionError("prospective feasibility live budget is invalid")
+
+    def _expected(self) -> dict[str, Any]:
+        return {"schema": M20_FEASIBILITY_LIVE_BUDGET_SCHEMA,
+                "authorization_digest": self.authorization_digest, "limits": self.limits}
+
+    def _load(self) -> dict[str, Any]:
+        if not self.path.exists():
+            return {**self._expected(), "consumed": {"original": 0, "replacement": 0, "total": 0}}
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise PermissionError("prospective feasibility live budget is unreadable") from error
+        if (not isinstance(value, Mapping) or {key: value.get(key) for key in self._expected()} != self._expected() or
+                not isinstance(value.get("consumed"), Mapping)):
+            raise PermissionError("prospective feasibility live budget binding mismatch")
+        consumed = value["consumed"]
+        if (set(consumed) != {"original", "replacement", "total"} or
+                not all(isinstance(consumed[key], int) and consumed[key] >= 0 for key in consumed) or
+                consumed["total"] != consumed["original"] + consumed["replacement"]):
+            raise PermissionError("prospective feasibility live budget state is invalid")
+        return dict(value)
+
+    def _persist(self, value: Mapping[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=self.path.parent, suffix=".tmp") as handle:
+            handle.write(json.dumps(dict(value), sort_keys=True, separators=(",", ":")) + "\n")
+            temporary = Path(handle.name)
+        os.replace(temporary, self.path)
+
+    def admit(self, replacement: bool = False) -> None:
+        if self.operator_stop_path.exists():
+            raise M20FeasibilityExecutionBlocked("prospective feasibility operator stop requested")
+        bucket = "replacement" if replacement else "original"
+        value = self._load(); consumed = dict(value["consumed"])
+        if consumed[bucket] >= self.limits[bucket] or consumed["total"] >= self.limits["total"]:
+            raise M20FeasibilityExecutionBlocked("prospective feasibility live budget exhausted")
+        consumed[bucket] += 1; consumed["total"] += 1
+        self._persist({**self._expected(), "consumed": consumed})
+
+    def ensure_not_stopped(self) -> None:
+        if self.operator_stop_path.exists():
+            raise M20FeasibilityExecutionBlocked("prospective feasibility operator stop requested")
+
+
+class M20FeasibilityExecutionBlocked(InterruptedError):
+    """A pre-transport operator or aggregate-budget stop; never a provider failure."""
 
 
 @dataclass(frozen=True)
@@ -155,14 +229,19 @@ class M20ProspectiveFeasibilityRunner:
         finally:
             self._diagnostic_store = None
 
-    def run_live(self, authorization_artifact: Path, trust_anchor: Path, transport: Transport, root: Path) -> tuple[M20ExecutionRecord, ...]:
+    def run_live(self, authorization_artifact: Path, trust_anchor: Path, transport: Transport, root: Path,
+                 *, operator_stop_path: Path | None = None) -> tuple[M20ExecutionRecord, ...]:
         """Future live path: exact artifact validation always precedes adapter creation."""
-        load_feasibility_live_authorization(authorization_artifact, trust_anchor, self.frozen)
+        authorization = load_feasibility_live_authorization(authorization_artifact, trust_anchor, self.frozen)
         if not callable(transport):
             raise TypeError("transport is required")
+        if operator_stop_path is None:
+            raise PermissionError("operator stop path is required")
+        control = M20FeasibilityLiveBudget(root, authorization, operator_stop_path)
+        control.ensure_not_stopped()
         store = self.store(root); self._diagnostic_store = self.diagnostic_store(root)
         try:
-            return tuple(self._run(item, transport, store) for item in self._items)
+            return tuple(self._run(item, transport, store, control) for item in self._items)
         finally:
             self._diagnostic_store = None
 
@@ -174,26 +253,34 @@ class M20ProspectiveFeasibilityRunner:
             self.harness.replacement(original))
 
     def run_live_replacement(self, authorization_artifact: Path, trust_anchor: Path, original_work_id: str, transport: Transport, root: Path,
-                             *, interrupt_before_execution: bool = False) -> M20ExecutionRecord:
-        load_feasibility_live_authorization(authorization_artifact, trust_anchor, self.frozen)
+                             *, operator_stop_path: Path | None = None, interrupt_before_execution: bool = False) -> M20ExecutionRecord:
+        authorization = load_feasibility_live_authorization(authorization_artifact, trust_anchor, self.frozen)
+        if operator_stop_path is None:
+            raise PermissionError("operator stop path is required")
         original_item = next((item for item in self._items if item.work_id == original_work_id), None)
         if original_item is None:
             raise PermissionError("replacement original is unknown")
         store = self.store(root); original = store.completed_record(original_item.spec); replacement = self.replacement_item(original)
+        control = M20FeasibilityLiveBudget(root, authorization, operator_stop_path)
+        control.ensure_not_stopped()
         self.harness._provenance_overrides.update({"work_id": replacement.work_id, "original_work_id": original_item.work_id,
             "replacement_work_id": replacement.work_id, "replacement_index": "1", "replacement_eligibility": original.outcome.value})
         self._diagnostic_store = self.diagnostic_store(root)
         try:
-            return self.harness.run(replacement.spec, M20FixedAdapter(M20DeepSeekProposalAdapter(transport, answer_termination_enabled=True)), store,
+            return self.harness.run(replacement.spec, M20FixedAdapter(M20DeepSeekProposalAdapter(
+                transport, answer_termination_enabled=True, admit_logical_operation=lambda: control.admit(True))), store,
                                     interrupt_before_execution=interrupt_before_execution)
         finally:
             self._diagnostic_store = None
 
-    def _run(self, item: M20FeasibilityWorkItem, transport: Transport, store: M20EvidenceStore) -> M20ExecutionRecord:
+    def _run(self, item: M20FeasibilityWorkItem, transport: Transport, store: M20EvidenceStore,
+             control: M20FeasibilityLiveBudget | None = None) -> M20ExecutionRecord:
         if item not in self._items:
             raise PermissionError("unrecognized feasibility work")
         self.harness._provenance_overrides["work_id"] = item.work_id
-        return self.harness.run(item.spec, M20FixedAdapter(M20DeepSeekProposalAdapter(transport, answer_termination_enabled=True)), store)
+        admission = None if control is None else control.admit
+        return self.harness.run(item.spec, M20FixedAdapter(M20DeepSeekProposalAdapter(
+            transport, answer_termination_enabled=True, admit_logical_operation=admission)), store)
 
 
 def descriptive_projection(records: tuple[Mapping[str, Any], ...], diagnostics: tuple[Any, ...]) -> dict[str, Any]:

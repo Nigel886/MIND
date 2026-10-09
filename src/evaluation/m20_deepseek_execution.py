@@ -156,17 +156,23 @@ class M20DeepSeekProposalAdapter:
     """A provider boundary that cannot receive evaluator/private case objects."""
     retry_ceiling = 2
 
-    def __init__(self, transport: Transport, answer_termination_enabled: bool = False) -> None:
+    def __init__(self, transport: Transport, answer_termination_enabled: bool = False,
+                 admit_logical_operation: Callable[[], None] | None = None) -> None:
         if not callable(transport) or M20_REAL_PROVIDER_CONFIGURATION.identity_hash != "522fcf28714e168ce9854069468c51d3d3cb565404d7bdad3317e4fcc8f199ad":
             raise ValueError("frozen DeepSeek configuration mismatch")
         self._transport = transport
         if not isinstance(answer_termination_enabled, bool):
             raise TypeError("answer-termination policy flag is invalid")
         self._answer_termination_enabled = answer_termination_enabled
+        if admit_logical_operation is not None and not callable(admit_logical_operation):
+            raise TypeError("logical-operation admission hook is invalid")
+        self._admit_logical_operation = admit_logical_operation
         self.requests: list[dict[str, Any]] = []
         self.last_diagnostic: dict[str, Any] | None = None
 
     def propose(self, public_case: Any, public_state: Mapping[str, Any]) -> M20Proposal:
+        if self._admit_logical_operation is not None:
+            self._admit_logical_operation()
         request = _public_request(public_case, public_state, self._answer_termination_enabled)
         self.requests.append(request)
         try:
