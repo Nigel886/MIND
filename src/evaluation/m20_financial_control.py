@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -17,8 +18,10 @@ from src.evaluation.m20_harness import canonical_hash
 
 
 M20_FINANCIAL_LEDGER_SCHEMA = "m20_feasibility_financial_ledger_v1"
+M20_OWNER_RISK_FINANCIAL_LEDGER_SCHEMA = "m20_feasibility_financial_ledger_v2"
 M20_DEEPSEEK_V41_CHAT_TOKENIZER_ID = "deepseek_v41_chat_billing_v1"
-M20_OWNER_RISK_ACCEPTED_POLICY_ID = "m20_owner_risk_accepted_unknown_input_v1"
+M20_OWNER_RISK_ACCEPTED_POLICY_ID = "m20_owner_risk_accepted_execution_v1"
+M20_LEGACY_OWNER_RISK_ACCEPTED_POLICY_ID = "m20_owner_risk_accepted_unknown_input_v1"
 _NANO_CNY = 1_000_000_000
 
 
@@ -131,9 +134,10 @@ class M20FeasibilityFinancialLedger:
         self.dispatch_lock_path = root / ".m20_execution_control" / "physical_dispatch.lock"
         self.authorization_digest = canonical_hash(dict(authorization))
         self.policy, self.token_counter, self.operator_stop_path = policy, token_counter, operator_stop_path
+        self.schema = M20_OWNER_RISK_FINANCIAL_LEDGER_SCHEMA if isinstance(policy, M20OwnerRiskAcceptedFinancialPolicy) else M20_FINANCIAL_LEDGER_SCHEMA
 
     def _expected(self) -> dict[str, Any]:
-        return {"schema": M20_FINANCIAL_LEDGER_SCHEMA, "authorization_digest": self.authorization_digest,
+        return {"schema": self.schema, "authorization_digest": self.authorization_digest,
                 "policy": self.policy.canonical()}
 
     def _load(self) -> dict[str, Any]:
@@ -155,7 +159,17 @@ class M20FeasibilityFinancialLedger:
         with NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=self.path.parent, suffix=".tmp") as handle:
             handle.write(json.dumps(dict(value), sort_keys=True, separators=(",", ":")) + "\n")
             temporary = Path(handle.name)
-        os.replace(temporary, self.path)
+        # Windows security/indexing handles can briefly retain the previous
+        # ledger file.  Preserve atomic replacement, but tolerate only a
+        # bounded transient lock; failure remains fail-closed.
+        for attempt in range(3):
+            try:
+                os.replace(temporary, self.path)
+                return
+            except PermissionError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.02)
 
     def _reserve_nano(self, input_tokens: int) -> int:
         return (input_tokens * self.policy.cache_miss_input_cny_nano_per_token +
@@ -206,7 +220,8 @@ class M20FeasibilityFinancialLedger:
         return total
 
     def reserve(self, execution_id: str, logical_operation_id: str, retry_index: int,
-                request: Mapping[str, Any]) -> str:
+                request: Mapping[str, Any], *, work_id: str | None = None,
+                provider: str | None = None, model: str | None = None) -> str:
         if self.operator_stop_path.exists():
             raise M20FinancialControlBlocked("prospective feasibility operator stop requested")
         if isinstance(self.policy, M20FeasibilityFinancialPolicy):
@@ -234,45 +249,90 @@ class M20FeasibilityFinancialLedger:
         if exposure + reserve > self.policy.planned_total_cny_nano:
             raise M20FinancialControlBlocked("planned financial budget exhausted")
         attempts[key] = {"execution_id": execution_id, "logical_operation_id": logical_operation_id,
-                         "retry_index": retry_index, "input_token_upper_bound": input_bound,
-                         "reserved_cny_nano": reserve, "status": "RESERVED", "usage": None,
-                         "observed_cny_nano": None, "outcome": None}
+                          "retry_index": retry_index, "input_token_upper_bound": input_bound,
+                          "reserved_cny_nano": reserve, "status": "RESERVED", "usage": None,
+                          "observed_cny_nano": None, "outcome": None, "work_id": work_id,
+                          "provider": provider, "model": model,
+                          "policy_identity": getattr(self.policy, "policy_identity", None),
+                          "physical_attempt_id": key, "transport_outcome": None,
+                          "response_validation_outcome": None, "terminal_outcome": None}
         self._persist({**self._expected(), "attempts": attempts,
                        "dispatch_halted": value["dispatch_halted"], "halt_reason": value["halt_reason"]})
         return key
 
-    def settle(self, key: str, raw: Mapping[str, Any] | None, outcome: str) -> None:
+    def mark_dispatched(self, key: str) -> None:
+        """Durably distinguish a reservation from a transport invocation.
+
+        A crash in either state is deliberately fail-closed.  In particular,
+        ``DISPATCHED`` is evidence only that local code invoked transport; it is
+        not evidence that the provider received or billed the request.
+        """
         value = self._load(); attempts = dict(value["attempts"]); attempt = attempts.get(key)
         if not isinstance(attempt, Mapping) or attempt.get("status") != "RESERVED":
+            raise PermissionError("financial attempt dispatch transition mismatch")
+        updated = dict(attempt); updated["status"] = "DISPATCHED"; attempts[key] = updated
+        self._persist({**self._expected(), "attempts": attempts,
+                       "dispatch_halted": value["dispatch_halted"], "halt_reason": value["halt_reason"]})
+
+    def settle(self, key: str, raw: Mapping[str, Any] | None, outcome: str) -> None:
+        value = self._load(); attempts = dict(value["attempts"]); attempt = attempts.get(key)
+        if not isinstance(attempt, Mapping) or attempt.get("status") != "DISPATCHED":
             raise PermissionError("financial attempt settlement mismatch")
         usage = self._usage(raw) if isinstance(raw, Mapping) else None
         updated = dict(attempt); updated["outcome"] = outcome
         halted, halt_reason = value["dispatch_halted"], value["halt_reason"]
         if usage is None:
-            updated.update({"status": "UNRESOLVED", "usage": None, "observed_cny_nano": None})
+            updated.update({"status": "SETTLED", "billing_status": "UNRESOLVED", "usage": None, "observed_cny_nano": None})
             if isinstance(self.policy, M20OwnerRiskAcceptedFinancialPolicy):
                 halted, halt_reason = True, "provider_usage_missing_or_invalid"
         else:
             observed = (usage["prompt_cache_hit_tokens"] * self.policy.cache_hit_input_cny_nano_per_token +
                         usage["prompt_cache_miss_tokens"] * self.policy.cache_miss_input_cny_nano_per_token +
                         usage["completion_tokens"] * self.policy.output_cny_nano_per_token)
-            updated.update({"status": "OBSERVED", "usage": usage, "observed_cny_nano": observed})
+            updated.update({"status": "SETTLED", "billing_status": "OBSERVED", "usage": usage, "observed_cny_nano": observed})
         attempts[key] = updated
         self._persist({**self._expected(), "attempts": attempts,
                        "dispatch_halted": halted, "halt_reason": halt_reason})
 
     def ensure_replacement_allowed(self) -> None:
+        self.ensure_dispatch_allowed()
+
+    def ensure_dispatch_allowed(self) -> None:
+        """Reject a new work item before it can create a provider attempt."""
+        if self.operator_stop_path.exists():
+            raise M20FinancialControlBlocked("prospective feasibility operator stop requested")
         value = self._load()
         if value["dispatch_halted"]:
-            raise M20FinancialControlBlocked("financial ambiguity permanently blocks replacement")
+            raise M20FinancialControlBlocked("financial ambiguity permanently blocks later dispatch")
+
+    def reconcile_telemetry(self, execution_id: str, retries: Any) -> None:
+        """Require one settled ledger identity for each persisted retry attempt."""
+        if not isinstance(execution_id, str) or not execution_id:
+            raise TypeError("execution identity is required for financial reconciliation")
+        expected: set[tuple[str, int]] = set()
+        for retry in retries:
+            logical = getattr(retry, "logical_operation_id", None)
+            index = getattr(retry, "retry_index", None)
+            if not isinstance(logical, str) or not logical or not isinstance(index, int) or index < 0:
+                raise PermissionError("telemetry retry identity is invalid")
+            if (logical, index) in expected:
+                raise PermissionError("duplicate telemetry physical attempt identity")
+            expected.add((logical, index))
+        value = self._load()
+        actual = {(item.get("logical_operation_id"), item.get("retry_index")): item
+                  for item in value["attempts"].values() if item.get("execution_id") == execution_id}
+        if set(actual) != expected:
+            raise M20FinancialControlBlocked("financial and telemetry physical attempt identities do not reconcile")
+        if any(item.get("status") != "SETTLED" for item in actual.values()):
+            raise M20FinancialControlBlocked("financial attempt is not settled for persisted telemetry")
 
     def summary(self) -> dict[str, int]:
         value = self._load(); attempts = value["attempts"]
         exposure = self._exposure(attempts)
         observed = sum(int(item["observed_cny_nano"]) for item in attempts.values()
-                       if item.get("status") == "OBSERVED")
+                       if item.get("billing_status") == "OBSERVED")
         unresolved = sum(int(item["reserved_cny_nano"]) for item in attempts.values()
-                         if item.get("status") != "OBSERVED")
+                          if item.get("billing_status") != "OBSERVED")
         return {"physical_attempts": len(attempts), "logical_operations": len({item["logical_operation_id"] for item in attempts.values()}),
                 "observed_cny_nano": observed, "reserved_exposure_cny_nano": exposure,
                 "unresolved_cny_nano": unresolved,

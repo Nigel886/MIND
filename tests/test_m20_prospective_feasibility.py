@@ -144,8 +144,9 @@ class ProspectiveFeasibilityTests(unittest.TestCase):
             root, stop, payload = Path(directory) / "records", Path(directory) / "stop", feasibility_live_authorization_payload(financial_policy=policy())
             ledger = M20FeasibilityFinancialLedger(root, payload, policy(), exact_test_counter, stop)
             first = ledger.reserve("work", "logical-1", 0, {"request": True})
+            ledger.mark_dispatched(first)
             ledger.settle(first, {"usage": {"prompt_cache_hit_tokens": 1, "prompt_cache_miss_tokens": 2, "completion_tokens": 3}}, "response_received")
-            second = ledger.reserve("work", "logical-2", 0, {"request": True}); ledger.settle(second, None, "TimeoutError")
+            second = ledger.reserve("work", "logical-2", 0, {"request": True}); ledger.mark_dispatched(second); ledger.settle(second, None, "TimeoutError")
             summary = M20FeasibilityFinancialLedger(root, payload, policy(), exact_test_counter, stop).summary()
         self.assertEqual((summary["physical_attempts"], summary["logical_operations"]), (2, 2))
         self.assertGreater(summary["observed_cny_nano"], 0); self.assertGreater(summary["unresolved_cny_nano"], 0)
@@ -212,6 +213,7 @@ class ProspectiveFeasibilityTests(unittest.TestCase):
                         self.fail("second physical dispatch acquired lease")
                 key = ledger.reserve("work", "logical", 0, {"request": True})
                 self.assertEqual(json.loads(ledger.path.read_text(encoding="utf-8"))["attempts"][key]["status"], "RESERVED")
+                ledger.mark_dispatched(key)
                 ledger.settle(key, billed_reply({"kind": "act", "action_id": "advance"}), "response_received")
             self.assertFalse(ledger.dispatch_lock_path.exists())
             self.assertEqual(ledger.summary()["financial_ambiguity_halted"], 0)
@@ -223,7 +225,7 @@ class ProspectiveFeasibilityTests(unittest.TestCase):
             artifact, anchor = signed_authority(directory, owner_risk_policy_value=risk)
             payload = feasibility_live_authorization_payload(owner_risk_policy=risk)
             ledger = M20FeasibilityFinancialLedger(root, payload, risk, None, stop)
-            key = ledger.reserve("work", "logical", 0, {"request": True}); ledger.settle(key, None, "TimeoutError")
+            key = ledger.reserve("work", "logical", 0, {"request": True}); ledger.mark_dispatched(key); ledger.settle(key, None, "TimeoutError")
             self.assertEqual(ledger.summary()["financial_ambiguity_halted"], 1)
             with self.assertRaises(M20FinancialControlBlocked): ledger.reserve("work", "logical", 1, {"request": True})
             item = runner.work_items()[0]
@@ -246,5 +248,111 @@ class ProspectiveFeasibilityTests(unittest.TestCase):
                                  M20FeasibilityLiveBudget(root, authorization, stop), financial)
             self.assertIn(record.outcome, (M20Outcome.SUCCESS, M20Outcome.FAILURE_OR_INCORRECT, M20Outcome.INCOMPLETE))
             self.assertEqual(financial.summary()["physical_attempts"], record.telemetry.provider_transport_attempts)
+
+    def test_logical_budget_is_charged_once_across_zero_one_and_two_retries(self):
+        runner = M20ProspectiveFeasibilityRunner()
+        for retry_count in (0, 1, 2):
+            with self.subTest(retry_count=retry_count), TemporaryDirectory() as directory:
+                root, stop = Path(directory) / "records", Path(directory) / "stop"
+                payload = feasibility_live_authorization_payload(financial_policy=policy())
+                control = M20FeasibilityLiveBudget(root, payload, stop)
+                ledger = M20FeasibilityFinancialLedger(root, payload, policy(), exact_test_counter, stop)
+                calls = []
+                def transport(*args):
+                    calls.append(args)
+                    if len(calls) <= retry_count:
+                        raise TimeoutError("fake retry")
+                    return billed_responder(*args)
+                record = runner._run(runner.work_items()[0], transport, runner.store(root), control, ledger)
+                consumed = json.loads(control.path.read_text(encoding="utf-8"))["consumed"]
+                self.assertEqual(consumed["original"], record.telemetry.provider_interactions)
+                self.assertEqual(len(calls), record.telemetry.provider_transport_attempts)
+                self.assertEqual(ledger.summary()["physical_attempts"], len(calls))
+
+    def test_owner_risk_unresolved_charge_aborts_batch_without_retry_or_provider_failure(self):
+        runner = M20ProspectiveFeasibilityRunner()
+        with TemporaryDirectory() as directory:
+            root, stop = Path(directory) / "records", Path(directory) / "stop"
+            artifact, anchor = signed_authority(directory, owner_risk_policy_value=owner_risk_policy())
+            calls = []
+            def transport(*_args):
+                calls.append(1)
+                raise TimeoutError("missing provider usage")
+            with self.assertRaises(M20FinancialControlBlocked):
+                runner.run_owner_risk_accepted_live(artifact, anchor, transport, root,
+                                                     operator_stop_path=stop, owner_risk_policy=owner_risk_policy())
+            self.assertEqual(len(calls), 1)
+            self.assertEqual([path for path in root.glob("*.json") if path.name != "manifest.json"], [])
+            ledger = M20FeasibilityFinancialLedger(root, json.loads(artifact.read_text(encoding="utf-8"))["payload"],
+                                                   owner_risk_policy(), None, stop)
+            self.assertEqual(ledger.summary()["financial_ambiguity_halted"], 1)
+
+    def test_reserved_crash_is_identifiable_and_reconciliation_rejects_missing_telemetry(self):
+        with TemporaryDirectory() as directory:
+            root, stop = Path(directory) / "records", Path(directory) / "stop"
+            payload = feasibility_live_authorization_payload(financial_policy=policy())
+            ledger = M20FeasibilityFinancialLedger(root, payload, policy(), exact_test_counter, stop)
+            key = ledger.reserve("work", "logical", 0, {"request": True})
+            persisted = json.loads(ledger.path.read_text(encoding="utf-8"))["attempts"][key]
+            self.assertEqual(persisted["status"], "RESERVED")
+            with self.assertRaises(M20FinancialControlBlocked):
+                ledger.reconcile_telemetry("work", ())
+
+    def test_unreconciled_financial_attempt_blocks_canonical_persistence(self):
+        runner = M20ProspectiveFeasibilityRunner()
+        with TemporaryDirectory() as directory:
+            root, stop = Path(directory) / "records", Path(directory) / "stop"
+            payload = feasibility_live_authorization_payload(owner_risk_policy=owner_risk_policy())
+            item = runner.work_items()[0]
+            ledger = M20FeasibilityFinancialLedger(root, payload, owner_risk_policy(), None, stop)
+            key = ledger.reserve(item.spec.execution_id, "foreign-logical-operation", 0, {}, work_id=item.work_id,
+                                 provider="deepseek_api", model="deepseek-flash")
+            ledger.mark_dispatched(key); ledger.settle(key, billed_reply({"kind": "stop"}), "response_received")
+            with self.assertRaises(M20FinancialControlBlocked):
+                runner._run(item, billed_responder, runner.store(root), M20FeasibilityLiveBudget(root, payload, stop), ledger)
+            self.assertFalse((root / (item.spec.execution_id + ".json")).exists())
+
+    def test_owner_risk_replacement_reconciliation_rejects_before_completion(self):
+        runner = M20ProspectiveFeasibilityRunner()
+        with TemporaryDirectory() as directory:
+            root, stop = Path(directory) / "records", Path(directory) / "stop"
+            original_item = runner.work_items()[0]
+            original = runner._run(original_item, lambda *_: (_ for _ in ()).throw(TimeoutError("eligible")), runner.store(root))
+            original_path = root / (original.execution_id + ".json")
+            original_bytes = original_path.read_bytes()
+            artifact, anchor = signed_authority(directory, owner_risk_policy_value=owner_risk_policy())
+            payload = json.loads(artifact.read_text(encoding="utf-8"))["payload"]
+            replacement = runner.replacement_item(original)
+            ledger = M20FeasibilityFinancialLedger(root, payload, owner_risk_policy(), None, stop)
+            key = ledger.reserve(replacement.spec.execution_id, "foreign-logical-operation", 0, {}, work_id=replacement.work_id,
+                                 provider="deepseek_api", model="deepseek-flash")
+            ledger.mark_dispatched(key); ledger.settle(key, billed_reply({"kind": "stop"}), "response_received")
+            with self.assertRaises(M20FinancialControlBlocked):
+                runner.run_owner_risk_accepted_replacement(artifact, anchor, original_item.work_id, billed_responder, root,
+                                                            operator_stop_path=stop, owner_risk_policy=owner_risk_policy())
+            self.assertFalse((root / (replacement.spec.execution_id + ".json")).exists())
+            self.assertEqual(original_path.read_bytes(), original_bytes)
+            with self.assertRaises(M20FinancialControlBlocked):
+                runner.run_owner_risk_accepted_replacement(artifact, anchor, original_item.work_id, billed_responder, root,
+                                                            operator_stop_path=stop, owner_risk_policy=owner_risk_policy())
+
+    def test_post_reconciliation_persistence_interruption_fails_closed_on_restart(self):
+        runner = M20ProspectiveFeasibilityRunner()
+        with TemporaryDirectory() as directory:
+            root, stop = Path(directory) / "records", Path(directory) / "stop"
+            payload = feasibility_live_authorization_payload(owner_risk_policy=owner_risk_policy())
+            item = runner.work_items()[0]; ledger = M20FeasibilityFinancialLedger(root, payload, owner_risk_policy(), None, stop)
+            store = runner.store(root); persisted = store.persist
+            store.persist = lambda _record: (_ for _ in ()).throw(InterruptedError("injected after reconciliation"))
+            calls = []
+            def transport(*args): calls.append(args); return billed_responder(*args)
+            with self.assertRaises(InterruptedError):
+                runner._run(item, transport, store, M20FeasibilityLiveBudget(root, payload, stop), ledger)
+            self.assertFalse((root / (item.spec.execution_id + ".json")).exists())
+            self.assertEqual(len(calls), 3)
+            store.persist = persisted
+            with self.assertRaises(M20FinancialControlBlocked):
+                runner._run(item, lambda *_: self.fail("restart duplicated transport"), store,
+                            M20FeasibilityLiveBudget(root, payload, stop), ledger)
 
 if __name__ == "__main__": unittest.main()

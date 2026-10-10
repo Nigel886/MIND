@@ -198,3 +198,141 @@ and numeric exit artifacts: `python -m unittest` ran 857 tests in 257.310
 seconds (exit 0), and `python -m pytest` reported 857 passed in 187.03 seconds
 (exit 0). Pytest emitted one non-fatal cache-permission warning. `git diff
 --check` passed.
+
+### Prospective v2 remediation (pending validation)
+
+The historical `m20_owner_risk_accepted_unknown_input_v1` policy remains
+historical and is not reinterpreted. Future owner-risk admission uses the
+separately signed `m20_owner_risk_accepted_execution_v1` policy, the
+`m20_feasibility_owner_risk_live_authorization_v2` authorization schema, and
+the `m20_feasibility_financial_ledger_v2` ledger schema. Each v2 attempt now
+records work, execution, logical-operation and physical-attempt identities,
+provider/model, policy identity, lifecycle state, billing state, usage and
+financial outcome fields. This prospective change remains offline-only and is
+pending focused and full regression validation; it does not authorize signing,
+provider execution, or changes to historical evidence.
+
+Focused v2 validation: `tests.test_m20_prospective_feasibility` completed 20
+tests under Python 3.12.4 with exit code 0. Complete unittest, pytest,
+historical-inventory comparison, and `git diff --check` remain required before
+delivery.
+
+Financial reconciliation now executes through a harness pre-persistence
+validator for original and replacement paths: a mismatch raises before
+`M20EvidenceStore.persist` can create a completed record. The focused suite
+was rerun after this boundary change: 20 tests passed in 0.914 seconds under
+Python 3.12.4. Full validation remains pending.
+
+The v2 focused suite now contains a production-path negative case with an
+extra settled ledger identity for the same execution: reconciliation raises
+before the completed record path exists. `tests.test_m20_prospective_feasibility`
+ran 21 tests in 0.993 seconds with exit code 0. A sorted SHA-256 inventory of
+the historical feasibility result tree matched the pre-validation inventory
+captured for this workspace. This comparison establishes no change during the
+current validation window; it does not independently establish integrity
+before that baseline was captured.
+
+## Final independent offline acceptance evidence
+
+This section supersedes the earlier **pending validation** status for the
+prospective v2 remediation. It records an offline Guest-to-host evidence
+review; it is not live-provider authorization and is not empirical evidence.
+
+### Scope and policy binding
+
+The delivered prospective owner-risk path uses
+`m20_owner_risk_accepted_execution_v1`, signed authorization schema
+`m20_feasibility_owner_risk_live_authorization_v2`, and ledger schema
+`m20_feasibility_financial_ledger_v2`. The implementation requires a valid
+Ed25519 signature and external issuer trust-anchor mapping, then compares the
+entire signed payload to the exact frozen Fixed-only scope. The payload binds
+the 24 original work IDs, the frozen manifest/membership/provider/runtime/
+ceiling identities, 192 original plus 192 first-replacement logical-operation
+limits (384 total), the Route-B policy, CNY 50 planned amount, CNY 30 warning,
+and CNY 40 internal-stop threshold.
+
+It remains default-deny: no artifact was issued, no private key was accessed,
+and no provider was contacted during this validation. The policy expressly
+accepts unknown input-billing exposure; local reservations and thresholds are
+not a provider-side spending cap.
+
+### Host-verified Guest regression evidence
+
+The host independently SHA-256-verified the transferred evidence ZIP at
+`F:\\Issue331-Evidence\\issue331-final-evidence.zip` as
+`5b2ba6b3c7ab462e1e2a41652fcdfaeac31b9bf47f10570cae30998efb3b551b`.
+The ZIP contained exactly the 13 allowlisted state/log, hash-summary, security,
+and isolation-summary entries. Its paths were safe and non-duplicated. A host
+content scan found no credential, private-key, trust-anchor, signed authority,
+provider endpoint, historical payload, or Legacy v4 fixture. Every exported
+test evidence file matched its export-manifest byte size and SHA-256.
+
+| Suite | Host parsing of raw Guest child logs | State / child exit |
+| --- | --- | --- |
+| `python -m unittest` | `Ran 863 tests in 103.182s`; standalone `OK` | `COMPLETED` / `0` |
+| `python -m pytest` | `863 passed in 103.66s (0:01:43)` | `COMPLETED` / `0` |
+
+The current focused module contains 23 deterministic
+`ProspectiveFeasibilityTests` methods, including logical-budget retry,
+financial-halt, original/replacement pre-persistence reconciliation, and
+post-reconciliation interruption/restart cases. The full-suite logs are
+stronger evidence for repository regression status than the earlier focused
+aggregate alone; neither suite used real-provider transport.
+
+### Financial and persistence safeguards verified in code and tests
+
+- One logical admission occurs at the harness logical-operation boundary,
+  while every physical retry receives an independently durable reservation.
+- The cross-process `O_EXCL` dispatch lease is acquired before transport;
+  attempts transition `RESERVED` → `DISPATCHED` → `SETTLED`. Crash residue is
+  fail-closed and is never inferred to mean provider receipt or billing.
+- Missing or invalid usage permanently sets the owner-risk financial halt.
+  The halt is an `InterruptedError`-family control exception, not a retryable
+  provider failure; later batch scheduling, retries, and replacements are
+  denied.
+- The harness reconciles settled ledger identities to retry telemetry before
+  canonical completion persistence for both originals and canonical first
+  replacements. Negative tests show mismatches and injected post-reconciliation
+  persistence interruption create no completed record and do not duplicate
+  transport on restart.
+- The ordinary tokenizer-backed path remains separately default-deny pending a
+  verified production Chat Completions tokenizer; the owner-risk policy accepts
+  no tokenizer counter and cannot silently become that policy.
+
+### Historical and isolation evidence
+
+The host parsed the two exported hash-only inventories and independently
+verified their format, path safety, unique membership, `verified=true` fields,
+and counts: 365 original entries plus 553 recovery entries. It also recomputed
+the size and SHA-256 of all 918 corresponding host-repository files against
+those exported records: 918 matched, zero were missing, and zero mismatched.
+The recovery set contains exactly 480 paths beneath
+`evaluation/m18/results/m18_power_calibration_v1/pilot/` and 73 beneath
+`evaluation/m18/results/diagnostic/m18_v2_budget_diagnostic_v1/`. No fixture
+payload was exported. This proves the exported Guest verification record is
+internally consistent and that the current host copies match it; it does **not**
+let the host recompute hashes over the Guest source files after the fact.
+
+The exported Guest isolation summary reports zero blocking adapters, zero IPv4
+or IPv6 default routes, and zero provider credential environment variables. It
+records four status-`Not Present` pseudo-interface exclusions: Teredo, IP-HTTPS,
+6to4, and the localized Kernel Debug interface whose description is
+`Microsoft Kernel Debug Network Adapter`. The host independently inspected the
+summary and its evidence ZIP, but cannot retroactively attest to the Guest
+hypervisor configuration; that remains Guest-local operator evidence.
+
+### Delivery judgment and remaining limits
+
+The tracked working-tree scope remains exactly these six Issue #331 files:
+this report, `m20_deepseek_execution.py`, `m20_financial_control.py`,
+`m20_harness.py`, `m20_prospective_feasibility.py`, and
+`tests/test_m20_prospective_feasibility.py`. `git diff --check` passes.
+No frozen manifest, membership, evaluator-private diagnostic contract,
+historical fixture, trust anchor, or authorization artifact is modified by the
+patch.
+
+**Offline code delivery is READY for scoped owner review and a separate Git
+delivery decision.** Real feasibility execution remains unauthorized. Before a
+future execution decision, the owner must separately authorize use of an exact
+signed artifact and accept residual in-flight/unknown billing risk; external
+provider-side spending protection is still unverified.

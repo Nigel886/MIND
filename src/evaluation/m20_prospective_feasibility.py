@@ -28,6 +28,7 @@ M20_FEASIBILITY_MANIFEST_VERSION = "m20_feasibility_manifest_v1"
 M20_FEASIBILITY_RUNTIME = "m20_feasibility_runtime_generation_v1"
 M20_FEASIBILITY_AUTHORIZATION_SCHEMA = "m20_feasibility_synthetic_authorization_v1"
 M20_FEASIBILITY_LIVE_AUTHORIZATION_SCHEMA = "m20_feasibility_owner_live_authorization_v1"
+M20_FEASIBILITY_OWNER_RISK_LIVE_AUTHORIZATION_SCHEMA = "m20_feasibility_owner_risk_live_authorization_v2"
 M20_FEASIBILITY_SIGNED_AUTHORIZATION_SCHEMA = "m20_feasibility_signed_authorization_v1"
 M20_FEASIBILITY_TRUST_ANCHOR_SCHEMA = "m20_feasibility_issuer_trust_anchor_v1"
 M20_FEASIBILITY_LIVE_BUDGET_SCHEMA = "m20_feasibility_live_budget_ledger_v1"
@@ -89,7 +90,7 @@ def feasibility_live_authorization_payload(manifest: Mapping[str, Any] | None = 
     validate_feasibility_manifest(frozen)
     original_limit = len(frozen["work_items"]) * 8
     replacement_limit = original_limit
-    payload = {"schema": M20_FEASIBILITY_LIVE_AUTHORIZATION_SCHEMA, "authority": M20_FEASIBILITY_OWNER_AUTHORITY,
+    payload = {"schema": (M20_FEASIBILITY_OWNER_RISK_LIVE_AUTHORIZATION_SCHEMA if owner_risk_policy is not None else M20_FEASIBILITY_LIVE_AUTHORIZATION_SCHEMA), "authority": M20_FEASIBILITY_OWNER_AUTHORITY,
              "purpose": "m20_fixed_only_task_evaluator_feasibility", "protocol": frozen["protocol"],
             "manifest_version": frozen["version"], "manifest_digest": frozen["digest"],
             "membership_digest": frozen["manifest_digest"], "namespace": frozen["namespace"],
@@ -285,7 +286,13 @@ class M20ProspectiveFeasibilityRunner:
         control.ensure_not_stopped(); financial.ensure_replacement_allowed()
         store = self.store(root); self._diagnostic_store = self.diagnostic_store(root)
         try:
-            return tuple(self._run(item, transport, store, control, financial) for item in self._items)
+            records = []
+            for item in self._items:
+                # Recheck immediately before every scheduled original.  A
+                # financial ambiguity is an interruption, never a result.
+                control.ensure_not_stopped(); financial.ensure_dispatch_allowed()
+                records.append(self._run(item, transport, store, control, financial))
+            return tuple(records)
         finally:
             self._diagnostic_store = None
 
@@ -315,12 +322,16 @@ class M20ProspectiveFeasibilityRunner:
         self.harness._provenance_overrides.update({"work_id": replacement.work_id, "original_work_id": original_item.work_id,
             "replacement_work_id": replacement.work_id, "replacement_index": "1", "replacement_eligibility": original.outcome.value})
         self._diagnostic_store = self.diagnostic_store(root)
+        previous_validator = getattr(self.harness, "_pre_persist_validator", None)
+        self.harness._pre_persist_validator = lambda record: financial.reconcile_telemetry(record.execution_id, record.telemetry.retries)
         try:
+            financial.ensure_dispatch_allowed()
             return self.harness.run(replacement.spec, M20FixedAdapter(M20DeepSeekProposalAdapter(
                 transport, answer_termination_enabled=True, admit_logical_operation=lambda: control.admit(True),
-                financial_ledger=financial, execution_id=replacement.spec.execution_id)), store,
+                financial_ledger=financial, execution_id=replacement.spec.execution_id, work_id=replacement.work_id)), store,
                                     interrupt_before_execution=interrupt_before_execution)
         finally:
+            self.harness._pre_persist_validator = previous_validator
             self._diagnostic_store = None
 
     def run_owner_risk_accepted_replacement(self, authorization_artifact: Path, trust_anchor: Path,
@@ -342,12 +353,15 @@ class M20ProspectiveFeasibilityRunner:
         self.harness._provenance_overrides.update({"work_id": replacement.work_id, "original_work_id": original_item.work_id,
             "replacement_work_id": replacement.work_id, "replacement_index": "1", "replacement_eligibility": original.outcome.value})
         self._diagnostic_store = self.diagnostic_store(root)
+        previous_validator = getattr(self.harness, "_pre_persist_validator", None)
+        self.harness._pre_persist_validator = lambda record: financial.reconcile_telemetry(record.execution_id, record.telemetry.retries)
         try:
             return self.harness.run(replacement.spec, M20FixedAdapter(M20DeepSeekProposalAdapter(
                 transport, answer_termination_enabled=True, admit_logical_operation=lambda: control.admit(True),
-                financial_ledger=financial, execution_id=replacement.spec.execution_id)), store,
+                financial_ledger=financial, execution_id=replacement.spec.execution_id, work_id=replacement.work_id)), store,
                                     interrupt_before_execution=interrupt_before_execution)
         finally:
+            self.harness._pre_persist_validator = previous_validator
             self._diagnostic_store = None
 
     def _run(self, item: M20FeasibilityWorkItem, transport: Transport, store: M20EvidenceStore,
@@ -357,9 +371,16 @@ class M20ProspectiveFeasibilityRunner:
             raise PermissionError("unrecognized feasibility work")
         self.harness._provenance_overrides["work_id"] = item.work_id
         admission = None if control is None else control.admit
-        return self.harness.run(item.spec, M20FixedAdapter(M20DeepSeekProposalAdapter(
-            transport, answer_termination_enabled=True, admit_logical_operation=admission,
-            financial_ledger=financial, execution_id=(item.spec.execution_id if financial is not None else None))), store)
+        previous = getattr(self.harness, "_pre_persist_validator", None)
+        if financial is not None:
+            self.harness._pre_persist_validator = lambda record: financial.reconcile_telemetry(record.execution_id, record.telemetry.retries)
+        try:
+            return self.harness.run(item.spec, M20FixedAdapter(M20DeepSeekProposalAdapter(
+                transport, answer_termination_enabled=True, admit_logical_operation=admission,
+                financial_ledger=financial, execution_id=(item.spec.execution_id if financial is not None else None),
+                work_id=(item.work_id if financial is not None else None))), store)
+        finally:
+            self.harness._pre_persist_validator = previous
 
 
 def descriptive_projection(records: tuple[Mapping[str, Any], ...], diagnostics: tuple[Any, ...]) -> dict[str, Any]:

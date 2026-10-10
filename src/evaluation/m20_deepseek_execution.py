@@ -159,7 +159,7 @@ class M20DeepSeekProposalAdapter:
 
     def __init__(self, transport: Transport, answer_termination_enabled: bool = False,
                  admit_logical_operation: Callable[[], None] | None = None,
-                 financial_ledger: Any | None = None, execution_id: str | None = None) -> None:
+                 financial_ledger: Any | None = None, execution_id: str | None = None, work_id: str | None = None) -> None:
         if not callable(transport) or M20_REAL_PROVIDER_CONFIGURATION.identity_hash != "522fcf28714e168ce9854069468c51d3d3cb565404d7bdad3317e4fcc8f199ad":
             raise ValueError("frozen DeepSeek configuration mismatch")
         self._transport = transport
@@ -168,10 +168,10 @@ class M20DeepSeekProposalAdapter:
         self._answer_termination_enabled = answer_termination_enabled
         if admit_logical_operation is not None and not callable(admit_logical_operation):
             raise TypeError("logical-operation admission hook is invalid")
-        if financial_ledger is not None and (not isinstance(execution_id, str) or not execution_id):
+        if financial_ledger is not None and (not isinstance(execution_id, str) or not execution_id or not isinstance(work_id, str) or not work_id):
             raise TypeError("financial accounting requires an execution identity")
         self._admit_logical_operation = admit_logical_operation
-        self._financial_ledger, self._execution_id = financial_ledger, execution_id
+        self._financial_ledger, self._execution_id, self._work_id = financial_ledger, execution_id, work_id
         self._attempt_context: tuple[str, int] | None = None
         self.requests: list[dict[str, Any]] = []
         self.last_diagnostic: dict[str, Any] | None = None
@@ -181,9 +181,12 @@ class M20DeepSeekProposalAdapter:
             raise TypeError("physical attempt context is invalid")
         self._attempt_context = (logical_operation_id, retry_index)
 
-    def propose(self, public_case: Any, public_state: Mapping[str, Any]) -> M20Proposal:
+    def admit_logical_operation(self) -> None:
+        """Admit exactly once at the harness logical-operation boundary."""
         if self._admit_logical_operation is not None:
             self._admit_logical_operation()
+
+    def propose(self, public_case: Any, public_state: Mapping[str, Any]) -> M20Proposal:
         request = _public_request(public_case, public_state, self._answer_termination_enabled)
         self.requests.append(request)
         reservation: str | None = None
@@ -195,12 +198,20 @@ class M20DeepSeekProposalAdapter:
                 if self._financial_ledger is not None:
                     if self._attempt_context is None:
                         raise M20ProviderAttemptError("financial attempt context is absent", False)
-                    reservation = self._financial_ledger.reserve(self._execution_id, *self._attempt_context, request)
+                    reservation = self._financial_ledger.reserve(self._execution_id, *self._attempt_context, request,
+                        work_id=self._work_id, provider=M20_REAL_PROVIDER_CONFIGURATION.provider,
+                        model=M20_REAL_PROVIDER_CONFIGURATION.model)
+                    self._financial_ledger.mark_dispatched(reservation)
                 raw = self._transport(request, M20_REAL_PROVIDER_CONFIGURATION.timeout_seconds)
             except M20ProviderAttemptError as error:
                 if reservation is not None:
                     self._financial_ledger.settle(reservation, None, error.reason)
                 self.last_diagnostic = dict(error.diagnostic)
+                raise
+            except InterruptedError:
+                # Financial and operator controls deliberately inherit this
+                # type.  It must cross the provider boundary unchanged rather
+                # than being relabelled as a retryable OSError.
                 raise
             except (TimeoutError, OSError) as error:
                 if reservation is not None:

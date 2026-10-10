@@ -1081,6 +1081,9 @@ class M20Harness:
                           operation: M20ProviderOperation, retries: list[M20RetryAttempt],
                           diagnostics: list[Mapping[str, Any]]) -> M20Proposal:
         """Single provider-client retry owner; evidence is emitted at each call."""
+        admit = getattr(adapter._provider, "admit_logical_operation", None)
+        if callable(admit):
+            admit()
         ceiling = getattr(adapter._provider, "retry_ceiling", 0)
         for index in range(ceiling + 1):
             try:
@@ -1265,6 +1268,9 @@ class M20Harness:
                                     self.manifest.environment_id, self.manifest.evaluator_id, adapter_id, provenance,
                                     self.manifest.case(spec.case_id).public.cohort, M20LifecycleState.COMPLETED,
                                     pre.to_dict(), post.to_dict())
+        validator = getattr(self, "_pre_persist_validator", None)
+        if validator is not None:
+            validator(record)
         if self._active_store is not None:
             self._active_store.persist(record)
         return record
