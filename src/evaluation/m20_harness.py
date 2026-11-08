@@ -11,13 +11,16 @@ from enum import Enum
 from hashlib import sha256
 import json
 from pathlib import Path
+import sys
 from tempfile import NamedTemporaryFile
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
+from uuid import uuid4
 
 from src.core.deliberation_state import DeliberationState, EpistemicSignal, EpistemicState, FailureRecoveryProjection, SignalAvailability, SignalSource
 from src.core.meta_control_policy import MetaControlPolicy, MetaControlPolicyConfig, MetaControlPolicyInput, MetaControlRuntimeProjection, RuntimeTerminalState
 from src.core.meta_control_runtime import MetaControlExecutionContext, MetaControlRuntimeIntegrator, MetaControlRuntimePhase, MetaControlRuntimeState
 from src.core.resource_accounting import ResourceAllocation, ResourceDimension, ResourceState
+from src.evaluation.m20_destination_guard import M20DestinationGuard, WindowsNativeOps
 
 
 M20_HARNESS_ID = "m20_evaluation_harness_v1"
@@ -94,6 +97,143 @@ class M20RetryOwner(str, Enum):
 
 class M20IntegrityError(RuntimeError):
     """A contract breach, never an ordinary task outcome."""
+
+
+class M20EvidenceWriter(Protocol):
+    """Injectable persistence boundary for one already-admitted evidence root."""
+    @property
+    def destination(self) -> Path: ...
+    def write_new_atomic(self, leaf_name: str, payload: bytes) -> None: ...
+    def rename_no_replace(self, source_name: str, target_name: str) -> None: ...
+    def validate_and_rename_no_replace(self, source_name: str, target_name: str,
+                                       validator: Callable[[bytes], None]) -> None: ...
+    def close(self) -> None: ...
+
+
+class GuardedEvidenceWriter:
+    """Handle-relative, fail-closed writer over one retained Guard capability."""
+    _SAFE_LEAF = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
+    _MAX_PARTIAL_BYTES = 1024 * 1024
+
+    def __init__(self, destination: Path, guard: Any, *,
+                 identity: Callable[[Any], Any], close_handle: Callable[[Any], None]) -> None:
+        if not isinstance(destination, Path) or not destination.is_absolute():
+            raise M20IntegrityError("guarded evidence destination must be absolute")
+        self._destination, self._guard = destination, guard
+        self._identity, self._close_handle = identity, close_handle
+        self._failed = False
+        self._closed = False
+
+    @property
+    def destination(self) -> Path:
+        return self._destination
+
+    @classmethod
+    def _leaf(cls, value: str) -> str:
+        if (not isinstance(value, str) or not value or value in {".", ".."}
+                or any(character not in cls._SAFE_LEAF for character in value)):
+            raise M20IntegrityError("guarded evidence leaf is invalid")
+        return value
+
+    def _usable(self) -> None:
+        if self._closed:
+            raise M20IntegrityError("guarded evidence writer is closed")
+        if self._failed:
+            raise M20IntegrityError("guarded evidence writer is fail-closed after prior persistence failure")
+
+    def _temporary_leaf(self, target_name: str) -> str:
+        return self._leaf("m20-" + target_name + "-" + uuid4().hex + ".tmp")
+
+    def write_new_atomic(self, leaf_name: str, payload: bytes) -> None:
+        target = self._leaf(leaf_name)
+        if not isinstance(payload, bytes):
+            raise TypeError("guarded evidence payload must be bytes")
+        self._usable()
+        temporary = self._temporary_leaf(target)
+        handle: Any | None = None
+        try:
+            try:
+                handle = self._guard.create_exclusive(temporary)
+                observed = self._identity(handle)
+                if bool(getattr(observed, "is_directory", True)) or bool(getattr(observed, "is_reparse_point", True)):
+                    raise M20IntegrityError("created temporary evidence leaf is not an ordinary file")
+                self._guard.write_flush(handle, payload)
+            finally:
+                if handle is not None:
+                    primary = sys.exc_info()[1]
+                    try:
+                        self._close_handle(handle)
+                    except BaseException as cleanup_error:
+                        if primary is None:
+                            raise
+                        primary.add_note(f"created-file cleanup failed: {type(cleanup_error).__name__}: {cleanup_error}")
+        except BaseException:
+            self._failed = True
+            raise
+        try:
+            self._guard.rename_relative(temporary, target, replace_existing=False)
+        except BaseException:
+            self._failed = True
+            raise
+
+    def rename_no_replace(self, source_name: str, target_name: str) -> None:
+        self._usable()
+        try:
+            self._guard.rename_relative(self._leaf(source_name), self._leaf(target_name), replace_existing=False)
+        except BaseException:
+            self._failed = True
+            raise
+
+    def validate_and_rename_no_replace(self, source_name: str, target_name: str,
+                                       validator: Callable[[bytes], None]) -> None:
+        self._usable()
+        if not callable(validator):
+            raise TypeError("guarded partial validator must be callable")
+        try:
+            self._guard.read_verified_then_rename(self._leaf(source_name), self._leaf(target_name),
+                                                   validator, maximum_bytes=self._MAX_PARTIAL_BYTES)
+        except BaseException:
+            self._failed = True
+            raise
+
+    def close(self) -> None:
+        if not self._closed:
+            try:
+                self._guard.close()
+            finally:
+                self._closed = True
+
+
+@dataclass(frozen=True)
+class M20GuardedEvidenceDestination:
+    """Production-owned fixed mapping from a trusted root to one evidence leaf."""
+    trusted_root: str
+    components: tuple[str, ...]
+    destination: Path
+
+    def __post_init__(self) -> None:
+        if not self.trusted_root or not self.components or not self.destination.is_absolute():
+            raise ValueError("guarded evidence destination is incomplete")
+        expected = Path(self.trusted_root).joinpath(*self.components)
+        if expected != self.destination:
+            raise ValueError("guarded evidence destination does not match its fixed handle chain")
+
+
+class M20GuardedEvidenceWriterFactory:
+    """Admit one pre-provisioned, fixed destination exactly once for one store."""
+    def __init__(self, destination: M20GuardedEvidenceDestination,
+                 ops_factory: Callable[[], Any] = WindowsNativeOps) -> None:
+        self._destination, self._ops_factory, self._used = destination, ops_factory, False
+
+    def __call__(self, root: Path) -> GuardedEvidenceWriter:
+        if root != self._destination.destination or not root.is_dir():
+            raise M20IntegrityError("guarded evidence destination must be securely pre-provisioned")
+        if self._used:
+            raise M20IntegrityError("guarded evidence destination was already admitted for this store")
+        ops = self._ops_factory()
+        guard = M20DestinationGuard.admit(self._destination.trusted_root, self._destination.components, ops)
+        self._used = True
+        return GuardedEvidenceWriter(root, guard, identity=ops.identity, close_handle=ops.close)
 
 
 @dataclass(frozen=True)
@@ -683,26 +823,43 @@ class M20ExecutionRecord:
 class M20EvidenceStore:
     """Append-only, atomic completed evidence with resume reconciliation."""
 
-    def __init__(self, root: Path, manifest: M20Manifest, namespace: M20Namespace) -> None:
+    def __init__(self, root: Path, manifest: M20Manifest, namespace: M20Namespace,
+                 writer: M20EvidenceWriter | None = None) -> None:
         if namespace is M20Namespace.FORMAL:
             raise PermissionError("formal namespace is closed under #222")
-        self.root, self.manifest, self.namespace = root, manifest, namespace
-        root.mkdir(parents=True, exist_ok=True)
-        marker = root / "manifest.json"
-        expected = {"digest": manifest.digest, "namespace": namespace.value, "harness": M20_HARNESS_ID}
-        if marker.exists():
-            if json.loads(marker.read_text(encoding="utf-8")) != expected:
-                raise M20IntegrityError("evidence-store configuration drift")
-        else:
-            self._atomic(marker, expected)
+        self.root, self.manifest, self.namespace, self._writer, self._closed = root, manifest, namespace, writer, False
+        if writer is None:
+            root.mkdir(parents=True, exist_ok=True)
+        elif writer.destination != root or not root.is_dir():
+            raise M20IntegrityError("guarded evidence writer is not admitted for this existing root")
+        try:
+            marker = root / "manifest.json"
+            expected = {"digest": manifest.digest, "namespace": namespace.value, "harness": M20_HARNESS_ID}
+            if marker.exists():
+                if json.loads(marker.read_text(encoding="utf-8")) != expected:
+                    raise M20IntegrityError("evidence-store configuration drift")
+            else:
+                self._atomic(marker, expected)
+        except BaseException:
+            if self._writer is not None:
+                self._writer.close()
+            raise
 
     def _atomic(self, path: Path, value: Mapping[str, Any]) -> None:
+        self._require_open_for_write()
+        if path.parent != self.root:
+            raise M20IntegrityError("evidence write escapes store root")
+        payload = (canonical_json(value) + "\n").encode("utf-8")
+        if self._writer is not None:
+            self._writer.write_new_atomic(path.name, payload)
+            return
         with NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=self.root, suffix=".tmp") as handle:
-            handle.write(canonical_json(value) + "\n")
+            handle.write(payload.decode("utf-8"))
             temporary = Path(handle.name)
         temporary.replace(path)
 
     def persist(self, record: M20ExecutionRecord) -> None:
+        self._require_open_for_write()
         if record.spec.namespace is not self.namespace or record.spec.manifest_digest != self.manifest.digest:
             raise M20IntegrityError("record/store identity mismatch")
         if record.execution_id != record.spec.execution_id or record.schema != M20_RECORD_SCHEMA:
@@ -728,6 +885,7 @@ class M20EvidenceStore:
 
     def mark_partial(self, spec: M20ExecutionSpec, telemetry: M20ResourceTelemetry) -> None:
         """Preserve interruption; continuation is allowed only with zero committed delta."""
+        self._require_open_for_write()
         if spec.namespace is not self.namespace or spec.manifest_digest != self.manifest.digest:
             raise M20IntegrityError("partial/store identity mismatch")
         path = self.root / (spec.execution_id + ".partial.json")
@@ -740,17 +898,37 @@ class M20EvidenceStore:
                             "spec": spec.execution_id, "telemetry": asdict(telemetry)})
 
     def resume_partial(self, spec: M20ExecutionSpec) -> None:
+        self._require_open_for_write()
         path = self.root / (spec.execution_id + ".partial.json")
-        if not path.exists():
+        if self._writer is None and not path.exists():
             return
-        value = json.loads(path.read_text(encoding="utf-8"))
-        telemetry = M20ResourceTelemetry(**value["telemetry"])
-        if value["lifecycle"] != M20LifecycleState.ZERO_COMMIT_PARTIAL.value or any((telemetry.reasoning_steps, telemetry.tool_attempts, telemetry.provider_interactions,
-                telemetry.decision_cycles, telemetry.provider_transport_attempts)):
-            raise M20IntegrityError("committed partial execution cannot be resumed by guessing")
+        def validate(payload: bytes) -> None:
+            value = json.loads(payload.decode("utf-8"))
+            telemetry = M20ResourceTelemetry(**value["telemetry"])
+            if (value.get("execution_id") != spec.execution_id or value.get("spec") != spec.execution_id
+                    or value["lifecycle"] != M20LifecycleState.ZERO_COMMIT_PARTIAL.value or any((telemetry.reasoning_steps, telemetry.tool_attempts, telemetry.provider_interactions,
+                    telemetry.decision_cycles, telemetry.provider_transport_attempts))):
+                raise M20IntegrityError("committed partial execution cannot be resumed by guessing")
         # Preserve the interruption evidence; a resumed episode may never erase
         # the fact that it was interrupted before committing a resource.
-        path.replace(self.root / (spec.execution_id + ".partial.resolved.json"))
+        resolved = self.root / (spec.execution_id + ".partial.resolved.json")
+        if self._writer is None:
+            validate(path.read_bytes())
+            path.replace(resolved)
+        else:
+            self._writer.validate_and_rename_no_replace(path.name, resolved.name, validate)
+
+    def close(self) -> None:
+        """Release the optional retained Guard chain after the caller is done."""
+        if self._closed:
+            return
+        self._closed = True
+        if self._writer is not None:
+            self._writer.close()
+
+    def _require_open_for_write(self) -> None:
+        if self._closed:
+            raise M20IntegrityError("evidence store is closed")
 
     @staticmethod
     def statistical_input(record: Mapping[str, Any]) -> dict[str, Any]:

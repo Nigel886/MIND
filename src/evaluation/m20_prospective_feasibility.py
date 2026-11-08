@@ -5,8 +5,9 @@ from dataclasses import dataclass
 import base64
 import json
 import os
+import sys
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from tempfile import NamedTemporaryFile
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -15,7 +16,7 @@ from src.evaluation.m20_deepseek_execution import M20DeepSeekProposalAdapter, Tr
 from src.evaluation.m20_evaluator_failure_diagnostics import M20EvaluatorDiagnosticStore, diagnose_after_evaluator_handoff
 from src.evaluation.m20_financial_control import (M20FeasibilityFinancialLedger, M20FeasibilityFinancialPolicy,
     M20OwnerRiskAcceptedFinancialPolicy, require_verified_production_tokenizer)
-from src.evaluation.m20_harness import (M20Condition, M20ConditionRegistry, M20EvidenceStore,
+from src.evaluation.m20_harness import (M20Condition, M20ConditionRegistry, M20EvidenceStore, M20EvidenceWriter,
     M20ExecutionRecord, M20ExecutionSpec, M20FixedAdapter, M20Harness, M20Manifest,
     M20Namespace, M20PairingMetadata, M20ResourceCeiling, M20_HARNESS_ID,
     derive_first_replacement_spec, canonical_hash)
@@ -264,7 +265,8 @@ class M20FeasibilityWorkItem:
 class M20ProspectiveFeasibilityRunner:
     """Dedicated Fixed-only runner. `run_fake` is the sole executable entry point."""
     def __init__(self, manifest: Mapping[str, Any] | None = None,
-                 generation: M20FeasibilityGeneration | None = None) -> None:
+                 generation: M20FeasibilityGeneration | None = None,
+                 evidence_writer_factory: Callable[[Path], M20EvidenceWriter] | None = None) -> None:
         self.generation = _generation(generation)
         self.frozen = build_feasibility_manifest(self.generation) if manifest is None else dict(manifest)
         validate_feasibility_manifest(self.frozen, self.generation)
@@ -275,6 +277,7 @@ class M20ProspectiveFeasibilityRunner:
                             self.generation.harness_generation_identity, pairing, ceiling,
                             execution_manifest_digest=self.frozen["digest"])
         self._diagnostic_store: M20EvaluatorDiagnosticStore | None = None
+        self._evidence_writer_factory = evidence_writer_factory
         def diagnostic(spec, case, state, answer, outcome):
             if self._diagnostic_store is not None:
                 self._diagnostic_store.persist(diagnose_after_evaluator_handoff(spec.execution_id, case, state, answer, "m20_evaluator_v1", outcome))
@@ -291,7 +294,20 @@ class M20ProspectiveFeasibilityRunner:
             frozen_pair_id=self._frozen_pair_id(value["case_id"], value["repetition"])) ) for value in self.frozen["work_items"])
 
     def work_items(self) -> tuple[M20FeasibilityWorkItem, ...]: return self._items
-    def store(self, root: Path) -> M20EvidenceStore: return M20EvidenceStore(root, self.harness.manifest, self.generation.namespace)
+    def store(self, root: Path) -> M20EvidenceStore:
+        """Inject a pre-admitted writer; factory failure is never path-fallback eligible."""
+        writer = None if self._evidence_writer_factory is None else self._evidence_writer_factory(root)
+        return M20EvidenceStore(root, self.harness.manifest, self.generation.namespace, writer=writer)
+
+    @staticmethod
+    def _close_store_preserving_primary(store: M20EvidenceStore) -> None:
+        primary = sys.exc_info()[1]
+        try:
+            store.close()
+        except BaseException as cleanup_error:
+            if primary is None:
+                raise
+            primary.add_note(f"evidence-store cleanup failed: {type(cleanup_error).__name__}: {cleanup_error}")
     def diagnostic_store(self, root: Path) -> M20EvaluatorDiagnosticStore: return M20EvaluatorDiagnosticStore(root / "private_evaluator_diagnostics")
 
     def _frozen_pair_id(self, case_id: str, repetition: int) -> str:
@@ -439,6 +455,7 @@ class M20ProspectiveFeasibilityRunner:
             return tuple(self._run(item, transport, store) for item in self._items)
         finally:
             self._diagnostic_store = None
+            self._close_store_preserving_primary(store)
 
     def run_live(self, authorization_artifact: Path, trust_anchor: Path, transport: Transport, root: Path | None = None,
                  *, operator_stop_path: Path | None = None, financial_policy: M20FeasibilityFinancialPolicy | None = None,
@@ -464,6 +481,7 @@ class M20ProspectiveFeasibilityRunner:
             return tuple(self._run(item, transport, store, control, financial) for item in self._items)
         finally:
             self._diagnostic_store = None
+            self._close_store_preserving_primary(store)
 
     def run_owner_risk_accepted_live(self, authorization_artifact: Path, trust_anchor: Path, transport: Transport,
                                      root: Path | None = None, *, operator_stop_path: Path | None = None,
@@ -496,6 +514,7 @@ class M20ProspectiveFeasibilityRunner:
             return tuple(records)
         finally:
             self._diagnostic_store = None
+            self._close_store_preserving_primary(store)
 
     def replacement_item(self, original: M20ExecutionRecord) -> M20FeasibilityWorkItem:
         known = next((item for item in self._items if item.spec.execution_id == original.execution_id), None)
@@ -539,6 +558,7 @@ class M20ProspectiveFeasibilityRunner:
         finally:
             self.harness._pre_persist_validator = previous_validator
             self._diagnostic_store = None
+            self._close_store_preserving_primary(store)
 
     def run_owner_risk_accepted_replacement(self, authorization_artifact: Path, trust_anchor: Path,
                                              original_work_id: str, transport: Transport, root: Path | None = None, *,
@@ -572,6 +592,7 @@ class M20ProspectiveFeasibilityRunner:
         finally:
             self.harness._pre_persist_validator = previous_validator
             self._diagnostic_store = None
+            self._close_store_preserving_primary(store)
 
     def _run(self, item: M20FeasibilityWorkItem, transport: Transport, store: M20EvidenceStore,
              control: M20FeasibilityLiveBudget | None = None,
