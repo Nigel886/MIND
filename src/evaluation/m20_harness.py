@@ -53,6 +53,7 @@ class M20Namespace(str, Enum):
     CALIBRATION_CEILINGV2 = "m20_calibration_ceilingv2_v1"
     CALIBRATION_ANSWERTERM = "m20_calibration_answerterm_v1"
     FEASIBILITY = "m20_task_evaluator_feasibility_v1"
+    FEASIBILITY_V2 = "m20_task_evaluator_feasibility_v2"
     DIAGNOSTIC = "m20_real_provider_diagnostic_v1"
     DIAGNOSTIC_V3 = "m20_real_provider_diagnostic_v3"
     DIAGNOSTIC_V4 = "m20_real_provider_diagnostic_v4"
