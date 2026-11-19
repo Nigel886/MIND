@@ -159,7 +159,8 @@ class M20DeepSeekProposalAdapter:
 
     def __init__(self, transport: Transport, answer_termination_enabled: bool = False,
                  admit_logical_operation: Callable[[], None] | None = None,
-                 financial_ledger: Any | None = None, execution_id: str | None = None, work_id: str | None = None) -> None:
+                 financial_ledger: Any | None = None, execution_id: str | None = None, work_id: str | None = None,
+                 guarded_budget_admission: Callable[[], None] | None = None) -> None:
         if not callable(transport) or M20_REAL_PROVIDER_CONFIGURATION.identity_hash != "522fcf28714e168ce9854069468c51d3d3cb565404d7bdad3317e4fcc8f199ad":
             raise ValueError("frozen DeepSeek configuration mismatch")
         self._transport = transport
@@ -172,6 +173,7 @@ class M20DeepSeekProposalAdapter:
             raise TypeError("financial accounting requires an execution identity")
         self._admit_logical_operation = admit_logical_operation
         self._financial_ledger, self._execution_id, self._work_id = financial_ledger, execution_id, work_id
+        self._guarded_budget_admission = guarded_budget_admission
         self._attempt_context: tuple[str, int] | None = None
         self.requests: list[dict[str, Any]] = []
         self.last_diagnostic: dict[str, Any] | None = None
@@ -195,6 +197,10 @@ class M20DeepSeekProposalAdapter:
         lease = nullcontext() if self._financial_ledger is None else self._financial_ledger.physical_dispatch()
         with lease:
             try:
+                # V2 performs the authoritative budget mutation only after
+                # lease acquisition, serializing budget + ledger mutations.
+                if self._guarded_budget_admission is not None:
+                    self._guarded_budget_admission()
                 if self._financial_ledger is not None:
                     if self._attempt_context is None:
                         raise M20ProviderAttemptError("financial attempt context is absent", False)

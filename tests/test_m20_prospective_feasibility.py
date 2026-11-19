@@ -6,10 +6,15 @@ from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from src.evaluation.m20_prospective_feasibility import (M20ProspectiveFeasibilityRunner, build_feasibility_manifest, feasibility_authorization_payload, feasibility_live_authorization_payload, verify_feasibility_authorization, descriptive_projection)
+from unittest.mock import patch
+from tests.m20_test_scratch import TemporaryDirectory as GuardedTemporaryDirectory
+from tests.test_m20_v2_guarded_fixture import GuardedV2Fixture
+from src.evaluation.m20_prospective_feasibility import (M20ProspectiveFeasibilityRunner, build_feasibility_manifest, feasibility_authorization_payload, feasibility_live_authorization_payload, verify_feasibility_authorization, descriptive_projection,
+    M20_FEASIBILITY_GENERATION_V2, M20_FEASIBILITY_GENERATION_V1,
+    M20_FEASIBILITY_OWNER_RISK_LIVE_AUTHORIZATION_SCHEMA_V3)
 from src.evaluation.m20_evaluator_failure_diagnostics import diagnose_after_evaluator_handoff
 from src.evaluation.m20_real_case_source import M20RealEnvironment, real_cases
-from src.evaluation.m20_harness import M20Outcome, M20Proposal, M20ProposalKind
+from src.evaluation.m20_harness import M20IntegrityError, M20Outcome, M20Proposal, M20ProposalKind
 from src.evaluation.m20_prospective_feasibility import (M20_FEASIBILITY_TRUST_ANCHOR_SCHEMA,
     M20FeasibilityLiveBudget, M20FeasibilityExecutionBlocked, M20_FEASIBILITY_OWNER_AUTHORITY)
 from src.evaluation.m20_financial_control import (M20FeasibilityFinancialLedger, M20FeasibilityFinancialPolicy,
@@ -21,10 +26,12 @@ def exact_test_counter(_request): return 10
 
 def owner_risk_policy(): return M20OwnerRiskAcceptedFinancialPolicy()
 
-def signed_authority(directory, financial_policy=None, owner_risk_policy_value=None):
+def signed_authority(directory, financial_policy=None, owner_risk_policy_value=None, generation=None, mutate=None):
     private = Ed25519PrivateKey.generate(); payload = feasibility_live_authorization_payload(
         financial_policy=policy() if financial_policy is None and owner_risk_policy_value is None else financial_policy,
-        owner_risk_policy=owner_risk_policy_value)
+        owner_risk_policy=owner_risk_policy_value, generation=generation)
+    if mutate is not None:
+        mutate(payload)
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(); issuer = "ephemeral-test-issuer"
     artifact, anchor = Path(directory) / "authorization.json", Path(directory) / "trust.json"
     artifact.write_text(json.dumps({"payload":payload,"issuer":issuer,"algorithm":"Ed25519","signature":base64.b64encode(private.sign(encoded)).decode()}), encoding="utf-8")
@@ -354,5 +361,219 @@ class ProspectiveFeasibilityTests(unittest.TestCase):
             with self.assertRaises(M20FinancialControlBlocked):
                 runner._run(item, lambda *_: self.fail("restart duplicated transport"), store,
                             M20FeasibilityLiveBudget(root, payload, stop), ledger)
+
+
+class GenerationV2NamespaceIsolationTests(unittest.TestCase):
+    def _repository(self, directory):
+        repository = Path(directory) / "repository"
+        (repository / "evaluation" / "results").mkdir(parents=True)
+        return repository
+
+    def test_v2_manifest_freezes_a_distinct_24_work_generation(self):
+        v1, v2 = build_feasibility_manifest(), build_feasibility_manifest(M20_FEASIBILITY_GENERATION_V2)
+        self.assertEqual((v2["protocol"], v2["generation_id"], v2["namespace"], v2["result_path"]),
+                         ("m20_task_evaluator_feasibility_v1", "m20_task_evaluator_feasibility_generation_v2",
+                          "m20_task_evaluator_feasibility_v2", "evaluation/results/m20_task_evaluator_feasibility_v2"))
+        self.assertEqual((len(v2["case_membership"]), len(v2["work_items"]),
+                          {item["condition"] for item in v2["work_items"]}), (12, 24, {"m20_mind_fixed_v1"}))
+        self.assertEqual(v2, build_feasibility_manifest(M20_FEASIBILITY_GENERATION_V2))
+        self.assertNotEqual((v1["digest"], [item["work_id"] for item in v1["work_items"]]),
+                            (v2["digest"], [item["work_id"] for item in v2["work_items"]]))
+
+    def test_v2_authorization_requires_v3_and_exact_generation(self):
+        risk = owner_risk_policy()
+        with GuardedTemporaryDirectory() as directory:
+            fixture = GuardedV2Fixture(directory)
+            runner, repository, stop, calls = fixture.runner, fixture.repository, Path(directory) / "stop", []
+            stop.touch()
+            artifact, anchor = signed_authority(directory, owner_risk_policy_value=risk,
+                                                generation=M20_FEASIBILITY_GENERATION_V2)
+            payload = json.loads(artifact.read_text(encoding="utf-8"))["payload"]
+            self.assertEqual((payload["schema"], payload["generation_id"], payload["result_path"]),
+                             (M20_FEASIBILITY_OWNER_RISK_LIVE_AUTHORIZATION_SCHEMA_V3,
+                              M20_FEASIBILITY_GENERATION_V2.generation_id,
+                              M20_FEASIBILITY_GENERATION_V2.result_path))
+            with self.assertRaises(M20FeasibilityExecutionBlocked):
+                runner.run_owner_risk_accepted_live(artifact, anchor, lambda *_: calls.append(1),
+                    operator_stop_path=stop, owner_risk_policy=risk, repository_root=repository)
+            self.assertEqual(calls, [])
+            old_artifact, old_anchor = signed_authority(directory, owner_risk_policy_value=risk,
+                                                         generation=M20_FEASIBILITY_GENERATION_V1)
+            with self.assertRaises(PermissionError):
+                runner.run_owner_risk_accepted_live(old_artifact, old_anchor, lambda *_: calls.append(1),
+                    operator_stop_path=stop, owner_risk_policy=risk, repository_root=repository)
+            with self.assertRaises(PermissionError):
+                runner.run_live(Path("missing-authority.json"), Path("missing-anchor.json"), lambda *_: calls.append(1),
+                    operator_stop_path=stop, financial_policy=policy(), token_counter=exact_test_counter,
+                    repository_root=repository)
+            self.assertEqual(calls, [])
+
+    def test_v2_rejects_signed_wrong_generation_before_destination_or_transport(self):
+        risk = owner_risk_policy(); runner = M20ProspectiveFeasibilityRunner(generation=M20_FEASIBILITY_GENERATION_V2)
+        with GuardedTemporaryDirectory() as directory:
+            repository, stop, calls = self._repository(directory), Path(directory) / "stop", []
+            artifact, anchor = signed_authority(directory, owner_risk_policy_value=risk,
+                generation=M20_FEASIBILITY_GENERATION_V2,
+                mutate=lambda payload: payload.update({"generation_id": "m20_task_evaluator_feasibility_generation_wrong"}))
+            with self.assertRaises(PermissionError):
+                runner.run_owner_risk_accepted_live(artifact, anchor, lambda *_: calls.append(1),
+                    operator_stop_path=stop, owner_risk_policy=risk, repository_root=repository)
+            self.assertEqual(calls, [])
+            self.assertFalse((repository / "evaluation" / "results" / "m20_task_evaluator_feasibility_v2").exists())
+
+    def test_v2_rejects_caller_root_v1_root_and_unknown_nonempty_destination(self):
+        risk = owner_risk_policy(); runner = M20ProspectiveFeasibilityRunner(generation=M20_FEASIBILITY_GENERATION_V2)
+        with GuardedTemporaryDirectory() as directory:
+            repository, stop, calls = self._repository(directory), Path(directory) / "stop", []
+            artifact, anchor = signed_authority(directory, owner_risk_policy_value=risk, generation=M20_FEASIBILITY_GENERATION_V2)
+            v1_root = repository / "evaluation" / "results" / "m20_task_evaluator_feasibility_v1"
+            v1_root.mkdir(); v1_bytes = b"immutable-v1"; (v1_root / "historical.json").write_bytes(v1_bytes)
+            with self.assertRaises(PermissionError):
+                runner.run_owner_risk_accepted_live(artifact, anchor, lambda *_: calls.append(1), v1_root,
+                    operator_stop_path=stop, owner_risk_policy=risk, repository_root=repository)
+            destination = repository / "evaluation" / "results" / "m20_task_evaluator_feasibility_v2"
+            destination.mkdir(); (destination / "foreign.txt").write_text("foreign", encoding="utf-8")
+            with self.assertRaises(PermissionError):
+                runner.run_owner_risk_accepted_live(artifact, anchor, lambda *_: calls.append(1),
+                    operator_stop_path=stop, owner_risk_policy=risk, repository_root=repository)
+            self.assertEqual((calls, (v1_root / "historical.json").read_bytes()), ([], v1_bytes))
+
+    def test_v2_fake_path_requires_admission_and_cannot_write_v1_or_unknown_root(self):
+        with GuardedTemporaryDirectory() as directory:
+            fixture = GuardedV2Fixture(directory)
+            runner, repository, calls = fixture.runner, fixture.repository, []
+            authorization = feasibility_authorization_payload(generation=M20_FEASIBILITY_GENERATION_V2)
+            v1_root = repository / "evaluation" / "results" / "m20_task_evaluator_feasibility_v1"; v1_root.mkdir()
+            before = tuple(v1_root.iterdir())
+            with self.assertRaises(PermissionError): runner.run_fake(authorization, lambda *_: calls.append(1), v1_root, repository_root=repository)
+            unknown = repository / "unapproved-fake-root"
+            with self.assertRaises(PermissionError): runner.run_fake(authorization, lambda *_: calls.append(1), unknown)
+            self.assertEqual((calls, tuple(v1_root.iterdir()), unknown.exists()), ([], before, False))
+
+    def test_v2_rejects_marker_drift_reparse_and_foreign_ledger_before_transport(self):
+        risk = owner_risk_policy()
+        def invoke(mutate):
+            with GuardedTemporaryDirectory() as directory:
+                fixture = GuardedV2Fixture(directory)
+                runner, repository, stop, calls = fixture.runner, fixture.repository, Path(directory) / "stop", []
+                artifact, anchor = signed_authority(directory, owner_risk_policy_value=risk,
+                                                    generation=M20_FEASIBILITY_GENERATION_V2)
+                mutate(directory, fixture, artifact, anchor, stop)
+                with self.assertRaises(PermissionError) as rejected:
+                    runner.run_owner_risk_accepted_live(artifact, anchor, lambda *_: calls.append(1),
+                        operator_stop_path=stop, owner_risk_policy=risk, repository_root=repository)
+                self.assertEqual(calls, [])
+                return rejected.exception
+
+        with self.subTest("manifest marker drift reaches guarded inventory"):
+            error = invoke(lambda _directory, fixture, _artifact, _anchor, _stop:
+                fixture.ops.provision(fixture.node, "manifest.json", directory=False, data=b"{}"))
+            self.assertIsInstance(error.__cause__, M20IntegrityError)
+        with self.subTest("reparse destination is rejected before evidence admission"):
+            with GuardedTemporaryDirectory() as directory:
+                fixture = GuardedV2Fixture(directory)
+                with patch.object(M20ProspectiveFeasibilityRunner, "_reparse_point", return_value=True):
+                    with self.assertRaises(PermissionError): fixture.runner._admit_destination(fixture.repository)
+        with self.subTest("foreign ledger remains a financial-control rejection"):
+            def add_foreign_ledger(_directory, fixture, _artifact, _anchor, stop):
+                store = fixture.runner.store(fixture.destination); store.close()
+                foreign = M20FeasibilityFinancialLedger(
+                    fixture.destination, feasibility_live_authorization_payload(owner_risk_policy=risk), risk, None, stop)
+                foreign.reserve("foreign", "foreign", 0, {})
+            error = invoke(add_foreign_ledger)
+            self.assertIsNone(error.__cause__)
+
+    def test_v2_rejects_foreign_record_and_budget_before_transport(self):
+        risk = owner_risk_policy()
+        def invoke(mutate):
+            with GuardedTemporaryDirectory() as directory:
+                fixture = GuardedV2Fixture(directory)
+                runner, repository, stop, calls = fixture.runner, fixture.repository, Path(directory) / "stop", []
+                artifact, anchor = signed_authority(directory, owner_risk_policy_value=risk,
+                                                    generation=M20_FEASIBILITY_GENERATION_V2)
+                mutate(fixture, artifact)
+                with self.assertRaises(PermissionError) as rejected:
+                    runner.run_owner_risk_accepted_live(artifact, anchor, lambda *_: calls.append(1),
+                        operator_stop_path=stop, owner_risk_policy=risk, repository_root=repository)
+                self.assertEqual(calls, [])
+                return rejected.exception
+
+        with self.subTest("foreign completed record reaches guarded inventory"):
+            def add_foreign_record(fixture, _artifact):
+                store = fixture.runner.store(fixture.destination); store.close()
+                fixture.ops.provision(fixture.node, ("0" * 64) + ".json", directory=False,
+                                      data=json.dumps({"foreign": True}).encode("utf-8"))
+            error = invoke(add_foreign_record)
+            self.assertIsInstance(error.__cause__, M20IntegrityError)
+        with self.subTest("foreign budget remains a financial-control rejection"):
+            def add_foreign_budget(fixture, _artifact):
+                store = fixture.runner.store(fixture.destination); store.close()
+                control = fixture.destination / ".m20_execution_control"; control.mkdir(exist_ok=True)
+                (control / "live_budget.json").write_text(
+                    json.dumps({"authorization_digest": "foreign"}), encoding="utf-8")
+                fixture.ops.provision(fixture.control_node, "live_budget.json", directory=False,
+                                      data=json.dumps({"authorization_digest":"foreign"}).encode("utf-8"))
+            error = invoke(add_foreign_budget)
+            self.assertIsNone(error.__cause__)
+
+    def test_v2_runner_translates_only_guarded_integrity_admission_errors(self):
+        risk = owner_risk_policy()
+        with GuardedTemporaryDirectory() as directory:
+            fixture = GuardedV2Fixture(directory)
+            runner, stop = fixture.runner, Path(directory) / "stop"
+            artifact, anchor = signed_authority(directory, owner_risk_policy_value=risk,
+                                                generation=M20_FEASIBILITY_GENERATION_V2)
+            fixture.ops.provision(fixture.node, "manifest.json", directory=False, data=b"{}")
+            with self.assertRaises(M20IntegrityError): runner.store(fixture.destination)
+            with self.assertRaises(PermissionError) as rejected:
+                runner.run_owner_risk_accepted_live(artifact, anchor, lambda *_: self.fail("transport reached"),
+                    operator_stop_path=stop, owner_risk_policy=risk, repository_root=fixture.repository)
+            self.assertIsInstance(rejected.exception.__cause__, M20IntegrityError)
+            with patch.object(runner, "store", side_effect=TypeError("programming error")):
+                with self.assertRaisesRegex(TypeError, "programming error"):
+                    runner._open_runner_store(fixture.destination)
+
+    def test_v2_first_replacement_uses_same_generation_ledger_and_namespace(self):
+        risk = owner_risk_policy()
+        with GuardedTemporaryDirectory() as directory:
+            fixture = GuardedV2Fixture(directory)
+            runner, repository, stop = fixture.runner, fixture.repository, Path(directory) / "stop"
+            artifact, anchor = signed_authority(directory, owner_risk_policy_value=risk,
+                                                generation=M20_FEASIBILITY_GENERATION_V2)
+            destination = runner._admit_destination(repository); original_item = runner.work_items()[0]
+            original = runner._run(original_item, lambda *_: (_ for _ in ()).throw(TimeoutError("eligible")),
+                                   runner.store(destination))
+            replacement = runner.run_owner_risk_accepted_replacement(artifact, anchor, original_item.work_id,
+                billed_responder, operator_stop_path=stop, owner_risk_policy=risk, repository_root=repository)
+            session=runner._control_session(destination)
+            ledger = M20FeasibilityFinancialLedger(destination,
+                json.loads(artifact.read_text(encoding="utf-8"))["payload"], risk, None, stop, session)
+            self.assertEqual((original.spec.namespace, replacement.spec.namespace),
+                             (M20_FEASIBILITY_GENERATION_V2.namespace, M20_FEASIBILITY_GENERATION_V2.namespace))
+            self.assertEqual(replacement.spec.replacement_of, original.execution_id)
+            self.assertGreater(ledger.summary()["physical_attempts"], 0)
+            session.close()
+
+    def test_v2_post_reconciliation_interruption_does_not_resume_transport(self):
+        risk = owner_risk_policy()
+        with GuardedTemporaryDirectory() as directory:
+            fixture = GuardedV2Fixture(directory)
+            runner, repository, stop = fixture.runner, fixture.repository, Path(directory) / "stop"
+            artifact, _anchor = signed_authority(directory, owner_risk_policy_value=risk,
+                                                  generation=M20_FEASIBILITY_GENERATION_V2)
+            payload = json.loads(artifact.read_text(encoding="utf-8"))["payload"]
+            destination, item = runner._admit_destination(repository), runner.work_items()[0]
+            store = runner.store(destination); persisted = store.persist
+            store.persist = lambda _record: (_ for _ in ()).throw(InterruptedError("after reconciliation"))
+            ledger = M20FeasibilityFinancialLedger(destination, payload, risk, None, stop)
+            calls = []
+            def transport(*args): calls.append(args); return billed_responder(*args)
+            with self.assertRaises(InterruptedError):
+                runner._run(item, transport, store, M20FeasibilityLiveBudget(destination, payload, stop), ledger)
+            store.persist = persisted
+            with self.assertRaises(M20FinancialControlBlocked):
+                runner._run(item, lambda *_: self.fail("restart reached transport"), store,
+                            M20FeasibilityLiveBudget(destination, payload, stop), ledger)
+            self.assertEqual(len(calls), 3)
 
 if __name__ == "__main__": unittest.main()

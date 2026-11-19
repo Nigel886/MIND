@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Callable, Mapping
+from src.evaluation.m20_guarded_execution_control import M20GuardedExecutionControlSession
 
 from src.evaluation.m20_harness import canonical_hash
 
@@ -119,7 +120,8 @@ class M20FeasibilityFinancialLedger:
     """Durable attempt reservations; unknown billing is never converted to zero."""
     def __init__(self, root: Path, authorization: Mapping[str, Any],
                  policy: M20FeasibilityFinancialPolicy | M20OwnerRiskAcceptedFinancialPolicy,
-                 token_counter: Callable[[Mapping[str, Any]], int] | None, operator_stop_path: Path) -> None:
+                 token_counter: Callable[[Mapping[str, Any]], int] | None, operator_stop_path: Path,
+                 control_session: M20GuardedExecutionControlSession | None = None) -> None:
         if not isinstance(operator_stop_path, Path):
             raise TypeError("operator stop path is required")
         if isinstance(policy, M20FeasibilityFinancialPolicy):
@@ -134,6 +136,7 @@ class M20FeasibilityFinancialLedger:
         self.dispatch_lock_path = root / ".m20_execution_control" / "physical_dispatch.lock"
         self.authorization_digest = canonical_hash(dict(authorization))
         self.policy, self.token_counter, self.operator_stop_path = policy, token_counter, operator_stop_path
+        self._control_session = control_session
         self.schema = M20_OWNER_RISK_FINANCIAL_LEDGER_SCHEMA if isinstance(policy, M20OwnerRiskAcceptedFinancialPolicy) else M20_FINANCIAL_LEDGER_SCHEMA
 
     def _expected(self) -> dict[str, Any]:
@@ -141,12 +144,18 @@ class M20FeasibilityFinancialLedger:
                 "policy": self.policy.canonical()}
 
     def _load(self) -> dict[str, Any]:
-        if not self.path.exists():
+        if self._control_session is not None:
+            value = self._control_session.read_json("financial_ledger.json")
+            if value is None:
+                return {**self._expected(), "attempts": {}, "dispatch_halted": False, "halt_reason": None}
+            value = dict(value)
+        else:
+            value = None
+        if self._control_session is None and not self.path.exists():
             return {**self._expected(), "attempts": {}, "dispatch_halted": False, "halt_reason": None}
-        try:
-            value = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            raise PermissionError("financial ledger is unreadable") from error
+        if self._control_session is None:
+            try: value = json.loads(self.path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as error: raise PermissionError("financial ledger is unreadable") from error
         if (not isinstance(value, Mapping) or {key: value.get(key) for key in self._expected()} != self._expected() or
                 not isinstance(value.get("attempts"), Mapping) or
                 not isinstance(value.get("dispatch_halted"), bool) or
@@ -155,6 +164,8 @@ class M20FeasibilityFinancialLedger:
         return dict(value)
 
     def _persist(self, value: Mapping[str, Any]) -> None:
+        if self._control_session is not None:
+            self._control_session.replace_json("financial_ledger.json", value); return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=self.path.parent, suffix=".tmp") as handle:
             handle.write(json.dumps(dict(value), sort_keys=True, separators=(",", ":")) + "\n")
@@ -183,6 +194,11 @@ class M20FeasibilityFinancialLedger:
     @contextmanager
     def physical_dispatch(self):
         """Exclusive, crash-fail-closed lease across processes for one dispatch."""
+        if self._control_session is not None:
+            lease = self._control_session.acquire_dispatch_lease({"authorization_digest": self.authorization_digest})
+            try: yield
+            finally: self._control_session.release_dispatch_lease(lease)
+            return
         self.dispatch_lock_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             descriptor = os.open(self.dispatch_lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
