@@ -750,8 +750,18 @@ class WindowsNativeOps:
             raise M20DestinationNativeError("CloseHandle", win32_error=ctypes.get_last_error())
 
     @staticmethod
-    def _name(value: str) -> tuple[Any, _UNICODE_STRING]:
-        _component(value)
+    def _name(value: str, *, allow_reserved_execution_control: bool = False) -> tuple[Any, _UNICODE_STRING]:
+        """Encode one already policy-validated native relative name.
+
+        The reserved control directory is admitted only by
+        ``M20DestinationGuard.admit_execution_control``.  Its final component
+        must remain usable by the native relative-open backend without
+        weakening the generic component policy for any other operation.
+        """
+        if allow_reserved_execution_control and value == ".m20_execution_control":
+            pass
+        else:
+            _component(value)
         encoded = value.encode("utf-16-le")
         buffer = ctypes.create_unicode_buffer(value)
         unicode = WindowsNativeOps._UNICODE_STRING(len(encoded), len(encoded) + 2,
@@ -759,8 +769,9 @@ class WindowsNativeOps:
         return buffer, unicode
 
     def _nt_create_relative(self, parent_handle: int, name: str, *, desired_access: int,
-                            disposition: int, options: int, share_access: int | None = None) -> int:
-        buffer, unicode = self._name(name)
+                            disposition: int, options: int, share_access: int | None = None,
+                            allow_reserved_execution_control: bool = False) -> int:
+        buffer, unicode = self._name(name, allow_reserved_execution_control=allow_reserved_execution_control)
         attributes = self._OBJECT_ATTRIBUTES(ctypes.sizeof(self._OBJECT_ATTRIBUTES), parent_handle,
             ctypes.cast(ctypes.pointer(unicode), ctypes.c_void_p), self._OBJ_CASE_INSENSITIVE, None, None)
         handle, iosb = ctypes.c_void_p(), self._IO_STATUS_BLOCK()
@@ -778,7 +789,8 @@ class WindowsNativeOps:
         return self._nt_create_relative(parent_handle, component,
             desired_access=self._FILE_READ_ATTRIBUTES | self._FILE_TRAVERSE | self._FILE_LIST_DIRECTORY | self._SYNCHRONIZE,
             disposition=self._FILE_OPEN,
-            options=self._FILE_DIRECTORY_FILE | self._FILE_OPEN_REPARSE_POINT | self._FILE_SYNCHRONOUS_IO_NONALERT)
+            options=self._FILE_DIRECTORY_FILE | self._FILE_OPEN_REPARSE_POINT | self._FILE_SYNCHRONOUS_IO_NONALERT,
+            allow_reserved_execution_control=(component == ".m20_execution_control"))
 
     def enumerate_relative_directory(self, parent_handle: int, *, maximum_entries: int,
                                      maximum_name_bytes: int,
