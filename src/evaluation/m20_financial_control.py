@@ -196,7 +196,15 @@ class M20FeasibilityFinancialLedger:
         """Exclusive, crash-fail-closed lease across processes for one dispatch."""
         if self._control_session is not None:
             lease = self._control_session.acquire_dispatch_lease({"authorization_digest": self.authorization_digest})
-            try: yield
+            try:
+                # This fresh guarded read occurs only after obtaining the shared
+                # lease.  A prior reservation or transport invocation without a
+                # durable settlement is financially ambiguous and requires
+                # manual reconciliation before any different request can go out.
+                if any(item.get("status") in {"RESERVED", "DISPATCHED"}
+                       for item in self._load()["attempts"].values()):
+                    raise M20FinancialControlBlocked("unsettled financial attempt requires manual reconciliation")
+                yield
             finally: self._control_session.release_dispatch_lease(lease)
             return
         self.dispatch_lock_path.parent.mkdir(parents=True, exist_ok=True)
